@@ -10,10 +10,16 @@ data class LocalCloudFile(
     val name: String,
     val type: String,
     val size: String,
-    val time: Long,
-    val isFolder: Boolean,
-    val path: String,
-    val accountId: String? // To filter by account
+    val rawSize: Long = 0L,
+    val time: Long = 0L,
+    val isFolder: Boolean = false,
+    val path: String = "",
+    val folderId: String = "root",
+    val accountId: String? = null,
+    val mimeType: String? = null,
+    val shareId: String? = null,
+    val isShared: Boolean = false,
+    val cachedAt: Long = System.currentTimeMillis()
 ) {
     fun toCloudFile(): CloudFile {
         return CloudFile(
@@ -23,21 +29,27 @@ data class LocalCloudFile(
             size = this.size,
             time = this.time,
             isFolder = this.isFolder,
-            path = this.path
+            path = this.path,
+            mimeType = this.mimeType
         )
     }
 
     companion object {
-        fun fromCloudFile(file: CloudFile, accountId: String?): LocalCloudFile {
+        fun fromCloudFile(file: CloudFile, accountId: String?, folderId: String? = null): LocalCloudFile {
+            val safeFolderId = if (folderId.isNullOrBlank() || folderId == "root") "root" else folderId
             return LocalCloudFile(
-                id = file.effectiveId,
+                id = if (file.effectiveId.isNotBlank()) file.effectiveId else "${accountId}_${safeFolderId}_${file.effectiveName}",
                 name = file.effectiveName,
                 type = file.effectiveType,
                 size = file.formattedSize,
+                rawSize = file.sizeBytes,
                 time = file.time ?: 0L,
                 isFolder = file.isFolderItem,
                 path = file.path ?: "",
-                accountId = accountId
+                folderId = safeFolderId,
+                accountId = accountId,
+                mimeType = file.mimeType,
+                cachedAt = System.currentTimeMillis()
             )
         }
     }

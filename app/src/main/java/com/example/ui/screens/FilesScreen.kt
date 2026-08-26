@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -25,15 +26,13 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.automirrored.filled.ViewList
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -41,6 +40,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
@@ -52,6 +52,11 @@ import com.example.api.ApiClient
 import com.example.api.CloudFile
 import com.example.api.FileRepository
 import com.example.api.FolderRequest
+import com.example.api.RenameRequest
+import com.example.api.ShareRequest
+import com.example.db.AppDatabase
+import com.example.db.LocalAccount
+import com.example.db.LocalCloudFile
 import com.example.ui.openFileInViewer
 import com.example.ui.theme.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -61,14 +66,25 @@ import kotlinx.coroutines.launch
 
 data class BreadcrumbItem(val id: String?, val name: String)
 
-class FilesViewModel(application: android.app.Application) : androidx.lifecycle.AndroidViewModel(application) {
+enum class FileSortOrder(val displayName: String) {
+    DATE_DESC("Newest First"),
+    DATE_ASC("Oldest First"),
+    NAME_ASC("Name (A-Z)"),
+    NAME_DESC("Name (Z-A)"),
+    SIZE_DESC("Largest First")
+}
+
+class FilesViewModel(application: android.app.Application) : AndroidViewModel(application) {
+    private val db = AppDatabase.getDatabase(application)
+    private val prefs = application.getSharedPreferences("cloudyte_drive_state", Context.MODE_PRIVATE)
+
     private val _files = MutableStateFlow<List<CloudFile>>(emptyList())
     val files: StateFlow<List<CloudFile>> = _files.asStateFlow()
 
     private val _accounts = MutableStateFlow<List<Account>>(emptyList())
     val accounts: StateFlow<List<Account>> = _accounts.asStateFlow()
 
-    private val _currentAccountId = MutableStateFlow<String?>(null)
+    private val _currentAccountId = MutableStateFlow<String?>(prefs.getString("last_active_account_id", null))
     val currentAccountId: StateFlow<String?> = _currentAccountId.asStateFlow()
 
     private val _breadcrumbs = MutableStateFlow<List<BreadcrumbItem>>(listOf(BreadcrumbItem(null, "My Drive")))
@@ -88,6 +104,7 @@ class FilesViewModel(application: android.app.Application) : androidx.lifecycle.
 
     fun selectAccount(accountId: String?) {
         _currentAccountId.value = accountId
+        prefs.edit().putString("last_active_account_id", accountId).apply()
         val accName = _accounts.value.find { it.effectiveId == accountId }?.effectiveName?.ifBlank { "My Drive" } ?: "My Drive"
         _breadcrumbs.value = listOf(BreadcrumbItem(null, accName))
         fetchFilesForCurrentAccount()
@@ -98,21 +115,38 @@ class FilesViewModel(application: android.app.Application) : androidx.lifecycle.
             _isLoading.value = true
             _errorMessage.value = null
             try {
+                // 1. Instant load cached accounts
+                val cachedAccounts = db.accountDao().getAllAccounts()
+                if (cachedAccounts.isNotEmpty()) {
+                    _accounts.value = cachedAccounts.map { it.toAccount() }
+                }
+
+                // 2. Fetch fresh accounts from API
                 val accList = try {
                     ApiClient.apiService.getAccounts()
                 } catch (e: Exception) {
                     Log.w("FilesViewModel", "Failed to fetch accounts: ${e.message}")
                     emptyList()
                 }
-                _accounts.value = accList
 
-                if (_currentAccountId.value == null && accList.isNotEmpty()) {
-                    val defaultAcc = accList.firstOrNull { it.isDefault == true } ?: accList.firstOrNull()
-                    _currentAccountId.value = defaultAcc?.effectiveId
-                    val initialName = defaultAcc?.effectiveName?.ifBlank { "My Drive" } ?: "My Drive"
-                    if (_breadcrumbs.value.size <= 1) {
-                        _breadcrumbs.value = listOf(BreadcrumbItem(null, initialName))
-                    }
+                if (accList.isNotEmpty()) {
+                    _accounts.value = accList
+                    db.accountDao().insertAccounts(accList.map { LocalAccount.fromAccount(it) })
+                }
+
+                val targetAccId = _currentAccountId.value
+                val validAcc = accList.find { it.effectiveId == targetAccId }
+                    ?: accList.firstOrNull { it.isDefault == true }
+                    ?: accList.firstOrNull()
+
+                _currentAccountId.value = validAcc?.effectiveId
+                if (validAcc?.effectiveId != null) {
+                    prefs.edit().putString("last_active_account_id", validAcc.effectiveId).apply()
+                }
+
+                val initialName = validAcc?.effectiveName?.ifBlank { "My Drive" } ?: "My Drive"
+                if (_breadcrumbs.value.size <= 1) {
+                    _breadcrumbs.value = listOf(BreadcrumbItem(null, initialName))
                 }
 
                 fetchFilesForCurrentAccount()
@@ -128,27 +162,28 @@ class FilesViewModel(application: android.app.Application) : androidx.lifecycle.
     private fun fetchFilesForCurrentAccount() {
         viewModelScope.launch {
             val accId = _currentAccountId.value
-            val db = com.example.db.AppDatabase.getDatabase(getApplication())
-            if (currentFolderId == null) {
-                val cached = db.cloudFileDao().getFilesForAccount(accId).map { it.toCloudFile() }
-                if (cached.isNotEmpty()) {
-                    _files.value = cached
-                }
+            val folderKey = currentFolderId ?: "root"
+
+            // 1. Instant Cache Load from SQLite Room DB
+            val cached = db.cloudFileDao().getFilesForFolder(accId, folderKey).map { it.toCloudFile() }
+            if (cached.isNotEmpty()) {
+                _files.value = cached
             }
-            
-            _isLoading.value = true
+
+            _isLoading.value = cached.isEmpty()
+
+            // 2. Network Fetch & Sync
             try {
                 val fetched = ApiClient.apiService.getFiles(accId, currentFolderId, null)
-                if (currentFolderId == null) {
-                    db.cloudFileDao().deleteFilesForAccount(accId)
-                    db.cloudFileDao().insertFiles(fetched.map { com.example.db.LocalCloudFile.fromCloudFile(it, accId) })
-                }
+                db.cloudFileDao().deleteFilesForFolder(accId, folderKey)
+                db.cloudFileDao().insertFiles(fetched.map { LocalCloudFile.fromCloudFile(it, accId, folderKey) })
                 FileRepository.cacheFiles(fetched)
                 _files.value = fetched
+                _errorMessage.value = null
             } catch (e: Exception) {
-                Log.e("FilesViewModel", "Failed to fetch files for account ${_currentAccountId.value}", e)
+                Log.e("FilesViewModel", "Failed to fetch files for account $accId", e)
                 if (_files.value.isEmpty()) {
-                    _errorMessage.value = e.localizedMessage
+                    _errorMessage.value = e.localizedMessage ?: "Failed to fetch files"
                 }
             } finally {
                 _isLoading.value = false
@@ -167,6 +202,37 @@ class FilesViewModel(application: android.app.Application) : androidx.lifecycle.
                 }
             } catch (e: Exception) {
                 Log.e("FilesViewModel", "Create folder error", e)
+            }
+        }
+    }
+
+    fun renameFile(fileId: String, newName: String, onSuccess: () -> Unit) {
+        viewModelScope.launch {
+            try {
+                val accId = _currentAccountId.value
+                val res = ApiClient.apiService.renameFile(fileId, accId, RenameRequest(newName))
+                if (res.isSuccessful) {
+                    fetchFilesForCurrentAccount()
+                    onSuccess()
+                }
+            } catch (e: Exception) {
+                Log.e("FilesViewModel", "Rename error", e)
+            }
+        }
+    }
+
+    fun deleteFile(fileId: String, onSuccess: () -> Unit) {
+        viewModelScope.launch {
+            try {
+                val accId = _currentAccountId.value
+                val res = ApiClient.apiService.deleteFile(fileId, accId)
+                if (res.isSuccessful) {
+                    db.cloudFileDao().deleteFileById(fileId)
+                    fetchFilesForCurrentAccount()
+                    onSuccess()
+                }
+            } catch (e: Exception) {
+                Log.e("FilesViewModel", "Delete error", e)
             }
         }
     }
@@ -210,9 +276,14 @@ fun FilesScreen(
 
     var searchQuery by remember { mutableStateOf("") }
     var selectedFilter by remember { mutableStateOf("All") }
+    var sortOrder by remember { mutableStateOf(FileSortOrder.DATE_DESC) }
     var showFilterDropdown by remember { mutableStateOf(false) }
+    var showSortDropdown by remember { mutableStateOf(false) }
     var showAccountDropdown by remember { mutableStateOf(false) }
     var fileForMoveCopy by remember { mutableStateOf<Pair<CloudFile, Boolean>?>(null) }
+    var fileForRename by remember { mutableStateOf<CloudFile?>(null) }
+    var renameInput by remember { mutableStateOf("") }
+    var fileForDelete by remember { mutableStateOf<CloudFile?>(null) }
     var showAddAccountDialog by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     var snackbarMessage by remember { mutableStateOf<String?>(null) }
@@ -258,6 +329,81 @@ fun FilesScreen(
         viewModel.goBack()
     }
 
+    // Rename Dialog
+    if (fileForRename != null) {
+        AlertDialog(
+            onDismissRequest = { fileForRename = null },
+            containerColor = SurfaceDark,
+            title = { Text("Rename File", color = TextPrimary) },
+            text = {
+                OutlinedTextField(
+                    value = renameInput,
+                    onValueChange = { renameInput = it },
+                    label = { Text("New Name", color = TextSecondary) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = TextPrimary,
+                        unfocusedTextColor = TextPrimary,
+                        focusedBorderColor = PurpleGradientStart,
+                        unfocusedBorderColor = TextSecondary
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val target = fileForRename ?: return@Button
+                        if (renameInput.isNotBlank()) {
+                            viewModel.renameFile(target.effectiveId, renameInput.trim()) {
+                                fileForRename = null
+                                snackbarMessage = "Renamed successfully"
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = PurpleGradientStart)
+                ) {
+                    Text("Rename", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { fileForRename = null }) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            }
+        )
+    }
+
+    // Delete Confirmation Dialog
+    if (fileForDelete != null) {
+        AlertDialog(
+            onDismissRequest = { fileForDelete = null },
+            containerColor = SurfaceDark,
+            title = { Text("Delete Item", color = TextPrimary) },
+            text = { Text("Are you sure you want to delete '${fileForDelete?.effectiveName}'?", color = TextSecondary) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val target = fileForDelete ?: return@Button
+                        viewModel.deleteFile(target.effectiveId) {
+                            fileForDelete = null
+                            snackbarMessage = "Deleted successfully"
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF5350))
+                ) {
+                    Text("Delete", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { fileForDelete = null }) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            }
+        )
+    }
+
+    // Create Folder Dialog
     if (showCreateFolderDialog) {
         AlertDialog(
             onDismissRequest = { showCreateFolderDialog = false },
@@ -285,6 +431,7 @@ fun FilesScreen(
                             viewModel.createFolder(newFolderName.trim()) {
                                 showCreateFolderDialog = false
                                 newFolderName = ""
+                                snackbarMessage = "Folder created"
                             }
                         }
                     },
@@ -328,8 +475,8 @@ fun FilesScreen(
         )
     }
 
-    val filteredFiles = remember(files, searchQuery, selectedFilter) {
-        files.filter { file ->
+    val filteredAndSortedFiles = remember(files, searchQuery, selectedFilter, sortOrder) {
+        val filtered = files.filter { file ->
             val matchesSearch = searchQuery.isBlank() || file.effectiveName.contains(searchQuery, ignoreCase = true)
             val matchesFilter = when (selectedFilter) {
                 "Folders" -> file.isFolderItem
@@ -341,10 +488,18 @@ fun FilesScreen(
             }
             matchesSearch && matchesFilter
         }
+
+        when (sortOrder) {
+            FileSortOrder.DATE_DESC -> filtered.sortedWith(compareByDescending<CloudFile> { it.isFolderItem }.thenByDescending { it.time ?: 0L })
+            FileSortOrder.DATE_ASC -> filtered.sortedWith(compareByDescending<CloudFile> { it.isFolderItem }.thenBy { it.time ?: 0L })
+            FileSortOrder.NAME_ASC -> filtered.sortedWith(compareByDescending<CloudFile> { it.isFolderItem }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.effectiveName })
+            FileSortOrder.NAME_DESC -> filtered.sortedWith(compareByDescending<CloudFile> { it.isFolderItem }.thenByDescending(String.CASE_INSENSITIVE_ORDER) { it.effectiveName })
+            FileSortOrder.SIZE_DESC -> filtered.sortedWith(compareByDescending<CloudFile> { it.isFolderItem }.thenByDescending { it.sizeBytes })
+        }
     }
 
-    val folders = filteredFiles.filter { it.isFolderItem }
-    val regularFiles = filteredFiles.filter { !it.isFolderItem }
+    val folders = filteredAndSortedFiles.filter { it.isFolderItem }
+    val regularFiles = filteredAndSortedFiles.filter { !it.isFolderItem }
     val effectiveAccountId = currentAccountId ?: accounts.firstOrNull()?.effectiveId ?: "root"
     val selectedAccount = accounts.find { it.effectiveId == currentAccountId } ?: accounts.firstOrNull()
 
@@ -383,7 +538,7 @@ fun FilesScreen(
                 .padding(innerPadding)
                 .padding(top = 16.dp)
         ) {
-            // Single-Row Top Bar: Search Bar + Grid/List Switcher + Filter + Drive/Account Avatar
+            // High-End Google Drive / OneDrive Style Top Bar
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -445,6 +600,54 @@ fun FilesScreen(
                         tint = PurpleGradientStart,
                         modifier = Modifier.size(20.dp)
                     )
+                }
+
+                // Sort Dropdown Button
+                Box {
+                    IconButton(
+                        onClick = { showSortDropdown = true },
+                        modifier = Modifier
+                            .size(42.dp)
+                            .background(SurfaceDark, CircleShape)
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = "Sort files", tint = TextPrimary, modifier = Modifier.size(20.dp))
+                    }
+
+                    DropdownMenu(
+                        expanded = showSortDropdown,
+                        onDismissRequest = { showSortDropdown = false },
+                        modifier = Modifier.background(SurfaceDark)
+                    ) {
+                        Text(
+                            text = "Sort Files By",
+                            color = TextSecondary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        )
+                        HorizontalDivider(color = Color(0xFF2C2C3E))
+                        FileSortOrder.values().forEach { order ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = order.displayName,
+                                        color = if (sortOrder == order) PurpleGradientStart else TextPrimary,
+                                        fontWeight = if (sortOrder == order) FontWeight.Bold else FontWeight.Normal,
+                                        fontSize = 13.sp
+                                    )
+                                },
+                                trailingIcon = {
+                                    if (sortOrder == order) {
+                                        Icon(Icons.Default.Check, contentDescription = null, tint = PurpleGradientStart, modifier = Modifier.size(16.dp))
+                                    }
+                                },
+                                onClick = {
+                                    sortOrder = order
+                                    showSortDropdown = false
+                                }
+                            )
+                        }
+                    }
                 }
 
                 // Filter Dropdown Icon Button
@@ -570,7 +773,7 @@ fun FilesScreen(
                         onDismissRequest = { showAccountDropdown = false },
                         modifier = Modifier
                             .background(SurfaceDark)
-                            .widthIn(min = 260.dp)
+                            .widthIn(min = 270.dp)
                     ) {
                         Text(
                             text = "Connected Cloud Drives",
@@ -582,13 +785,18 @@ fun FilesScreen(
                         HorizontalDivider(color = Color(0xFF2C2C3E))
                         accounts.forEach { acc ->
                             val isSelected = acc.effectiveId == currentAccountId
+                            val driveColor = when {
+                                acc.effectiveType.contains("google", ignoreCase = true) -> Color(0xFF4285F4)
+                                acc.effectiveType.contains("one", ignoreCase = true) -> Color(0xFF0078D4)
+                                else -> Color(0xFF24A1DE)
+                            }
                             DropdownMenuItem(
                                 text = {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Icon(
                                             imageVector = Icons.Default.CloudQueue,
                                             contentDescription = null,
-                                            tint = if (isSelected) PurpleGradientStart else TextSecondary,
+                                            tint = if (isSelected) PurpleGradientStart else driveColor,
                                             modifier = Modifier.size(20.dp)
                                         )
                                         Spacer(modifier = Modifier.width(12.dp))
@@ -673,7 +881,7 @@ fun FilesScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             // Active Filter Pill indicator if not "All"
             if (selectedFilter != "All") {
@@ -744,11 +952,11 @@ fun FilesScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            if (isLoading) {
+            if (isLoading && files.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = PurpleGradientStart)
                 }
-            } else if (filteredFiles.isEmpty()) {
+            } else if (filteredAndSortedFiles.isEmpty()) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -796,7 +1004,12 @@ fun FilesScreen(
                                 accountId = effectiveAccountId,
                                 onClick = { viewModel.enterFolder(folder.effectiveId, folder.effectiveName) },
                                 onMoveClick = { fileForMoveCopy = Pair(folder, true) },
-                                onCopyClick = { fileForMoveCopy = Pair(folder, false) }
+                                onCopyClick = { fileForMoveCopy = Pair(folder, false) },
+                                onRenameClick = {
+                                    fileForRename = folder
+                                    renameInput = folder.effectiveName
+                                },
+                                onDeleteClick = { fileForDelete = folder }
                             )
                         }
                     }
@@ -812,7 +1025,12 @@ fun FilesScreen(
                                 accountId = effectiveAccountId,
                                 onClick = { openFileInViewer(file, effectiveAccountId, rootNavController, regularFiles) },
                                 onMoveClick = { fileForMoveCopy = Pair(file, true) },
-                                onCopyClick = { fileForMoveCopy = Pair(file, false) }
+                                onCopyClick = { fileForMoveCopy = Pair(file, false) },
+                                onRenameClick = {
+                                    fileForRename = file
+                                    renameInput = file.effectiveName
+                                },
+                                onDeleteClick = { fileForDelete = file }
                             )
                         }
                     }
@@ -834,7 +1052,12 @@ fun FilesScreen(
                                 accountId = effectiveAccountId,
                                 onClick = { viewModel.enterFolder(folder.effectiveId, folder.effectiveName) },
                                 onMoveClick = { fileForMoveCopy = Pair(folder, true) },
-                                onCopyClick = { fileForMoveCopy = Pair(folder, false) }
+                                onCopyClick = { fileForMoveCopy = Pair(folder, false) },
+                                onRenameClick = {
+                                    fileForRename = folder
+                                    renameInput = folder.effectiveName
+                                },
+                                onDeleteClick = { fileForDelete = folder }
                             )
                             Spacer(modifier = Modifier.height(10.dp))
                         }
@@ -852,7 +1075,12 @@ fun FilesScreen(
                                 accountId = effectiveAccountId,
                                 onClick = { openFileInViewer(file, effectiveAccountId, rootNavController, regularFiles) },
                                 onMoveClick = { fileForMoveCopy = Pair(file, true) },
-                                onCopyClick = { fileForMoveCopy = Pair(file, false) }
+                                onCopyClick = { fileForMoveCopy = Pair(file, false) },
+                                onRenameClick = {
+                                    fileForRename = file
+                                    renameInput = file.effectiveName
+                                },
+                                onDeleteClick = { fileForDelete = file }
                             )
                             Spacer(modifier = Modifier.height(10.dp))
                         }
@@ -870,8 +1098,12 @@ fun FileRow(
     accountId: String,
     onClick: (() -> Unit)? = null,
     onMoveClick: (() -> Unit)? = null,
-    onCopyClick: (() -> Unit)? = null
+    onCopyClick: (() -> Unit)? = null,
+    onRenameClick: (() -> Unit)? = null,
+    onDeleteClick: (() -> Unit)? = null
 ) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     val previewUrl = remember(file.effectiveId, accountId) {
         ApiClient.getFileUrl(accountId, file.effectiveId, preview = true)
     }
@@ -953,54 +1185,67 @@ fun FileRow(
                 }
             }
 
-            Spacer(modifier = Modifier.width(14.dp))
+            Spacer(modifier = Modifier.width(16.dp))
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = file.effectiveName,
+                    file.effectiveName,
                     color = TextPrimary,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 15.sp,
-                    maxLines = 1
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
-                Spacer(modifier = Modifier.height(2.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = if (file.isFolderItem) "Folder" else file.formattedSize,
-                        color = TextSecondary,
-                        fontSize = 12.sp
-                    )
-                    if (!file.isFolderItem) {
-                        Text(
-                            text = " • ${file.effectiveType.uppercase()}",
-                            color = TextSecondary.copy(alpha = 0.7f),
-                            fontSize = 11.sp
-                        )
-                    }
-                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = if (file.isFolderItem) "Folder" else "${file.formattedSize} • ${file.effectiveType.uppercase()}",
+                    color = TextSecondary,
+                    fontSize = 12.sp
+                )
             }
 
             Box {
                 IconButton(onClick = { showMenu = true }) {
                     Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = TextSecondary)
                 }
+
                 DropdownMenu(
                     expanded = showMenu,
                     onDismissRequest = { showMenu = false },
                     modifier = Modifier.background(SurfaceDark)
                 ) {
                     DropdownMenuItem(
-                        text = { Text("Open / View", color = TextPrimary) },
-                        leadingIcon = { Icon(Icons.Default.OpenInNew, contentDescription = null, tint = PurpleGradientStart, modifier = Modifier.size(18.dp)) },
+                        text = { Text("Details & Info", color = TextPrimary) },
+                        leadingIcon = { Icon(Icons.Default.Info, contentDescription = null, tint = TextSecondary) },
                         onClick = {
                             showMenu = false
-                            if (onClick != null) onClick() else openFileInViewer(file, accountId, navController)
+                            navController.navigate("file_detail/$accountId/${file.effectiveId}")
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Share Link", color = TextPrimary) },
+                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null, tint = TextSecondary) },
+                        onClick = {
+                            showMenu = false
+                            coroutineScope.launch {
+                                try {
+                                    val resp = ApiClient.apiService.shareFile(ShareRequest(accountId, file.effectiveId))
+                                    val shareUrl = resp.effectiveUrl.ifEmpty { "${ApiClient.API_BASE_URL}/s/${file.effectiveId}" }
+                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(Intent.EXTRA_TEXT, shareUrl)
+                                    }
+                                    context.startActivity(Intent.createChooser(shareIntent, "Share Public Link"))
+                                } catch (e: Exception) {
+                                    Toast.makeText(context, "Failed to create share link", Toast.LENGTH_SHORT).show()
+                                }
+                            }
                         }
                     )
                     if (onMoveClick != null) {
                         DropdownMenuItem(
                             text = { Text("Move to...", color = TextPrimary) },
-                            leadingIcon = { Icon(Icons.Default.DriveFileMove, contentDescription = null, tint = PurpleGradientStart, modifier = Modifier.size(18.dp)) },
+                            leadingIcon = { Icon(Icons.AutoMirrored.Filled.DriveFileMove, contentDescription = null, tint = TextSecondary) },
                             onClick = {
                                 showMenu = false
                                 onMoveClick()
@@ -1009,22 +1254,35 @@ fun FileRow(
                     }
                     if (onCopyClick != null) {
                         DropdownMenuItem(
-                            text = { Text("Copy to...", color = TextPrimary) },
-                            leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null, tint = BlueGradientEnd, modifier = Modifier.size(18.dp)) },
+                            text = { Text("Make a Copy...", color = TextPrimary) },
+                            leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null, tint = TextSecondary) },
                             onClick = {
                                 showMenu = false
                                 onCopyClick()
                             }
                         )
                     }
-                    DropdownMenuItem(
-                        text = { Text("File Details", color = TextPrimary) },
-                        leadingIcon = { Icon(Icons.Default.Info, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(18.dp)) },
-                        onClick = {
-                            showMenu = false
-                            navController.navigate("file_detail/$accountId/${file.effectiveId}")
-                        }
-                    )
+                    if (onRenameClick != null) {
+                        DropdownMenuItem(
+                            text = { Text("Rename", color = TextPrimary) },
+                            leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = TextSecondary) },
+                            onClick = {
+                                showMenu = false
+                                onRenameClick()
+                            }
+                        )
+                    }
+                    if (onDeleteClick != null) {
+                        HorizontalDivider(color = Color(0xFF2C2C3E))
+                        DropdownMenuItem(
+                            text = { Text("Delete", color = Color(0xFFEF5350)) },
+                            leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFEF5350)) },
+                            onClick = {
+                                showMenu = false
+                                onDeleteClick()
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -1038,8 +1296,12 @@ fun FileGridItem(
     accountId: String,
     onClick: (() -> Unit)? = null,
     onMoveClick: (() -> Unit)? = null,
-    onCopyClick: (() -> Unit)? = null
+    onCopyClick: (() -> Unit)? = null,
+    onRenameClick: (() -> Unit)? = null,
+    onDeleteClick: (() -> Unit)? = null
 ) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     val previewUrl = remember(file.effectiveId, accountId) {
         ApiClient.getFileUrl(accountId, file.effectiveId, preview = true)
     }
@@ -1050,7 +1312,6 @@ fun FileGridItem(
         colors = CardDefaults.cardColors(containerColor = SurfaceDark),
         modifier = Modifier
             .fillMaxWidth()
-            .height(170.dp)
             .clickable {
                 if (onClick != null) {
                     onClick()
@@ -1059,12 +1320,14 @@ fun FileGridItem(
                 }
             }
     ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            // Preview Thumbnail Header (top 60% of card)
+        Column(
+            modifier = Modifier.padding(12.dp)
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1.1f)
+                    .height(110.dp)
+                    .clip(RoundedCornerShape(12.dp))
                     .background(Color(0xFF262636)),
                 contentAlignment = Alignment.Center
             ) {
@@ -1094,76 +1357,97 @@ fun FileGridItem(
                     if (file.isVideo) {
                         Box(
                             modifier = Modifier
-                                .size(34.dp)
-                                .background(Color.Black.copy(alpha = 0.65f), CircleShape),
+                                .size(28.dp)
+                                .background(Color.Black.copy(alpha = 0.6f), CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = "Play", tint = Color.White, modifier = Modifier.size(20.dp))
+                            Icon(Icons.Default.PlayArrow, contentDescription = "Video", tint = Color.White, modifier = Modifier.size(18.dp))
                         }
                     }
                 } else if (file.isFolderItem) {
-                    Icon(Icons.Default.Folder, contentDescription = null, tint = PurpleGradientStart, modifier = Modifier.size(44.dp))
+                    Icon(Icons.Default.Folder, contentDescription = null, tint = PurpleGradientStart, modifier = Modifier.size(42.dp))
                 } else if (file.isAudio) {
-                    Icon(Icons.Default.MusicNote, contentDescription = null, tint = BlueGradientEnd, modifier = Modifier.size(40.dp))
+                    Icon(Icons.Default.MusicNote, contentDescription = null, tint = BlueGradientEnd, modifier = Modifier.size(38.dp))
                 } else if (file.isPdf) {
-                    Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = Color(0xFFEF4444), modifier = Modifier.size(40.dp))
+                    Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = Color(0xFFEF4444), modifier = Modifier.size(38.dp))
                 } else if (file.isTextOrCode) {
-                    Icon(Icons.Default.Code, contentDescription = null, tint = Color(0xFF10B981), modifier = Modifier.size(40.dp))
+                    Icon(Icons.Default.Code, contentDescription = null, tint = Color(0xFF10B981), modifier = Modifier.size(38.dp))
                 } else {
                     Text(
                         text = file.effectiveType.take(4).uppercase(),
                         color = TextPrimary,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 18.sp
+                        fontSize = 14.sp
                     )
                 }
             }
 
-            // Info Details
+            Spacer(modifier = Modifier.height(10.dp))
+
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = file.effectiveName,
+                        file.effectiveName,
                         color = TextPrimary,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 13.sp,
-                        maxLines = 1
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = if (file.isFolderItem) "Folder" else file.formattedSize,
                         color = TextSecondary,
                         fontSize = 11.sp
                     )
                 }
+
                 Box {
-                    IconButton(
-                        onClick = { showMenu = true },
-                        modifier = Modifier.size(24.dp)
-                    ) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = TextSecondary, modifier = Modifier.size(18.dp))
+                    IconButton(onClick = { showMenu = true }, modifier = Modifier.size(24.dp)) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = TextSecondary, modifier = Modifier.size(16.dp))
                     }
+
                     DropdownMenu(
                         expanded = showMenu,
                         onDismissRequest = { showMenu = false },
                         modifier = Modifier.background(SurfaceDark)
                     ) {
                         DropdownMenuItem(
-                            text = { Text("Open / View", color = TextPrimary) },
-                            leadingIcon = { Icon(Icons.Default.OpenInNew, contentDescription = null, tint = PurpleGradientStart, modifier = Modifier.size(18.dp)) },
+                            text = { Text("Details & Info", color = TextPrimary) },
+                            leadingIcon = { Icon(Icons.Default.Info, contentDescription = null, tint = TextSecondary) },
                             onClick = {
                                 showMenu = false
-                                if (onClick != null) onClick() else openFileInViewer(file, accountId, navController)
+                                navController.navigate("file_detail/$accountId/${file.effectiveId}")
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Share Link", color = TextPrimary) },
+                            leadingIcon = { Icon(Icons.Default.Share, contentDescription = null, tint = TextSecondary) },
+                            onClick = {
+                                showMenu = false
+                                coroutineScope.launch {
+                                    try {
+                                        val resp = ApiClient.apiService.shareFile(ShareRequest(accountId, file.effectiveId))
+                                        val shareUrl = resp.effectiveUrl.ifEmpty { "${ApiClient.API_BASE_URL}/s/${file.effectiveId}" }
+                                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                            type = "text/plain"
+                                            putExtra(Intent.EXTRA_TEXT, shareUrl)
+                                        }
+                                        context.startActivity(Intent.createChooser(shareIntent, "Share Public Link"))
+                                    } catch (e: Exception) {
+                                        Toast.makeText(context, "Failed to create share link", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
                             }
                         )
                         if (onMoveClick != null) {
                             DropdownMenuItem(
                                 text = { Text("Move to...", color = TextPrimary) },
-                                leadingIcon = { Icon(Icons.Default.DriveFileMove, contentDescription = null, tint = PurpleGradientStart, modifier = Modifier.size(18.dp)) },
+                                leadingIcon = { Icon(Icons.AutoMirrored.Filled.DriveFileMove, contentDescription = null, tint = TextSecondary) },
                                 onClick = {
                                     showMenu = false
                                     onMoveClick()
@@ -1172,22 +1456,35 @@ fun FileGridItem(
                         }
                         if (onCopyClick != null) {
                             DropdownMenuItem(
-                                text = { Text("Copy to...", color = TextPrimary) },
-                                leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null, tint = BlueGradientEnd, modifier = Modifier.size(18.dp)) },
+                                text = { Text("Make a Copy...", color = TextPrimary) },
+                                leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null, tint = TextSecondary) },
                                 onClick = {
                                     showMenu = false
                                     onCopyClick()
                                 }
                             )
                         }
-                        DropdownMenuItem(
-                            text = { Text("File Details", color = TextPrimary) },
-                            leadingIcon = { Icon(Icons.Default.Info, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(18.dp)) },
-                            onClick = {
-                                showMenu = false
-                                navController.navigate("file_detail/$accountId/${file.effectiveId}")
-                            }
-                        )
+                        if (onRenameClick != null) {
+                            DropdownMenuItem(
+                                text = { Text("Rename", color = TextPrimary) },
+                                leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = TextSecondary) },
+                                onClick = {
+                                    showMenu = false
+                                    onRenameClick()
+                                }
+                            )
+                        }
+                        if (onDeleteClick != null) {
+                            HorizontalDivider(color = Color(0xFF2C2C3E))
+                            DropdownMenuItem(
+                                text = { Text("Delete", color = Color(0xFFEF5350)) },
+                                leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFEF5350)) },
+                                onClick = {
+                                    showMenu = false
+                                    onDeleteClick()
+                                }
+                            )
+                        }
                     }
                 }
             }

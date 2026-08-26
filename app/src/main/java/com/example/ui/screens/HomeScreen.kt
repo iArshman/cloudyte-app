@@ -94,6 +94,12 @@ class HomeViewModel(application: android.app.Application) : androidx.lifecycle.A
             _isLoading.value = true
             _errorMessage.value = null
             try {
+                val db = com.example.db.AppDatabase.getDatabase(getApplication())
+                val cachedAccounts = db.accountDao().getAllAccounts()
+                if (cachedAccounts.isNotEmpty()) {
+                    _accounts.value = cachedAccounts.map { it.toAccount() }
+                }
+
                 try {
                     val p = ApiClient.apiService.getProfile()
                     _profile.value = p
@@ -107,13 +113,15 @@ class HomeViewModel(application: android.app.Application) : androidx.lifecycle.A
                     Log.w("HomeViewModel", "Accounts call failed: ${e.message}")
                     emptyList()
                 }
-                _accounts.value = accs
+                if (accs.isNotEmpty()) {
+                    _accounts.value = accs
+                    db.accountDao().insertAccounts(accs.map { com.example.db.LocalAccount.fromAccount(it) })
+                }
 
-                val defaultAcc = accs.firstOrNull { it.isDefault == true } ?: accs.firstOrNull()
+                val defaultAcc = _accounts.value.firstOrNull { it.isDefault == true } ?: _accounts.value.firstOrNull()
                 val accId = defaultAcc?.effectiveId?.ifEmpty { null }
                 _currentAccountId.value = accId
 
-                val db = com.example.db.AppDatabase.getDatabase(getApplication())
                 val cachedFiles = db.cloudFileDao().getFilesForAccount(accId).map { it.toCloudFile() }
                 if (cachedFiles.isNotEmpty()) {
                     _recentFiles.value = cachedFiles.take(8)
@@ -126,7 +134,7 @@ class HomeViewModel(application: android.app.Application) : androidx.lifecycle.A
                     emptyList()
                 }
                 if (files.isNotEmpty()) {
-                    db.cloudFileDao().insertFiles(files.map { com.example.db.LocalCloudFile.fromCloudFile(it, accId) })
+                    db.cloudFileDao().insertFiles(files.map { com.example.db.LocalCloudFile.fromCloudFile(it, accId, "root") })
                     FileRepository.cacheFiles(files)
                     _recentFiles.value = files.take(8)
                 }
