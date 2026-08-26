@@ -53,6 +53,8 @@ import androidx.work.WorkManager
 import com.example.api.Account
 import com.example.api.ApiClient
 import com.example.api.UserProfile
+import com.example.db.AppDatabase
+import com.example.db.LocalAccount
 import com.example.sync.BackupWorker
 import com.example.sync.SyncLog
 import com.example.sync.SyncLogLevel
@@ -61,6 +63,7 @@ import com.example.sync.SyncPreferences
 import com.example.sync.SyncState
 import com.example.sync.SyncStatusInfo
 import com.example.ui.theme.*
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -71,6 +74,8 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
+    private val db = AppDatabase.getDatabase(application)
+
     private val _profile = MutableStateFlow<UserProfile?>(null)
     val profile: StateFlow<UserProfile?> = _profile.asStateFlow()
 
@@ -83,6 +88,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     val syncStatus: StateFlow<SyncStatusInfo> = SyncLogger.statusFlow
     val syncLogs: StateFlow<List<SyncLog>> = SyncLogger.logsFlow
+    val uploadRecordCount: Flow<Int> = db.uploadRecordDao().countSuccessfulUploadsFlow()
 
     init {
         SyncLogger.init(application)
@@ -91,10 +97,17 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     private fun loadData() {
         viewModelScope.launch {
+            // Load accounts from DB immediately for instant UI
+            val cachedAccounts = db.accountDao().getAllAccounts()
+            if (cachedAccounts.isNotEmpty()) {
+                _accounts.value = cachedAccounts.map { it.toAccount() }
+            }
+
             try {
                 _profile.value = ApiClient.apiService.getProfile()
                 val accs = ApiClient.apiService.getAccounts()
                 _accounts.value = accs
+                db.accountDao().insertAccounts(accs.map { LocalAccount.fromAccount(it) })
             } catch (e: Exception) {
                 Log.w("SettingsViewModel", "Profile error: ${e.message}")
             }
@@ -122,10 +135,14 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun syncNow() {
+    fun syncNow(forceReupload: Boolean = false) {
         val context = getApplication<Application>()
-        SyncLogger.log("Manual Sync requested by user.", SyncLogLevel.INFO)
-        val data = Data.Builder().putBoolean("is_manual", true).build()
+        val modeText = if (forceReupload) "Force Re-upload All Files" else "Smart Sync (Upload New & Modified Only)"
+        SyncLogger.log("Manual Sync requested: $modeText", SyncLogLevel.INFO)
+        val data = Data.Builder()
+            .putBoolean("is_manual", true)
+            .putBoolean("force_reupload", forceReupload)
+            .build()
         val workRequest = OneTimeWorkRequestBuilder<BackupWorker>()
             .setInputData(data)
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
@@ -135,6 +152,20 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             ExistingWorkPolicy.REPLACE,
             workRequest
         )
+    }
+
+    fun clearUploadHistory() {
+        viewModelScope.launch {
+            db.uploadRecordDao().clearHistory()
+            SyncLogger.log("Local upload history registry cleared.", SyncLogLevel.INFO)
+        }
+    }
+
+    fun clearFilesCache() {
+        viewModelScope.launch {
+            db.cloudFileDao().clearAll()
+            SyncLogger.log("Local drive file cache cleared.", SyncLogLevel.INFO)
+        }
     }
 
     fun clearLogs() {
@@ -179,9 +210,13 @@ fun SettingsScreen(navController: NavController, rootNavController: NavControlle
     val backupAccountId by viewModel.backupAccountId.collectAsState(initial = null)
     val syncStatus by viewModel.syncStatus.collectAsState()
     val syncLogs by viewModel.syncLogs.collectAsState()
+    val uploadRecordCount by viewModel.uploadRecordCount.collectAsState(initial = 0)
 
     var showAccountSelector by remember { mutableStateOf(false) }
     var showLogsDialog by remember { mutableStateOf(false) }
+    var showSyncOptionsDialog by remember { mutableStateOf(false) }
+    var showClearHistoryConfirm by remember { mutableStateOf(false) }
+    var showClearCacheConfirm by remember { mutableStateOf(false) }
 
     val folderPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
@@ -195,6 +230,147 @@ fun SettingsScreen(navController: NavController, rootNavController: NavControlle
             }
             viewModel.setBackupUri(it.toString())
         }
+    }
+
+    if (showSyncOptionsDialog) {
+        AlertDialog(
+            onDismissRequest = { showSyncOptionsDialog = false },
+            containerColor = SurfaceDark,
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Sync, contentDescription = null, tint = PurpleGradientStart)
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text("Sync Backup Options", color = TextPrimary, fontWeight = FontWeight.Bold)
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "Select your preferred synchronization mode for backing up local files to your cloud drive:",
+                        color = TextSecondary,
+                        fontSize = 13.sp
+                    )
+
+                    // Option 1: Smart Sync
+                    Card(
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = BackgroundDark),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                showSyncOptionsDialog = false
+                                viewModel.syncNow(forceReupload = false)
+                            }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .background(PurpleGradientStart.copy(alpha = 0.2f), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.Bolt, contentDescription = null, tint = PurpleGradientStart, modifier = Modifier.size(20.dp))
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text("Smart Sync (Incremental)", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text("Uploads new & modified files only. Skips already uploaded files for maximum speed.", color = TextSecondary, fontSize = 11.sp)
+                            }
+                        }
+                    }
+
+                    // Option 2: Full Re-Upload
+                    Card(
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = BackgroundDark),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                showSyncOptionsDialog = false
+                                viewModel.syncNow(forceReupload = true)
+                            }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .background(Color(0xFFFFA726).copy(alpha = 0.2f), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.Refresh, contentDescription = null, tint = Color(0xFFFFA726), modifier = Modifier.size(20.dp))
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text("Force Re-upload All", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text("Re-uploads all local files to the drive regardless of local cache.", color = TextSecondary, fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showSyncOptionsDialog = false }) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            }
+        )
+    }
+
+    if (showClearHistoryConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearHistoryConfirm = false },
+            containerColor = SurfaceDark,
+            title = { Text("Reset Sync Registry", color = TextPrimary) },
+            text = { Text("Are you sure you want to clear the local upload history? On next sync, all files will be checked freshly against the remote drive.", color = TextSecondary) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showClearHistoryConfirm = false
+                        viewModel.clearUploadHistory()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF5350))
+                ) {
+                    Text("Clear Registry", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearHistoryConfirm = false }) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            }
+        )
+    }
+
+    if (showClearCacheConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearCacheConfirm = false },
+            containerColor = SurfaceDark,
+            title = { Text("Clear Drive Cache", color = TextPrimary) },
+            text = { Text("This removes locally cached file listings from SQLite. Files will be freshly fetched on next navigation.", color = TextSecondary) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showClearCacheConfirm = false
+                        viewModel.clearFilesCache()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = PurpleGradientStart)
+                ) {
+                    Text("Clear Cache", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearCacheConfirm = false }) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            }
+        )
     }
 
     if (showAccountSelector) {
@@ -419,7 +595,7 @@ fun SettingsScreen(navController: NavController, rootNavController: NavControlle
                     val isSyncing = syncStatus.state == SyncState.SYNCING || syncStatus.state == SyncState.SCANNING
 
                     Button(
-                        onClick = { viewModel.syncNow() },
+                        onClick = { showSyncOptionsDialog = true },
                         enabled = !isSyncing,
                         modifier = Modifier.fillMaxWidth().height(48.dp),
                         colors = ButtonDefaults.buttonColors(
@@ -439,7 +615,69 @@ fun SettingsScreen(navController: NavController, rootNavController: NavControlle
                         } else {
                             Icon(Icons.Default.Sync, contentDescription = null, tint = Color.White)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Sync Now", color = Color.White, fontWeight = FontWeight.Bold)
+                            Text("Sync Now (Smart / Force)", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+
+        // Local SQLite Cache & Deduplication Stats
+        item {
+            Text("Local Cache & Deduplication Registry", color = PurpleGradientStart, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Spacer(modifier = Modifier.height(16.dp))
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .background(PurpleGradientStart.copy(alpha = 0.15f), RoundedCornerShape(10.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Default.Storage, contentDescription = null, tint = PurpleGradientStart, modifier = Modifier.size(22.dp))
+                        }
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Room Database Cache", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            Text("$uploadRecordCount uploaded file(s) registered", color = TextSecondary, fontSize = 12.sp)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        "Cloudyte caches drive folder states locally for zero-latency browsing, and maintains a file fingerprint database to avoid redundant uploads during sync.",
+                        color = TextSecondary,
+                        fontSize = 12.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { showClearHistoryConfirm = true },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary)
+                        ) {
+                            Text("Reset Registry", fontSize = 11.sp, maxLines = 1)
+                        }
+
+                        OutlinedButton(
+                            onClick = { showClearCacheConfirm = true },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary)
+                        ) {
+                            Text("Clear Cache", fontSize = 11.sp, maxLines = 1)
                         }
                     }
                 }
@@ -553,10 +791,26 @@ fun SettingsScreen(navController: NavController, rootNavController: NavControlle
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(28.dp))
+            Spacer(modifier = Modifier.height(24.dp))
         }
 
-        // Logout
+        // About & Logout
+        item {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("App Info", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Cloudyte Multi-Cloud Mobile v1.2", color = TextSecondary, fontSize = 13.sp)
+                    Text("Unified Telegram, Google Drive & OneDrive Client", color = TextSecondary, fontSize = 12.sp)
+                }
+            }
+            Spacer(modifier = Modifier.height(20.dp))
+        }
+
         item {
             Button(
                 onClick = {
@@ -567,35 +821,45 @@ fun SettingsScreen(navController: NavController, rootNavController: NavControlle
                     }
                 },
                 modifier = Modifier.fillMaxWidth().height(50.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(alpha = 0.15f), contentColor = Color.Red),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF5350)),
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-                    Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Logout", fontWeight = FontWeight.Bold)
-                }
+                Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = null, tint = Color.White)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Log Out", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
             }
-            Spacer(modifier = Modifier.height(32.dp))
         }
     }
 }
 
 @Composable
 fun SyncStatusCard(syncStatus: SyncStatusInfo) {
-    val (statusLabel, statusColor, statusBg) = when (syncStatus.state) {
-        SyncState.IDLE -> Triple("Idle", TextSecondary, SurfaceDark)
-        SyncState.SCANNING -> Triple("Scanning Files...", Color(0xFF42A5F5), Color(0xFF1E2A38))
-        SyncState.SYNCING -> Triple("Syncing in Progress", Color(0xFFAB47BC), Color(0xFF2C1938))
-        SyncState.SUCCESS -> Triple("Up to Date", Color(0xFF4CAF50), Color(0xFF1B3320))
-        SyncState.ERROR -> Triple("Sync Warning / Failed", Color(0xFFEF5350), Color(0xFF3B1E22))
+    val infiniteTransition = rememberInfiniteTransition(label = "sync_pulse")
+    val pulseAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.4f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(800, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulse_alpha"
+    )
+
+    val isWorking = syncStatus.state == SyncState.SYNCING || syncStatus.state == SyncState.SCANNING
+
+    val (statusColor, statusTitle) = when (syncStatus.state) {
+        SyncState.IDLE -> TextSecondary to "Ready"
+        SyncState.SCANNING -> PurpleGradientStart to "Scanning Local Files..."
+        SyncState.SYNCING -> PurpleGradientStart to "Syncing to Cloud Drive..."
+        SyncState.SUCCESS -> Color(0xFF4CAF50) to "Sync Complete"
+        SyncState.ERROR -> Color(0xFFEF5350) to "Sync Failed"
     }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(statusBg, RoundedCornerShape(12.dp))
-            .border(1.dp, statusColor.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
+            .background(Color(0xFF161622), RoundedCornerShape(12.dp))
+            .border(1.dp, if (isWorking) PurpleGradientStart.copy(alpha = pulseAlpha) else Color(0xFF232332), RoundedCornerShape(12.dp))
             .padding(14.dp)
     ) {
         Row(
@@ -607,75 +871,70 @@ fun SyncStatusCard(syncStatus: SyncStatusInfo) {
                 Box(
                     modifier = Modifier
                         .size(10.dp)
-                        .background(statusColor, CircleShape)
+                        .background(statusColor.copy(alpha = if (isWorking) pulseAlpha else 1f), CircleShape)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = statusLabel,
-                    color = statusColor,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold
+                    text = statusTitle,
+                    color = TextPrimary,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp
                 )
             }
 
-            if (syncStatus.lastSyncTime > 0L) {
-                val timeFormatted = SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date(syncStatus.lastSyncTime))
+            if (syncStatus.lastSyncTime > 0) {
+                val timeStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(syncStatus.lastSyncTime))
+                Text("Last: $timeStr", color = TextSecondary, fontSize = 11.sp)
+            }
+        }
+
+        if (syncStatus.state == SyncState.SYNCING && syncStatus.totalFilesCount > 0) {
+            Spacer(modifier = Modifier.height(10.dp))
+            val progress = (syncStatus.uploadedFilesCount.toFloat() / syncStatus.totalFilesCount.toFloat()).coerceIn(0f, 1f)
+            LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(3.dp)),
+                color = PurpleGradientStart,
+                trackColor = Color(0xFF2C2C3E),
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
                 Text(
-                    text = "Last: $timeFormatted",
+                    text = "${syncStatus.uploadedFilesCount} of ${syncStatus.totalFilesCount} files",
                     color = TextSecondary,
-                    fontSize = 11.sp
+                    fontSize = 12.sp
+                )
+                Text(
+                    text = "${(progress * 100).toInt()}%",
+                    color = PurpleGradientStart,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp
                 )
             }
         }
 
-        if (syncStatus.state == SyncState.SYNCING || syncStatus.state == SyncState.SCANNING) {
-            Spacer(modifier = Modifier.height(10.dp))
-            if (syncStatus.totalFilesCount > 0) {
-                val progress = (syncStatus.uploadedFilesCount.toFloat() / syncStatus.totalFilesCount.toFloat()).coerceIn(0f, 1f)
-                LinearProgressIndicator(
-                    progress = { progress },
-                    modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
-                    color = PurpleGradientStart,
-                    trackColor = BackgroundDark,
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = if (syncStatus.currentFile.isNotBlank()) "Uploading: ${syncStatus.currentFile}" else syncStatus.currentAction,
-                        color = TextPrimary,
-                        fontSize = 12.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Text(
-                        text = "${syncStatus.uploadedFilesCount}/${syncStatus.totalFilesCount}",
-                        color = TextSecondary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            } else {
-                LinearProgressIndicator(
-                    modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
-                    color = PurpleGradientStart,
-                    trackColor = BackgroundDark
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = syncStatus.currentAction.ifBlank { "Checking files..." },
-                    color = TextPrimary,
-                    fontSize = 12.sp
-                )
-            }
-        } else {
+        if (syncStatus.currentFile.isNotBlank()) {
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = syncStatus.lastSyncSummary,
+                text = "Processing: ${syncStatus.currentFile}",
                 color = TextSecondary,
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+
+        if (syncStatus.lastSyncSummary.isNotBlank()) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = syncStatus.lastSyncSummary,
+                color = if (syncStatus.state == SyncState.ERROR) Color(0xFFFF8A80) else TextSecondary,
                 fontSize = 12.sp
             )
         }
@@ -689,128 +948,95 @@ fun SyncLogsDialog(
     onClear: () -> Unit
 ) {
     val context = LocalContext.current
-    var filterType by remember { mutableStateOf("ALL") }
     val listState = rememberLazyListState()
 
-    val filteredLogs = remember(logs, filterType) {
-        when (filterType) {
-            "ERRORS" -> logs.filter { it.level == SyncLogLevel.ERROR }
-            "SUCCESS" -> logs.filter { it.level == SyncLogLevel.SUCCESS }
-            else -> logs
-        }
-    }
-
-    LaunchedEffect(filteredLogs.size) {
-        if (filteredLogs.isNotEmpty()) {
-            listState.animateScrollToItem(filteredLogs.size - 1)
+    LaunchedEffect(logs.size) {
+        if (logs.isNotEmpty()) {
+            listState.animateScrollToItem(logs.size - 1)
         }
     }
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF0F0F18)),
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight(0.85f)
         ) {
-            Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-                // Header
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp)
+            ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Terminal, contentDescription = null, tint = PurpleGradientStart)
+                        Icon(Icons.Default.Terminal, contentDescription = null, tint = PurpleGradientStart, modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Sync Activity Logger",
-                            color = TextPrimary,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp
-                        )
+                        Text("Sync Logger Terminal", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     }
-                    IconButton(onClick = onDismiss) {
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
                         Icon(Icons.Default.Close, contentDescription = "Close", tint = TextSecondary)
                     }
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Filter chips
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    FilterChip(
-                        selected = filterType == "ALL",
-                        onClick = { filterType = "ALL" },
-                        label = { Text("All (${logs.size})", fontSize = 12.sp) }
-                    )
-                    FilterChip(
-                        selected = filterType == "SUCCESS",
-                        onClick = { filterType = "SUCCESS" },
-                        label = { Text("Uploaded", fontSize = 12.sp) }
-                    )
-                    FilterChip(
-                        selected = filterType == "ERRORS",
-                        onClick = { filterType = "ERRORS" },
-                        label = { Text("Errors", fontSize = 12.sp) }
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Logs list (Terminal box)
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .background(Color(0xFF0F0F17), RoundedCornerShape(12.dp))
-                        .border(1.dp, Color(0xFF2A2A3D), RoundedCornerShape(12.dp))
-                        .padding(8.dp)
+                        .background(Color(0xFF07070D), RoundedCornerShape(8.dp))
+                        .border(1.dp, Color(0xFF1E1E2F), RoundedCornerShape(8.dp))
+                        .padding(10.dp)
                 ) {
-                    if (filteredLogs.isEmpty()) {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text("No log entries match the selected filter", color = TextSecondary, fontSize = 13.sp)
-                        }
+                    if (logs.isEmpty()) {
+                        Text("No logs recorded yet.", color = TextSecondary, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
                     } else {
-                        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-                            items(filteredLogs, key = { it.id }) { item ->
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            items(logs) { log ->
+                                val (badgeColor, badgeIcon) = when (log.level) {
+                                    SyncLogLevel.SUCCESS -> Color(0xFF4CAF50) to "✓"
+                                    SyncLogLevel.ERROR -> Color(0xFFEF5350) to "✗"
+                                    SyncLogLevel.WARNING -> Color(0xFFFFA726) to "!"
+                                    SyncLogLevel.INFO -> Color(0xFF42A5F5) to "•"
+                                }
+
                                 Row(
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 2.dp),
                                     verticalAlignment = Alignment.Top
                                 ) {
-                                    val (badgeColor, badgeIcon) = when (item.level) {
-                                        SyncLogLevel.SUCCESS -> Color(0xFF4CAF50) to "✓"
-                                        SyncLogLevel.ERROR -> Color(0xFFEF5350) to "✗"
-                                        SyncLogLevel.WARNING -> Color(0xFFFFA726) to "!"
-                                        SyncLogLevel.INFO -> Color(0xFF42A5F5) to "•"
-                                    }
                                     Text(
-                                        text = item.timeFormatted,
-                                        color = TextSecondary,
+                                        text = "${log.timeFormatted} ",
+                                        color = Color.Gray,
                                         fontSize = 11.sp,
-                                        fontFamily = FontFamily.Monospace,
-                                        modifier = Modifier.width(60.dp)
+                                        fontFamily = FontFamily.Monospace
                                     )
                                     Text(
                                         text = "$badgeIcon ",
                                         color = badgeColor,
-                                        fontSize = 12.sp,
+                                        fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
                                         fontFamily = FontFamily.Monospace
                                     )
                                     Text(
-                                        text = item.message,
-                                        color = when (item.level) {
+                                        text = log.message,
+                                        color = when (log.level) {
                                             SyncLogLevel.ERROR -> Color(0xFFFF8A80)
                                             SyncLogLevel.SUCCESS -> Color(0xFFA5D6A7)
                                             SyncLogLevel.WARNING -> Color(0xFFFFE082)
-                                            else -> TextPrimary
+                                            else -> Color(0xFFD4D4D8)
                                         },
-                                        fontSize = 12.sp,
+                                        fontSize = 11.sp,
                                         fontFamily = FontFamily.Monospace
                                     )
                                 }
@@ -819,37 +1045,39 @@ fun SyncLogsDialog(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
-                // Bottom actions
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    OutlinedButton(
-                        onClick = onClear,
-                        shape = RoundedCornerShape(10.dp)
+                    TextButton(
+                        onClick = {
+                            val allLogsText = logs.joinToString("\n") { "[${it.timeFormatted}] ${it.level.name}: ${it.message}" }
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("Sync Logs", allLogsText))
+                            Toast.makeText(context, "Logs copied to clipboard", Toast.LENGTH_SHORT).show()
+                        }
                     ) {
-                        Icon(Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp), tint = TextSecondary)
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Clear", fontSize = 13.sp)
+                        Text("Copy All", color = TextSecondary, fontSize = 12.sp)
                     }
 
-                    Button(
-                        onClick = {
-                            val textToCopy = logs.joinToString("\n") { "[${it.timeFormatted}] [${it.level}] ${it.message}" }
-                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            val clip = ClipData.newPlainText("Sync Logs", textToCopy)
-                            clipboard.setPrimaryClip(clip)
-                            Toast.makeText(context, "Logs copied to clipboard", Toast.LENGTH_SHORT).show()
-                        },
-                        shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = PurpleGradientStart)
-                    ) {
-                        Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Copy Logs", fontSize = 13.sp)
+                    Row {
+                        TextButton(onClick = onClear) {
+                            Icon(Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFFEF5350))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Clear", color = Color(0xFFEF5350), fontSize = 12.sp)
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = onDismiss,
+                            colors = ButtonDefaults.buttonColors(containerColor = PurpleGradientStart),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("Close", fontSize = 12.sp)
+                        }
                     }
                 }
             }

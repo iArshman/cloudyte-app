@@ -23,12 +23,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.example.api.Account
 import com.example.api.ApiClient
+import com.example.db.AppDatabase
+import com.example.db.LocalAccount
 import com.example.ui.theme.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -36,7 +39,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.Locale
 
-class AccountsViewModel : ViewModel() {
+class AccountsViewModel(application: Application) : AndroidViewModel(application) {
+    private val db = AppDatabase.getDatabase(application)
+
     private val _accounts = MutableStateFlow<List<Account>>(emptyList())
     val accounts: StateFlow<List<Account>> = _accounts.asStateFlow()
 
@@ -52,15 +57,22 @@ class AccountsViewModel : ViewModel() {
 
     fun loadAccounts() {
         viewModelScope.launch {
-            _isLoading.value = true
+            val cached = db.accountDao().getAllAccounts()
+            if (cached.isNotEmpty()) {
+                _accounts.value = cached.map { it.toAccount() }
+            }
+
+            _isLoading.value = cached.isEmpty()
             _errorMessage.value = null
             try {
                 val accs = ApiClient.apiService.getAccounts()
                 _accounts.value = accs
+                db.accountDao().insertAccounts(accs.map { LocalAccount.fromAccount(it) })
             } catch (e: Exception) {
                 Log.e("AccountsViewModel", "Failed to load accounts", e)
-                _errorMessage.value = e.localizedMessage ?: "Failed to load accounts"
-                _accounts.value = emptyList()
+                if (_accounts.value.isEmpty()) {
+                    _errorMessage.value = e.localizedMessage ?: "Failed to load accounts"
+                }
             } finally {
                 _isLoading.value = false
             }
@@ -72,6 +84,7 @@ class AccountsViewModel : ViewModel() {
             try {
                 val res = ApiClient.apiService.deleteAccount(id)
                 if (res.isSuccessful) {
+                    db.accountDao().deleteAccountById(id)
                     loadAccounts()
                 }
             } catch (e: Exception) {
