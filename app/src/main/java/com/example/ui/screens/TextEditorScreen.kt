@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.example.api.ApiClient
 import com.example.api.FileRepository
+import com.example.api.OfflineFileManager
 import com.example.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -70,16 +71,26 @@ fun TextEditorScreen(
         errorMessage = null
         try {
             val content = withContext(Dispatchers.IO) {
-                val token = ApiClient.getToken()
-                val requestBuilder = Request.Builder().url(fileUrl)
-                if (!token.isNullOrEmpty()) {
-                    requestBuilder.addHeader("Authorization", "Bearer $token")
-                }
-                val response = ApiClient.okHttpClient.newCall(requestBuilder.build()).execute()
-                if (response.isSuccessful) {
-                    response.body?.string() ?: ""
+                val offlineFile = OfflineFileManager.findOfflineFile(context, accountId, fileId)
+                if (offlineFile != null && offlineFile.exists() && offlineFile.length() > 0) {
+                    offlineFile.readText()
                 } else {
-                    throw Exception("Server returned HTTP ${response.code}")
+                    val token = ApiClient.getToken()
+                    val requestBuilder = Request.Builder().url(fileUrl)
+                    if (!token.isNullOrEmpty()) {
+                        requestBuilder.addHeader("Authorization", "Bearer $token")
+                    }
+                    val response = ApiClient.okHttpClient.newCall(requestBuilder.build()).execute()
+                    if (response.isSuccessful) {
+                        val text = response.body?.string() ?: ""
+                        // Auto-cache for offline use
+                        file?.let {
+                            OfflineFileManager.autoCacheOnView(context, accountId, it)
+                        }
+                        text
+                    } else {
+                        throw Exception("Server returned HTTP ${response.code}")
+                    }
                 }
             }
             textContent = content

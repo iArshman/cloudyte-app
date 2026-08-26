@@ -29,8 +29,10 @@ import coil.compose.SubcomposeAsyncImage
 import coil.compose.SubcomposeAsyncImageContent
 import com.example.api.ApiClient
 import com.example.api.CloudFile
+import com.example.api.OfflineFileManager
 import com.example.ui.openFileInViewer
 import com.example.ui.theme.*
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -312,6 +314,101 @@ fun FileDetailScreen(
                     DetailRow("Uploaded", dateStr)
                     DetailRow("Size", nonNullFile.formattedSize)
                     DetailRow("Type", nonNullFile.effectiveType.uppercase())
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Offline status and quick actions
+            val downloadedFiles by OfflineFileManager.downloadedFiles.collectAsState()
+            val activeDownloads by OfflineFileManager.activeDownloads.collectAsState()
+            val isDownloaded = downloadedFiles.contains(nonNullFile.effectiveId) || OfflineFileManager.isDownloaded(context, accountId, nonNullFile.effectiveId)
+            val downloadProgress = activeDownloads[nonNullFile.effectiveId]
+            val coroutineScope = rememberCoroutineScope()
+
+            LaunchedEffect(nonNullFile.effectiveId) {
+                OfflineFileManager.autoCacheOnView(context, accountId, nonNullFile)
+            }
+
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .background(
+                                if (isDownloaded) Color(0xFF10B981).copy(alpha = 0.15f) else PurpleGradientStart.copy(alpha = 0.15f),
+                                CircleShape
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (isDownloaded) Icons.Default.CheckCircle else Icons.Default.CloudDownload,
+                            contentDescription = null,
+                            tint = if (isDownloaded) Color(0xFF10B981) else PurpleGradientStart,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(12.dp))
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = if (isDownloaded) "Offline Available" else if (downloadProgress != null) "Downloading for Offline..." else "Auto-Cached for Offline",
+                            color = TextPrimary,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 14.sp
+                        )
+                        if (downloadProgress != null) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            LinearProgressIndicator(
+                                progress = { downloadProgress },
+                                modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                                color = PurpleGradientStart,
+                                trackColor = Color.Gray.copy(alpha = 0.3f)
+                            )
+                        } else {
+                            Text(
+                                text = if (isDownloaded) "Available without internet" else "Tap to download full copy",
+                                color = TextSecondary,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+
+                    if (!isDownloaded && downloadProgress == null) {
+                        IconButton(
+                            onClick = {
+                                coroutineScope.launch {
+                                    val res = OfflineFileManager.downloadFile(context, accountId, nonNullFile)
+                                    if (res.isSuccess) {
+                                        actionFeedbackMessage = "Saved offline successfully!"
+                                    } else {
+                                        actionFeedbackMessage = "Failed to download offline: ${res.exceptionOrNull()?.message}"
+                                    }
+                                }
+                            }
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = "Download Offline", tint = PurpleGradientStart)
+                        }
+                    } else if (isDownloaded) {
+                        IconButton(
+                            onClick = {
+                                OfflineFileManager.deleteOfflineFile(context, accountId, nonNullFile.effectiveId)
+                                actionFeedbackMessage = "Removed from offline cache"
+                            }
+                        ) {
+                            Icon(Icons.Default.DeleteOutline, contentDescription = "Delete Offline Copy", tint = TextSecondary)
+                        }
+                    }
                 }
             }
             

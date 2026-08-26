@@ -52,9 +52,11 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.example.api.Account
 import com.example.api.ApiClient
+import com.example.api.OfflineFileManager
 import com.example.api.UserProfile
 import com.example.db.AppDatabase
 import com.example.db.LocalAccount
+import com.example.sync.AutoSyncManager
 import com.example.sync.BackupWorker
 import com.example.sync.SyncLog
 import com.example.sync.SyncLogLevel
@@ -88,7 +90,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     val syncStatus: StateFlow<SyncStatusInfo> = SyncLogger.statusFlow
     val syncLogs: StateFlow<List<SyncLog>> = SyncLogger.logsFlow
-    val uploadRecordCount: Flow<Int> = db.uploadRecordDao().countSuccessfulUploadsFlow()
 
     init {
         SyncLogger.init(application)
@@ -115,57 +116,15 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun setAutoBackupEnabled(enabled: Boolean) {
-        viewModelScope.launch {
-            val context = getApplication<Application>()
-            SyncPreferences.setAutoBackupEnabled(context, enabled)
-            if (enabled) {
-                val workRequest = PeriodicWorkRequestBuilder<BackupWorker>(15, TimeUnit.MINUTES)
-                    .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
-                    .build()
-                WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-                    "AutoBackup",
-                    ExistingPeriodicWorkPolicy.UPDATE,
-                    workRequest
-                )
-                SyncLogger.log("Auto-backup scheduled (every 15 mins).", SyncLogLevel.INFO)
-            } else {
-                WorkManager.getInstance(context).cancelUniqueWork("AutoBackup")
-                SyncLogger.log("Auto-backup schedule disabled.", SyncLogLevel.INFO)
-            }
-        }
+        val context = getApplication<Application>()
+        AutoSyncManager.setAutoBackup(context, enabled)
     }
 
     fun syncNow(forceReupload: Boolean = false) {
         val context = getApplication<Application>()
         val modeText = if (forceReupload) "Force Re-upload All Files" else "Smart Sync (Upload New & Modified Only)"
         SyncLogger.log("Manual Sync requested: $modeText", SyncLogLevel.INFO)
-        val data = Data.Builder()
-            .putBoolean("is_manual", true)
-            .putBoolean("force_reupload", forceReupload)
-            .build()
-        val workRequest = OneTimeWorkRequestBuilder<BackupWorker>()
-            .setInputData(data)
-            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
-            .build()
-        WorkManager.getInstance(context).enqueueUniqueWork(
-            "SyncNow",
-            ExistingWorkPolicy.REPLACE,
-            workRequest
-        )
-    }
-
-    fun clearUploadHistory() {
-        viewModelScope.launch {
-            db.uploadRecordDao().clearHistory()
-            SyncLogger.log("Local upload history registry cleared.", SyncLogLevel.INFO)
-        }
-    }
-
-    fun clearFilesCache() {
-        viewModelScope.launch {
-            db.cloudFileDao().clearAll()
-            SyncLogger.log("Local drive file cache cleared.", SyncLogLevel.INFO)
-        }
+        AutoSyncManager.triggerImmediateSync(context, forceReupload = forceReupload, isManual = true)
     }
 
     fun clearLogs() {
@@ -174,14 +133,18 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun setBackupUri(uri: String?) {
         viewModelScope.launch {
-            SyncPreferences.setBackupUri(getApplication(), uri)
+            val context = getApplication<Application>()
+            SyncPreferences.setBackupUri(context, uri)
+            AutoSyncManager.onFolderOrAccountChanged(context)
             SyncLogger.log("Local backup folder updated.", SyncLogLevel.INFO)
         }
     }
 
     fun setBackupAccountId(accountId: String?) {
         viewModelScope.launch {
-            SyncPreferences.setBackupAccountId(getApplication(), accountId)
+            val context = getApplication<Application>()
+            SyncPreferences.setBackupAccountId(context, accountId)
+            AutoSyncManager.onFolderOrAccountChanged(context)
             SyncLogger.log("Target Cloud Drive updated.", SyncLogLevel.INFO)
         }
     }
@@ -210,13 +173,10 @@ fun SettingsScreen(navController: NavController, rootNavController: NavControlle
     val backupAccountId by viewModel.backupAccountId.collectAsState(initial = null)
     val syncStatus by viewModel.syncStatus.collectAsState()
     val syncLogs by viewModel.syncLogs.collectAsState()
-    val uploadRecordCount by viewModel.uploadRecordCount.collectAsState(initial = 0)
 
     var showAccountSelector by remember { mutableStateOf(false) }
     var showLogsDialog by remember { mutableStateOf(false) }
     var showSyncOptionsDialog by remember { mutableStateOf(false) }
-    var showClearHistoryConfirm by remember { mutableStateOf(false) }
-    var showClearCacheConfirm by remember { mutableStateOf(false) }
 
     val folderPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
@@ -317,56 +277,6 @@ fun SettingsScreen(navController: NavController, rootNavController: NavControlle
             confirmButton = {},
             dismissButton = {
                 TextButton(onClick = { showSyncOptionsDialog = false }) {
-                    Text("Cancel", color = TextSecondary)
-                }
-            }
-        )
-    }
-
-    if (showClearHistoryConfirm) {
-        AlertDialog(
-            onDismissRequest = { showClearHistoryConfirm = false },
-            containerColor = SurfaceDark,
-            title = { Text("Reset Sync Registry", color = TextPrimary) },
-            text = { Text("Are you sure you want to clear the local upload history? On next sync, all files will be checked freshly against the remote drive.", color = TextSecondary) },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showClearHistoryConfirm = false
-                        viewModel.clearUploadHistory()
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF5350))
-                ) {
-                    Text("Clear Registry", color = Color.White)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showClearHistoryConfirm = false }) {
-                    Text("Cancel", color = TextSecondary)
-                }
-            }
-        )
-    }
-
-    if (showClearCacheConfirm) {
-        AlertDialog(
-            onDismissRequest = { showClearCacheConfirm = false },
-            containerColor = SurfaceDark,
-            title = { Text("Clear Drive Cache", color = TextPrimary) },
-            text = { Text("This removes locally cached file listings from SQLite. Files will be freshly fetched on next navigation.", color = TextSecondary) },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showClearCacheConfirm = false
-                        viewModel.clearFilesCache()
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = PurpleGradientStart)
-                ) {
-                    Text("Clear Cache", color = Color.White)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showClearCacheConfirm = false }) {
                     Text("Cancel", color = TextSecondary)
                 }
             }
@@ -616,68 +526,6 @@ fun SettingsScreen(navController: NavController, rootNavController: NavControlle
                             Icon(Icons.Default.Sync, contentDescription = null, tint = Color.White)
                             Spacer(modifier = Modifier.width(8.dp))
                             Text("Sync Now (Smart / Force)", color = Color.White, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-            }
-            Spacer(modifier = Modifier.height(24.dp))
-        }
-
-        // Local SQLite Cache & Deduplication Stats
-        item {
-            Text("Local Cache & Deduplication Registry", color = PurpleGradientStart, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-            Spacer(modifier = Modifier.height(16.dp))
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = SurfaceDark),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .background(PurpleGradientStart.copy(alpha = 0.15f), RoundedCornerShape(10.dp)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(Icons.Default.Storage, contentDescription = null, tint = PurpleGradientStart, modifier = Modifier.size(22.dp))
-                        }
-                        Spacer(modifier = Modifier.width(14.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Room Database Cache", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                            Text("$uploadRecordCount uploaded file(s) registered", color = TextSecondary, fontSize = 12.sp)
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        "Cloudyte caches drive folder states locally for zero-latency browsing, and maintains a file fingerprint database to avoid redundant uploads during sync.",
-                        color = TextSecondary,
-                        fontSize = 12.sp
-                    )
-
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = { showClearHistoryConfirm = true },
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary)
-                        ) {
-                            Text("Reset Registry", fontSize = 11.sp, maxLines = 1)
-                        }
-
-                        OutlinedButton(
-                            onClick = { showClearCacheConfirm = true },
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary)
-                        ) {
-                            Text("Clear Cache", fontSize = 11.sp, maxLines = 1)
                         }
                     }
                 }

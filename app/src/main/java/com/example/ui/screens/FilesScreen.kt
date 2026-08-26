@@ -52,6 +52,7 @@ import com.example.api.ApiClient
 import com.example.api.CloudFile
 import com.example.api.FileRepository
 import com.example.api.FolderRequest
+import com.example.api.OfflineFileManager
 import com.example.api.RenameRequest
 import com.example.api.ShareRequest
 import com.example.db.AppDatabase
@@ -475,7 +476,10 @@ fun FilesScreen(
         )
     }
 
-    val filteredAndSortedFiles = remember(files, searchQuery, selectedFilter, sortOrder) {
+    val downloadedFiles by OfflineFileManager.downloadedFiles.collectAsState()
+    val effectiveAccountId = currentAccountId ?: accounts.firstOrNull()?.effectiveId ?: "root"
+
+    val filteredAndSortedFiles = remember(files, searchQuery, selectedFilter, sortOrder, downloadedFiles) {
         val filtered = files.filter { file ->
             val matchesSearch = searchQuery.isBlank() || file.effectiveName.contains(searchQuery, ignoreCase = true)
             val matchesFilter = when (selectedFilter) {
@@ -484,6 +488,7 @@ fun FilesScreen(
                 "Images" -> file.isImage
                 "Audio" -> file.isAudio
                 "Docs" -> file.isPdf || file.isTextOrCode
+                "Offline" -> !file.isFolderItem && (downloadedFiles.contains(file.effectiveId) || OfflineFileManager.isDownloaded(context, effectiveAccountId, file.effectiveId))
                 else -> true
             }
             matchesSearch && matchesFilter
@@ -500,7 +505,6 @@ fun FilesScreen(
 
     val folders = filteredAndSortedFiles.filter { it.isFolderItem }
     val regularFiles = filteredAndSortedFiles.filter { !it.isFolderItem }
-    val effectiveAccountId = currentAccountId ?: accounts.firstOrNull()?.effectiveId ?: "root"
     val selectedAccount = accounts.find { it.effectiveId == currentAccountId } ?: accounts.firstOrNull()
 
     Scaffold(
@@ -696,6 +700,7 @@ fun FilesScreen(
 
                         val filterOptions = listOf(
                             Triple("All", "All Files", Icons.Default.FolderOpen),
+                            Triple("Offline", "Offline Available", Icons.Default.CheckCircle),
                             Triple("Folders", "Folders Only", Icons.Default.Folder),
                             Triple("Images", "Photos & Images", Icons.Default.Image),
                             Triple("Videos", "Videos & Movies", Icons.Default.Movie),
@@ -1108,6 +1113,8 @@ fun FileRow(
         ApiClient.getFileUrl(accountId, file.effectiveId, preview = true)
     }
     var showMenu by remember { mutableStateOf(false) }
+    val downloadedFiles by OfflineFileManager.downloadedFiles.collectAsState()
+    val isOffline = !file.isFolderItem && (downloadedFiles.contains(file.effectiveId) || OfflineFileManager.isDownloaded(context, accountId, file.effectiveId))
 
     Card(
         shape = RoundedCornerShape(16.dp),
@@ -1188,18 +1195,30 @@ fun FileRow(
             Spacer(modifier = Modifier.width(16.dp))
 
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    file.effectiveName,
-                    color = TextPrimary,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 15.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        file.effectiveName,
+                        color = TextPrimary,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 15.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (isOffline) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = "Saved Offline",
+                            tint = Color(0xFF10B981),
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = if (file.isFolderItem) "Folder" else "${file.formattedSize} • ${file.effectiveType.uppercase()}",
-                    color = TextSecondary,
+                    text = if (file.isFolderItem) "Folder" else if (isOffline) "${file.formattedSize} • ${file.effectiveType.uppercase()} • Offline" else "${file.formattedSize} • ${file.effectiveType.uppercase()}",
+                    color = if (isOffline) Color(0xFF10B981) else TextSecondary,
                     fontSize = 12.sp
                 )
             }
@@ -1222,6 +1241,36 @@ fun FileRow(
                             navController.navigate("file_detail/$accountId/${file.effectiveId}")
                         }
                     )
+                    if (!file.isFolderItem) {
+                        if (isOffline) {
+                            DropdownMenuItem(
+                                text = { Text("Remove Offline Copy", color = TextPrimary) },
+                                leadingIcon = { Icon(Icons.Default.DeleteOutline, contentDescription = null, tint = TextSecondary) },
+                                onClick = {
+                                    showMenu = false
+                                    OfflineFileManager.deleteOfflineFile(context, accountId, file.effectiveId)
+                                    Toast.makeText(context, "Removed from offline cache", Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                        } else {
+                            DropdownMenuItem(
+                                text = { Text("Save for Offline", color = TextPrimary) },
+                                leadingIcon = { Icon(Icons.Default.Download, contentDescription = null, tint = PurpleGradientStart) },
+                                onClick = {
+                                    showMenu = false
+                                    coroutineScope.launch {
+                                        Toast.makeText(context, "Downloading for offline...", Toast.LENGTH_SHORT).show()
+                                        val res = OfflineFileManager.downloadFile(context, accountId, file)
+                                        if (res.isSuccess) {
+                                            Toast.makeText(context, "Saved offline!", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            Toast.makeText(context, "Download failed", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                    }
                     DropdownMenuItem(
                         text = { Text("Share Link", color = TextPrimary) },
                         leadingIcon = { Icon(Icons.Default.Share, contentDescription = null, tint = TextSecondary) },
@@ -1306,6 +1355,8 @@ fun FileGridItem(
         ApiClient.getFileUrl(accountId, file.effectiveId, preview = true)
     }
     var showMenu by remember { mutableStateOf(false) }
+    val downloadedFiles by OfflineFileManager.downloadedFiles.collectAsState()
+    val isOffline = !file.isFolderItem && (downloadedFiles.contains(file.effectiveId) || OfflineFileManager.isDownloaded(context, accountId, file.effectiveId))
 
     Card(
         shape = RoundedCornerShape(16.dp),
@@ -1380,6 +1431,19 @@ fun FileGridItem(
                         fontSize = 14.sp
                     )
                 }
+
+                if (isOffline) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(6.dp)
+                            .size(20.dp)
+                            .background(Color(0xFF10B981), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.Check, contentDescription = "Offline", tint = Color.White, modifier = Modifier.size(12.dp))
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -1400,8 +1464,8 @@ fun FileGridItem(
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = if (file.isFolderItem) "Folder" else file.formattedSize,
-                        color = TextSecondary,
+                        text = if (file.isFolderItem) "Folder" else if (isOffline) "${file.formattedSize} • Offline" else file.formattedSize,
+                        color = if (isOffline) Color(0xFF10B981) else TextSecondary,
                         fontSize = 11.sp
                     )
                 }
@@ -1424,6 +1488,36 @@ fun FileGridItem(
                                 navController.navigate("file_detail/$accountId/${file.effectiveId}")
                             }
                         )
+                        if (!file.isFolderItem) {
+                            if (isOffline) {
+                                DropdownMenuItem(
+                                    text = { Text("Remove Offline Copy", color = TextPrimary) },
+                                    leadingIcon = { Icon(Icons.Default.DeleteOutline, contentDescription = null, tint = TextSecondary) },
+                                    onClick = {
+                                        showMenu = false
+                                        OfflineFileManager.deleteOfflineFile(context, accountId, file.effectiveId)
+                                        Toast.makeText(context, "Removed from offline cache", Toast.LENGTH_SHORT).show()
+                                    }
+                                )
+                            } else {
+                                DropdownMenuItem(
+                                    text = { Text("Save for Offline", color = TextPrimary) },
+                                    leadingIcon = { Icon(Icons.Default.Download, contentDescription = null, tint = PurpleGradientStart) },
+                                    onClick = {
+                                        showMenu = false
+                                        coroutineScope.launch {
+                                            Toast.makeText(context, "Downloading for offline...", Toast.LENGTH_SHORT).show()
+                                            val res = OfflineFileManager.downloadFile(context, accountId, file)
+                                            if (res.isSuccess) {
+                                                Toast.makeText(context, "Saved offline!", Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                Toast.makeText(context, "Download failed", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+                        }
                         DropdownMenuItem(
                             text = { Text("Share Link", color = TextPrimary) },
                             leadingIcon = { Icon(Icons.Default.Share, contentDescription = null, tint = TextSecondary) },
