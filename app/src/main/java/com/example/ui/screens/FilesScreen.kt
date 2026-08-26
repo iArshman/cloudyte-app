@@ -241,10 +241,13 @@ fun FilesScreen(
             if (!accId.isNullOrEmpty()) {
                 isUploading = true
                 coroutineScope.launch {
-                    val success = UploadHelper.uploadFile(context, accId, viewModel.currentFolderId, it)
+                    val uploadResult = UploadHelper.uploadFile(context, accId, viewModel.currentFolderId, it)
                     isUploading = false
-                    if (success) {
+                    if (uploadResult.isSuccess) {
+                        snackbarMessage = "File uploaded successfully"
                         viewModel.loadFiles()
+                    } else {
+                        snackbarMessage = uploadResult.errorMessage ?: "Upload failed"
                     }
                 }
             }
