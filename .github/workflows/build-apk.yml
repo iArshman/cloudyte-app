@@ -11,6 +11,8 @@ jobs:
   build:
     name: Build Android APK
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout Repository
@@ -46,3 +48,14 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Publish APK to GitHub Releases
+        uses: ncipollo/release-action@v1
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        with:
+          artifacts: "app/build/outputs/apk/debug/*.apk"
+          tag: "latest"
+          name: "Latest APK Build"
+          body: "Auto-generated APK for commit ${{ github.sha }}"
+          allowUpdates: true
+          makeLatest: true
