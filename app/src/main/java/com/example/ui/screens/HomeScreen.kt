@@ -182,9 +182,9 @@ fun HomeScreen(
             if (!accId.isNullOrEmpty()) {
                 isUploading = true
                 coroutineScope.launch {
-                    val success = UploadHelper.uploadFile(context, accId, null, it)
+                    val uploadResult = UploadHelper.uploadFile(context, accId, null, it)
                     isUploading = false
-                    if (success) {
+                    if (uploadResult.isSuccess) {
                         viewModel.loadData()
                     }
                 }

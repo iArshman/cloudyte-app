@@ -67,9 +67,11 @@ interface CloudyteApi {
     @POST("/api/upload/{accountId}")
     suspend fun uploadFile(
         @Path("accountId") accountId: String,
+        @Query("folderId") folderIdQuery: String? = null,
         @Part file: MultipartBody.Part,
-        @Part("folderId") folderId: RequestBody?
-    ): Response<Unit>
+        @Part("folderId") folderIdPart: RequestBody? = null,
+        @Part("parentId") parentIdPart: RequestBody? = null
+    ): Response<ResponseBody>
 
     @Streaming
     @GET("/api/download/{accountId}/{fileId}")
