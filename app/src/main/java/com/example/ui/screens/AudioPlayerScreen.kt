@@ -33,6 +33,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.navigation.NavController
 import com.example.api.ApiClient
 import com.example.api.FileRepository
+import com.example.api.OfflineFileManager
 import com.example.ui.theme.*
 import kotlinx.coroutines.delay
 import java.util.Locale
@@ -60,6 +61,13 @@ fun AudioPlayerScreen(
     var playbackSpeed by remember { mutableFloatStateOf(1f) }
     var showSpeedDialog by remember { mutableStateOf(false) }
 
+    // Auto-cache audio for offline listening in background
+    LaunchedEffect(fileId, file) {
+        file?.let {
+            OfflineFileManager.autoCacheOnView(context, accountId, it)
+        }
+    }
+
     val exoPlayer = remember {
         val token = ApiClient.getToken()
         val headers = mutableMapOf<String, String>()
@@ -70,10 +78,17 @@ fun AudioPlayerScreen(
             .setDefaultRequestProperties(headers)
             .setAllowCrossProtocolRedirects(true)
 
+        val offlineFile = OfflineFileManager.findOfflineFile(context, accountId, fileId)
+        val initialMediaItem = if (offlineFile != null && offlineFile.exists() && offlineFile.length() > 0) {
+            MediaItem.fromUri(Uri.fromFile(offlineFile))
+        } else {
+            MediaItem.fromUri(audioUrl)
+        }
+
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
             .build().apply {
-                setMediaItem(MediaItem.fromUri(audioUrl))
+                setMediaItem(initialMediaItem)
                 prepare()
                 playWhenReady = true
             }

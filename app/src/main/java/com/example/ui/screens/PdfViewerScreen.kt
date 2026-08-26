@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.example.api.ApiClient
 import com.example.api.FileRepository
+import com.example.api.OfflineFileManager
 import com.example.ui.theme.PurpleGradientStart
 import com.example.ui.theme.SurfaceDark
 import com.example.ui.theme.TextPrimary
@@ -107,23 +108,33 @@ fun PdfViewerScreen(
         errorMessage = null
         try {
             val cachedPdfFile = withContext(Dispatchers.IO) {
-                val tempFile = File(context.cacheDir, "pdf_view_${fileId.replace(Regex("[^a-zA-Z0-9]"), "_")}.pdf")
-                if (!tempFile.exists() || tempFile.length() == 0L) {
-                    val token = ApiClient.getToken()
-                    val requestBuilder = Request.Builder().url(pdfUrl)
-                    if (!token.isNullOrEmpty()) {
-                        requestBuilder.addHeader("Authorization", "Bearer $token")
-                    }
-                    val response = ApiClient.okHttpClient.newCall(requestBuilder.build()).execute()
-                    if (!response.isSuccessful) {
-                        throw Exception("Failed to download PDF (HTTP ${response.code})")
-                    }
-                    val body = response.body ?: throw Exception("Empty PDF response")
-                    FileOutputStream(tempFile).use { out ->
-                        body.byteStream().copyTo(out)
+                var local = OfflineFileManager.findOfflineFile(context, accountId, fileId)
+                if (local == null || !local.exists() || local.length() == 0L) {
+                    if (file != null) {
+                        val dlResult = OfflineFileManager.downloadFile(context, accountId, file)
+                        local = dlResult.getOrNull()
                     }
                 }
-                tempFile
+                if (local == null || !local.exists() || local.length() == 0L) {
+                    val tempFile = File(context.cacheDir, "pdf_view_${fileId.replace(Regex("[^a-zA-Z0-9]"), "_")}.pdf")
+                    if (!tempFile.exists() || tempFile.length() == 0L) {
+                        val token = ApiClient.getToken()
+                        val requestBuilder = Request.Builder().url(pdfUrl)
+                        if (!token.isNullOrEmpty()) {
+                            requestBuilder.addHeader("Authorization", "Bearer $token")
+                        }
+                        val response = ApiClient.okHttpClient.newCall(requestBuilder.build()).execute()
+                        if (!response.isSuccessful) {
+                            throw Exception("Failed to download PDF (HTTP ${response.code})")
+                        }
+                        val body = response.body ?: throw Exception("Empty PDF response")
+                        FileOutputStream(tempFile).use { out ->
+                            body.byteStream().copyTo(out)
+                        }
+                    }
+                    local = tempFile
+                }
+                local ?: throw Exception("Cannot access PDF file")
             }
 
             val desc = ParcelFileDescriptor.open(cachedPdfFile, ParcelFileDescriptor.MODE_READ_ONLY)

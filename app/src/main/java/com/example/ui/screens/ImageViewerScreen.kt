@@ -54,6 +54,7 @@ import coil.compose.SubcomposeAsyncImageContent
 import com.example.api.ApiClient
 import com.example.api.CloudFile
 import com.example.api.FileRepository
+import com.example.api.OfflineFileManager
 import com.example.ui.openFileInViewer
 import com.example.ui.theme.*
 import kotlinx.coroutines.launch
@@ -525,6 +526,22 @@ private fun MediaPageContent(
         ApiClient.getFileUrl(accountId, file.effectiveId, preview = false)
     }
 
+    // Auto-cache file in background when viewed
+    LaunchedEffect(file.effectiveId) {
+        OfflineFileManager.autoCacheOnView(context, accountId, file)
+    }
+
+    val offlineFile = remember(accountId, file.effectiveId) {
+        OfflineFileManager.findOfflineFile(context, accountId, file.effectiveId)
+    }
+    val imageModel = remember(offlineFile, fileUrl) {
+        if (offlineFile != null && offlineFile.exists() && offlineFile.length() > 0) {
+            offlineFile
+        } else {
+            fileUrl
+        }
+    }
+
     when {
         file.isImage -> {
             var scale by remember { mutableFloatStateOf(1f) }
@@ -573,7 +590,7 @@ private fun MediaPageContent(
                 contentAlignment = Alignment.Center
             ) {
                 SubcomposeAsyncImage(
-                    model = fileUrl,
+                    model = imageModel,
                     contentDescription = file.effectiveName,
                     modifier = Modifier
                         .fillMaxSize()

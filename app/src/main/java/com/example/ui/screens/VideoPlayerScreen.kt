@@ -41,6 +41,7 @@ import androidx.navigation.NavController
 import com.example.api.ApiClient
 import com.example.api.CloudFile
 import com.example.api.FileRepository
+import com.example.api.OfflineFileManager
 import com.example.ui.theme.PurpleGradientStart
 import com.example.ui.theme.SurfaceDark
 import com.example.ui.theme.TextPrimary
@@ -81,6 +82,13 @@ fun VideoPlayerScreen(
     var playbackSpeed by remember { mutableFloatStateOf(1f) }
     var showSpeedDialog by remember { mutableStateOf(false) }
 
+    // Auto-cache video for offline viewing in background
+    LaunchedEffect(currentActiveFileId, file) {
+        file?.let {
+            OfflineFileManager.autoCacheOnView(context, accountId, it)
+        }
+    }
+
     val exoPlayer = remember {
         val token = ApiClient.getToken()
         val headers = mutableMapOf<String, String>()
@@ -91,11 +99,18 @@ fun VideoPlayerScreen(
             .setDefaultRequestProperties(headers)
             .setAllowCrossProtocolRedirects(true)
 
-        val initialUrl = ApiClient.getFileUrl(accountId, fileId, preview = true)
+        val offlineFile = OfflineFileManager.findOfflineFile(context, accountId, fileId)
+        val initialMediaItem = if (offlineFile != null && offlineFile.exists() && offlineFile.length() > 0) {
+            MediaItem.fromUri(Uri.fromFile(offlineFile))
+        } else {
+            val initialUrl = ApiClient.getFileUrl(accountId, fileId, preview = true)
+            MediaItem.fromUri(initialUrl)
+        }
+
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
             .build().apply {
-                setMediaItem(MediaItem.fromUri(initialUrl))
+                setMediaItem(initialMediaItem)
                 prepare()
                 playWhenReady = true
             }
@@ -103,8 +118,14 @@ fun VideoPlayerScreen(
 
     // Update media source when switching videos
     LaunchedEffect(currentActiveFileId) {
-        val url = ApiClient.getFileUrl(accountId, currentActiveFileId, preview = true)
-        exoPlayer.setMediaItem(MediaItem.fromUri(url))
+        val offlineFile = OfflineFileManager.findOfflineFile(context, accountId, currentActiveFileId)
+        val mediaItem = if (offlineFile != null && offlineFile.exists() && offlineFile.length() > 0) {
+            MediaItem.fromUri(Uri.fromFile(offlineFile))
+        } else {
+            val url = ApiClient.getFileUrl(accountId, currentActiveFileId, preview = true)
+            MediaItem.fromUri(url)
+        }
+        exoPlayer.setMediaItem(mediaItem)
         exoPlayer.prepare()
         exoPlayer.playWhenReady = true
     }
