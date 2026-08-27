@@ -131,7 +131,10 @@ class FilesViewModel(application: android.app.Application) : AndroidViewModel(ap
                 }
 
                 if (accList.isNotEmpty()) {
-                    _accounts.value = accList
+                    val mappedAccList = accList.map { LocalAccount.fromAccount(it).toAccount() }
+                    if (_accounts.value != mappedAccList) {
+                        _accounts.value = mappedAccList
+                    }
                     db.accountDao().insertAccounts(accList.map { LocalAccount.fromAccount(it) })
                 }
 
@@ -176,10 +179,15 @@ class FilesViewModel(application: android.app.Application) : AndroidViewModel(ap
             // 2. Network Fetch & Sync
             try {
                 val fetched = ApiClient.apiService.getFiles(accId, currentFolderId, null)
+                
                 db.cloudFileDao().deleteFilesForFolder(accId, folderKey)
                 db.cloudFileDao().insertFiles(fetched.map { LocalCloudFile.fromCloudFile(it, accId, folderKey) })
                 FileRepository.cacheFiles(fetched)
-                _files.value = fetched
+                
+                val mappedFetched = fetched.map { LocalCloudFile.fromCloudFile(it, accId, folderKey).toCloudFile() }
+                if (_files.value != mappedFetched) {
+                    _files.value = mappedFetched
+                }
                 _errorMessage.value = null
             } catch (e: Exception) {
                 Log.e("FilesViewModel", "Failed to fetch files for account $accId", e)
@@ -1002,7 +1010,7 @@ fun FilesScreen(
                         item(span = { GridItemSpan(2) }) {
                             Text("Folders", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                         }
-                        items(folders) { folder ->
+                        items(folders, key = { it.effectiveId }) { folder ->
                             FileGridItem(
                                 file = folder,
                                 navController = rootNavController,
@@ -1023,7 +1031,7 @@ fun FilesScreen(
                         item(span = { GridItemSpan(2) }) {
                             Text("Files", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                         }
-                        items(regularFiles) { file ->
+                        items(regularFiles, key = { it.effectiveId }) { file ->
                             FileGridItem(
                                 file = file,
                                 navController = rootNavController,
@@ -1050,7 +1058,7 @@ fun FilesScreen(
                             Text("Folders", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                             Spacer(modifier = Modifier.height(12.dp))
                         }
-                        items(folders) { folder ->
+                        items(folders, key = { it.effectiveId }) { folder ->
                             FileRow(
                                 file = folder,
                                 navController = rootNavController,
@@ -1073,7 +1081,7 @@ fun FilesScreen(
                             Text("Files", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                             Spacer(modifier = Modifier.height(12.dp))
                         }
-                        items(regularFiles) { file ->
+                        items(regularFiles, key = { it.effectiveId }) { file ->
                             FileRow(
                                 file = file,
                                 navController = rootNavController,
