@@ -1,4 +1,5 @@
 package com.example.api
+import androidx.compose.runtime.Stable
 
 import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
@@ -139,6 +140,9 @@ data class Account(
     }
 }
 
+
+
+@Stable
 @JsonClass(generateAdapter = true)
 data class CloudFile(
     val id: String? = null,
