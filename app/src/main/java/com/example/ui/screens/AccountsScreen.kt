@@ -45,7 +45,7 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
     private val _accounts = MutableStateFlow<List<Account>>(emptyList())
     val accounts: StateFlow<List<Account>> = _accounts.asStateFlow()
 
-    private val _isLoading = MutableStateFlow(true)
+    private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
     private val _errorMessage = MutableStateFlow<String?>(null)
@@ -115,7 +115,7 @@ fun AccountsScreen(
         )
     }
 
-    Scaffold(contentWindowInsets = WindowInsets(0, 0, 0, 0), 
+    Scaffold(
         containerColor = BackgroundDark
     ) { innerPadding ->
         LazyColumn(
@@ -210,7 +210,7 @@ fun AccountsScreen(
                             Icon(
                                 Icons.Default.Cloud,
                                 contentDescription = null,
-                                tint = AccentBlue,
+                                tint = AccentSky,
                                 modifier = Modifier.size(56.dp)
                             )
                             Spacer(modifier = Modifier.height(16.dp))
@@ -230,7 +230,7 @@ fun AccountsScreen(
                             Spacer(modifier = Modifier.height(20.dp))
                             Button(
                                 onClick = { showAddDialog = true },
-                                colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
+                                colors = ButtonDefaults.buttonColors(containerColor = AccentSky)
                             ) {
                                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(8.dp))

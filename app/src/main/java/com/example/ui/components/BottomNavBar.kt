@@ -20,7 +20,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.navigation.NavController
 import androidx.navigation.compose.currentBackStackEntryAsState
 import com.example.ui.theme.BackgroundDark
-import com.example.ui.theme.AccentSky
+import com.example.ui.theme.AccentBlue
 import com.example.ui.theme.AccentBlue
 import com.example.ui.theme.SurfaceDark
 import com.example.ui.theme.TextPrimary

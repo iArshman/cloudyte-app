@@ -1,7 +1,6 @@
 package com.example.ui.screens
 
 import android.content.Intent
-import com.example.api.DownloadHelper
 import android.net.Uri
 import android.util.Log
 import androidx.compose.animation.AnimatedVisibility
@@ -170,7 +169,10 @@ fun AddAccountDialog(
                                         val url = resp.url
                                         if (!url.isNullOrBlank()) {
                                             oauthWaitingForReturn = true
-                                            DownloadHelper.downloadFile(context, url, "downloaded_file", com.example.api.ApiClient.getToken())
+                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                            }
+                                            context.startActivity(intent)
                                         } else {
                                             errorMsg = "Server did not return a valid Google authorization URL."
                                         }
@@ -200,7 +202,10 @@ fun AddAccountDialog(
                                         val url = resp.url
                                         if (!url.isNullOrBlank()) {
                                             oauthWaitingForReturn = true
-                                            DownloadHelper.downloadFile(context, url, "downloaded_file", com.example.api.ApiClient.getToken())
+                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                            }
+                                            context.startActivity(intent)
                                         } else {
                                             errorMsg = "Server did not return a valid OneDrive authorization URL."
                                         }
@@ -471,7 +476,7 @@ fun TelegramLinkPanel(
             colors = OutlinedTextFieldDefaults.colors(
                 focusedTextColor = TextPrimary,
                 unfocusedTextColor = TextPrimary,
-                focusedBorderColor = AccentBlue,
+                focusedBorderColor = AccentSky,
                 unfocusedBorderColor = TextSecondary
             )
         )
@@ -486,7 +491,7 @@ fun TelegramLinkPanel(
             colors = OutlinedTextFieldDefaults.colors(
                 focusedTextColor = TextPrimary,
                 unfocusedTextColor = TextPrimary,
-                focusedBorderColor = AccentBlue,
+                focusedBorderColor = AccentSky,
                 unfocusedBorderColor = TextSecondary
             )
         )
@@ -495,7 +500,7 @@ fun TelegramLinkPanel(
 
         Button(
             onClick = onSubmit,
-            colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
+            colors = ButtonDefaults.buttonColors(containerColor = AccentSky),
             modifier = Modifier.fillMaxWidth(),
             enabled = !isLoading
         ) {

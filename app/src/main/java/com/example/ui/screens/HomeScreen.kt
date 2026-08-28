@@ -76,7 +76,7 @@ class HomeViewModel(application: android.app.Application) : androidx.lifecycle.A
     private val _currentAccountId = MutableStateFlow<String?>("root")
     val currentAccountId: StateFlow<String?> = _currentAccountId.asStateFlow()
 
-    private val _isLoading = MutableStateFlow(true)
+    private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
     private val _errorMessage = MutableStateFlow<String?>(null)
@@ -88,6 +88,7 @@ class HomeViewModel(application: android.app.Application) : androidx.lifecycle.A
 
     fun loadData() {
         viewModelScope.launch {
+            _isLoading.value = true
             _errorMessage.value = null
             try {
                 val db = com.example.db.AppDatabase.getDatabase(getApplication())
@@ -232,7 +233,7 @@ fun HomeScreen(
         )
     }
 
-    Scaffold(contentWindowInsets = WindowInsets(0, 0, 0, 0), 
+    Scaffold(
         containerColor = BackgroundDark,
         floatingActionButton = {
             if (isUploading) {
@@ -347,58 +348,7 @@ fun HomeScreen(
                 Spacer(modifier = Modifier.height(28.dp))
             }
 
-            item {
-                Card(
-                    shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.Transparent),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(
-                            brush = Brush.linearGradient(
-                                colors = listOf(AccentBlue, AccentSky)
-                            ),
-                            shape = RoundedCornerShape(20.dp)
-                        )
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(24.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "Premium Features Active",
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 18.sp
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                "Enjoy unlimited storage, zero-compression media streaming, and offline auto-caching.",
-                                color = Color.White.copy(alpha = 0.85f),
-                                fontSize = 13.sp,
-                                lineHeight = 18.sp
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Box(
-                            modifier = Modifier
-                                .size(56.dp)
-                                .background(Color.White.copy(alpha = 0.2f), CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                Icons.Default.Cloud,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(28.dp)
-                            )
-                        }
-                    }
-                }
-            }
+
         }
     }
 }
@@ -441,7 +391,7 @@ fun StorageOverviewCard(accounts: List<Account>) {
                         )
                         val sweep = (percentage / 100f).coerceIn(0.05f, 1f) * 360f
                         drawArc(
-                            brush = Brush.linearGradient(listOf(AccentBlue, AccentSky)),
+                            brush = Brush.linearGradient(listOf(AccentBlue, AccentBlue)),
                             startAngle = -90f,
                             sweepAngle = sweep,
                             useCenter = false,
@@ -600,7 +550,7 @@ fun FileListItem(
                 } else if (file.isFolderItem) {
                     Icon(Icons.Default.Folder, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(28.dp))
                 } else if (file.isAudio) {
-                    Icon(Icons.Default.MusicNote, contentDescription = null, tint = AccentSky, modifier = Modifier.size(26.dp))
+                    Icon(Icons.Default.MusicNote, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(26.dp))
                 } else if (file.isPdf) {
                     Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = Color(0xFFEF4444), modifier = Modifier.size(26.dp))
                 } else if (file.isTextOrCode) {

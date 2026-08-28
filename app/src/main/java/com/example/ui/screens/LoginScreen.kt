@@ -257,7 +257,7 @@ fun LoginScreen(navController: NavController, viewModel: LoginViewModel = viewMo
                     .height(56.dp)
                     .background(
                         brush = Brush.linearGradient(
-                            colors = listOf(AccentBlue, AccentSky)
+                            colors = listOf(AccentBlue, AccentBlue)
                         ),
                         shape = RoundedCornerShape(16.dp)
                     ),
@@ -285,7 +285,7 @@ fun LoginScreen(navController: NavController, viewModel: LoginViewModel = viewMo
                 )
                 Text(
                     text = if (isRegisterMode) "Log In" else "Register",
-                    color = AccentSky,
+                    color = AccentBlue,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.clickable { viewModel.toggleMode() }
                 )

@@ -119,7 +119,7 @@ fun MoveCopyDialog(
                             modifier = Modifier
                                 .size(36.dp)
                                 .background(
-                                    if (isMove) AccentBlue.copy(alpha = 0.2f) else AccentSky.copy(alpha = 0.2f),
+                                    if (isMove) AccentBlue.copy(alpha = 0.2f) else AccentBlue.copy(alpha = 0.2f),
                                     CircleShape
                                 ),
                             contentAlignment = Alignment.Center
@@ -127,7 +127,7 @@ fun MoveCopyDialog(
                             Icon(
                                 imageVector = if (isMove) Icons.Default.DriveFileMove else Icons.Default.ContentCopy,
                                 contentDescription = null,
-                                tint = if (isMove) AccentBlue else AccentSky,
+                                tint = if (isMove) AccentBlue else AccentBlue,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
