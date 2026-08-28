@@ -52,7 +52,6 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.example.api.Account
 import com.example.api.ApiClient
-import com.example.api.OfflineFileManager
 import com.example.api.UserProfile
 import com.example.db.AppDatabase
 import com.example.db.LocalAccount
@@ -198,7 +197,7 @@ fun SettingsScreen(navController: NavController, rootNavController: NavControlle
             containerColor = SurfaceDark,
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Sync, contentDescription = null, tint = PurpleGradientStart)
+                    Icon(Icons.Default.Sync, contentDescription = null, tint = AccentBlue)
                     Spacer(modifier = Modifier.width(10.dp))
                     Text("Sync Backup Options", color = TextPrimary, fontWeight = FontWeight.Bold)
                 }
@@ -229,10 +228,10 @@ fun SettingsScreen(navController: NavController, rootNavController: NavControlle
                             Box(
                                 modifier = Modifier
                                     .size(38.dp)
-                                    .background(PurpleGradientStart.copy(alpha = 0.2f), CircleShape),
+                                    .background(AccentBlue.copy(alpha = 0.2f), CircleShape),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(Icons.Default.Bolt, contentDescription = null, tint = PurpleGradientStart, modifier = Modifier.size(20.dp))
+                                Icon(Icons.Default.Bolt, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(20.dp))
                             }
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
@@ -309,7 +308,7 @@ fun SettingsScreen(navController: NavController, rootNavController: NavControlle
             },
             confirmButton = {
                 TextButton(onClick = { showAccountSelector = false }) {
-                    Text("Close", color = PurpleGradientStart)
+                    Text("Close", color = AccentBlue)
                 }
             }
         )
@@ -344,7 +343,7 @@ fun SettingsScreen(navController: NavController, rootNavController: NavControlle
             ) {
                 Row(modifier = Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(
-                        modifier = Modifier.size(60.dp).background(PurpleGradientStart, CircleShape),
+                        modifier = Modifier.size(60.dp).background(AccentBlue, CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(Icons.Default.Person, contentDescription = null, tint = Color.White, modifier = Modifier.size(32.dp))
@@ -362,7 +361,7 @@ fun SettingsScreen(navController: NavController, rootNavController: NavControlle
 
         // Cloud Accounts Management
         item {
-            Text("Storage Accounts", color = PurpleGradientStart, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Text("Storage Accounts", color = AccentBlue, fontWeight = FontWeight.Bold, fontSize = 14.sp)
             Spacer(modifier = Modifier.height(16.dp))
             Card(
                 shape = RoundedCornerShape(16.dp),
@@ -382,13 +381,13 @@ fun SettingsScreen(navController: NavController, rootNavController: NavControlle
                     Box(
                         modifier = Modifier
                             .size(44.dp)
-                            .background(PurpleGradientStart.copy(alpha = 0.15f), RoundedCornerShape(12.dp)),
+                            .background(AccentBlue.copy(alpha = 0.15f), RoundedCornerShape(12.dp)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             Icons.Default.CloudQueue,
                             contentDescription = "Cloud Accounts",
-                            tint = PurpleGradientStart,
+                            tint = AccentBlue,
                             modifier = Modifier.size(24.dp)
                         )
                     }
@@ -420,7 +419,7 @@ fun SettingsScreen(navController: NavController, rootNavController: NavControlle
 
         // Auto Backup & Sync Section
         item {
-            Text("Auto Backup & Sync", color = PurpleGradientStart, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Text("Auto Backup & Sync", color = AccentBlue, fontWeight = FontWeight.Bold, fontSize = 14.sp)
             Spacer(modifier = Modifier.height(16.dp))
             Card(
                 shape = RoundedCornerShape(16.dp),
@@ -441,7 +440,7 @@ fun SettingsScreen(navController: NavController, rootNavController: NavControlle
                         Switch(
                             checked = autoBackupEnabled,
                             onCheckedChange = { viewModel.setAutoBackupEnabled(it) },
-                            colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = PurpleGradientStart)
+                            colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = AccentBlue)
                         )
                     }
 
@@ -457,7 +456,7 @@ fun SettingsScreen(navController: NavController, rootNavController: NavControlle
                             .padding(vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.Folder, contentDescription = null, tint = PurpleGradientStart)
+                        Icon(Icons.Default.Folder, contentDescription = null, tint = AccentBlue)
                         Spacer(modifier = Modifier.width(16.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text("Local Backup Folder", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
@@ -483,7 +482,7 @@ fun SettingsScreen(navController: NavController, rootNavController: NavControlle
                             .padding(vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.Cloud, contentDescription = null, tint = PurpleGradientStart)
+                        Icon(Icons.Default.Cloud, contentDescription = null, tint = AccentBlue)
                         Spacer(modifier = Modifier.width(16.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text("Target Cloud Drive", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
@@ -509,8 +508,8 @@ fun SettingsScreen(navController: NavController, rootNavController: NavControlle
                         enabled = !isSyncing,
                         modifier = Modifier.fillMaxWidth().height(48.dp),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = PurpleGradientStart,
-                            disabledContainerColor = PurpleGradientStart.copy(alpha = 0.5f)
+                            containerColor = AccentBlue,
+                            disabledContainerColor = AccentBlue.copy(alpha = 0.5f)
                         ),
                         shape = RoundedCornerShape(12.dp)
                     ) {
@@ -540,10 +539,10 @@ fun SettingsScreen(navController: NavController, rootNavController: NavControlle
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Sync Activity Logs", color = PurpleGradientStart, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Text("Sync Activity Logs", color = AccentBlue, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 if (syncLogs.isNotEmpty()) {
                     TextButton(onClick = { showLogsDialog = true }) {
-                        Text("View All (${syncLogs.size})", color = PurpleGradientStart, fontSize = 13.sp)
+                        Text("View All (${syncLogs.size})", color = AccentBlue, fontSize = 13.sp)
                     }
                 }
             }
@@ -697,8 +696,8 @@ fun SyncStatusCard(syncStatus: SyncStatusInfo) {
 
     val (statusColor, statusTitle) = when (syncStatus.state) {
         SyncState.IDLE -> TextSecondary to "Ready"
-        SyncState.SCANNING -> PurpleGradientStart to "Scanning Local Files..."
-        SyncState.SYNCING -> PurpleGradientStart to "Syncing to Cloud Drive..."
+        SyncState.SCANNING -> AccentBlue to "Scanning Local Files..."
+        SyncState.SYNCING -> AccentBlue to "Syncing to Cloud Drive..."
         SyncState.SUCCESS -> Color(0xFF4CAF50) to "Sync Complete"
         SyncState.ERROR -> Color(0xFFEF5350) to "Sync Failed"
     }
@@ -707,7 +706,7 @@ fun SyncStatusCard(syncStatus: SyncStatusInfo) {
         modifier = Modifier
             .fillMaxWidth()
             .background(Color(0xFF161622), RoundedCornerShape(12.dp))
-            .border(1.dp, if (isWorking) PurpleGradientStart.copy(alpha = pulseAlpha) else Color(0xFF232332), RoundedCornerShape(12.dp))
+            .border(1.dp, if (isWorking) AccentBlue.copy(alpha = pulseAlpha) else Color(0xFF232332), RoundedCornerShape(12.dp))
             .padding(14.dp)
     ) {
         Row(
@@ -745,7 +744,7 @@ fun SyncStatusCard(syncStatus: SyncStatusInfo) {
                     .fillMaxWidth()
                     .height(6.dp)
                     .clip(RoundedCornerShape(3.dp)),
-                color = PurpleGradientStart,
+                color = AccentBlue,
                 trackColor = Color(0xFF2C2C3E),
             )
             Spacer(modifier = Modifier.height(6.dp))
@@ -760,7 +759,7 @@ fun SyncStatusCard(syncStatus: SyncStatusInfo) {
                 )
                 Text(
                     text = "${(progress * 100).toInt()}%",
-                    color = PurpleGradientStart,
+                    color = AccentBlue,
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp
                 )
@@ -823,7 +822,7 @@ fun SyncLogsDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Terminal, contentDescription = null, tint = PurpleGradientStart, modifier = Modifier.size(20.dp))
+                        Icon(Icons.Default.Terminal, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Sync Logger Terminal", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     }
@@ -921,7 +920,7 @@ fun SyncLogsDialog(
                         Spacer(modifier = Modifier.width(8.dp))
                         Button(
                             onClick = onDismiss,
-                            colors = ButtonDefaults.buttonColors(containerColor = PurpleGradientStart),
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
                             shape = RoundedCornerShape(8.dp)
                         ) {
                             Text("Close", fontSize = 12.sp)

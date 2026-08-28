@@ -20,6 +20,10 @@ import androidx.navigation.compose.rememberNavController
 import com.example.ui.components.BottomNavBar
 import com.example.ui.theme.BackgroundDark
 
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.tween
+
 @Composable
 fun MainScreen(rootNavController: NavController) {
     val bottomNavController = rememberNavController()
@@ -32,7 +36,14 @@ fun MainScreen(rootNavController: NavController) {
         modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.navigationBars)
     ) { innerPadding ->
         Box(modifier = Modifier.padding(innerPadding)) {
-            NavHost(navController = bottomNavController, startDestination = "home") {
+            NavHost(
+                navController = bottomNavController, 
+                startDestination = "home",
+                enterTransition = { fadeIn(animationSpec = tween(300)) },
+                exitTransition = { fadeOut(animationSpec = tween(300)) },
+                popEnterTransition = { fadeIn(animationSpec = tween(300)) },
+                popExitTransition = { fadeOut(animationSpec = tween(300)) }
+            ) {
                 composable("home") { HomeScreen(bottomNavController, rootNavController) }
                 composable("files") { FilesScreen(bottomNavController, rootNavController) }
                 composable("accounts") { AccountsScreen(bottomNavController, rootNavController) }

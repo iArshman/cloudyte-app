@@ -119,7 +119,7 @@ fun MoveCopyDialog(
                             modifier = Modifier
                                 .size(36.dp)
                                 .background(
-                                    if (isMove) PurpleGradientStart.copy(alpha = 0.2f) else BlueGradientEnd.copy(alpha = 0.2f),
+                                    if (isMove) AccentBlue.copy(alpha = 0.2f) else AccentSky.copy(alpha = 0.2f),
                                     CircleShape
                                 ),
                             contentAlignment = Alignment.Center
@@ -127,7 +127,7 @@ fun MoveCopyDialog(
                             Icon(
                                 imageVector = if (isMove) Icons.Default.DriveFileMove else Icons.Default.ContentCopy,
                                 contentDescription = null,
-                                tint = if (isMove) PurpleGradientStart else BlueGradientEnd,
+                                tint = if (isMove) AccentBlue else AccentSky,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -177,8 +177,8 @@ fun MoveCopyDialog(
                             val isSelected = acc.effectiveId == selectedAccountId
                             Surface(
                                 shape = RoundedCornerShape(12.dp),
-                                color = if (isSelected) PurpleGradientStart.copy(alpha = 0.25f) else Color(0xFF262636),
-                                border = if (isSelected) androidx.compose.foundation.BorderStroke(1.5.dp, PurpleGradientStart) else null,
+                                color = if (isSelected) AccentBlue.copy(alpha = 0.25f) else Color(0xFF262636),
+                                border = if (isSelected) androidx.compose.foundation.BorderStroke(1.5.dp, AccentBlue) else null,
                                 modifier = Modifier.clickable {
                                     if (!isExecuting && selectedAccountId != acc.effectiveId) {
                                         selectedAccountId = acc.effectiveId
@@ -197,7 +197,7 @@ fun MoveCopyDialog(
                                             else -> Icons.Default.Send
                                         },
                                         contentDescription = null,
-                                        tint = if (isSelected) PurpleGradientStart else TextSecondary,
+                                        tint = if (isSelected) AccentBlue else TextSecondary,
                                         modifier = Modifier.size(16.dp)
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
@@ -239,7 +239,7 @@ fun MoveCopyDialog(
                         onClick = { showNewFolderInput = !showNewFolderInput },
                         modifier = Modifier.size(24.dp)
                     ) {
-                        Icon(Icons.Default.CreateNewFolder, contentDescription = "New Folder", tint = PurpleGradientStart, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Default.CreateNewFolder, contentDescription = "New Folder", tint = AccentBlue, modifier = Modifier.size(18.dp))
                     }
                 }
 
@@ -259,7 +259,7 @@ fun MoveCopyDialog(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 text = crumb.name,
-                                color = if (isLast) PurpleGradientStart else TextSecondary,
+                                color = if (isLast) AccentBlue else TextSecondary,
                                 fontWeight = if (isLast) FontWeight.Bold else FontWeight.Normal,
                                 fontSize = 12.sp,
                                 modifier = Modifier.clickable {
@@ -296,7 +296,7 @@ fun MoveCopyDialog(
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedTextColor = TextPrimary,
                                 unfocusedTextColor = TextPrimary,
-                                focusedBorderColor = PurpleGradientStart,
+                                focusedBorderColor = AccentBlue,
                                 unfocusedBorderColor = TextSecondary
                             ),
                             modifier = Modifier.weight(1f).height(48.dp)
@@ -322,7 +322,7 @@ fun MoveCopyDialog(
                                     }
                                 }
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = PurpleGradientStart),
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
                             contentPadding = PaddingValues(horizontal = 12.dp)
                         ) {
                             Text("Create", fontSize = 12.sp)
@@ -343,7 +343,7 @@ fun MoveCopyDialog(
                 ) {
                     if (isLoadingFolders) {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator(color = PurpleGradientStart, modifier = Modifier.size(24.dp))
+                            CircularProgressIndicator(color = AccentBlue, modifier = Modifier.size(24.dp))
                         }
                     } else if (folderItems.isEmpty()) {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -367,7 +367,7 @@ fun MoveCopyDialog(
                                         .padding(horizontal = 10.dp, vertical = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(Icons.Default.Folder, contentDescription = null, tint = PurpleGradientStart, modifier = Modifier.size(20.dp))
+                                    Icon(Icons.Default.Folder, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(20.dp))
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
                                         text = folder.effectiveName,
@@ -440,7 +440,7 @@ fun MoveCopyDialog(
                                 }
                             }
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = PurpleGradientStart),
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
                         enabled = !isExecuting
                     ) {
                         if (isExecuting) {

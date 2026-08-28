@@ -73,13 +73,10 @@ class HomeViewModel(application: android.app.Application) : androidx.lifecycle.A
     private val _accounts = MutableStateFlow<List<Account>>(emptyList())
     val accounts: StateFlow<List<Account>> = _accounts.asStateFlow()
 
-    private val _recentFiles = MutableStateFlow<List<CloudFile>>(emptyList())
-    val recentFiles: StateFlow<List<CloudFile>> = _recentFiles.asStateFlow()
-
     private val _currentAccountId = MutableStateFlow<String?>("root")
     val currentAccountId: StateFlow<String?> = _currentAccountId.asStateFlow()
 
-    private val _isLoading = MutableStateFlow(false)
+    private val _isLoading = MutableStateFlow(true)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
     private val _errorMessage = MutableStateFlow<String?>(null)
@@ -91,7 +88,6 @@ class HomeViewModel(application: android.app.Application) : androidx.lifecycle.A
 
     fun loadData() {
         viewModelScope.launch {
-            _isLoading.value = true
             _errorMessage.value = null
             try {
                 val db = com.example.db.AppDatabase.getDatabase(getApplication())
@@ -121,11 +117,6 @@ class HomeViewModel(application: android.app.Application) : androidx.lifecycle.A
                 val defaultAcc = _accounts.value.firstOrNull { it.isDefault == true } ?: _accounts.value.firstOrNull()
                 val accId = defaultAcc?.effectiveId?.ifEmpty { null }
                 _currentAccountId.value = accId
-
-                val cachedFiles = db.cloudFileDao().getFilesForAccount(accId).map { it.toCloudFile() }
-                if (cachedFiles.isNotEmpty()) {
-                    _recentFiles.value = cachedFiles.take(8)
-                }
                 
                 val files = try {
                     ApiClient.apiService.getFiles(accId, null, null)
@@ -136,7 +127,6 @@ class HomeViewModel(application: android.app.Application) : androidx.lifecycle.A
                 if (files.isNotEmpty()) {
                     db.cloudFileDao().insertFiles(files.map { com.example.db.LocalCloudFile.fromCloudFile(it, accId, "root") })
                     FileRepository.cacheFiles(files)
-                    _recentFiles.value = files.take(8)
                 }
             } catch (e: Exception) {
                 Log.e("HomeViewModel", "General data loading error", e)
@@ -171,7 +161,6 @@ fun HomeScreen(
 ) {
     val profile by viewModel.profile.collectAsState()
     val accounts by viewModel.accounts.collectAsState()
-    val recentFiles by viewModel.recentFiles.collectAsState()
     val currentAccountId by viewModel.currentAccountId.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
@@ -214,7 +203,7 @@ fun HomeScreen(
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = TextPrimary,
                         unfocusedTextColor = TextPrimary,
-                        focusedBorderColor = PurpleGradientStart,
+                        focusedBorderColor = AccentBlue,
                         unfocusedBorderColor = TextSecondary
                     ),
                     modifier = Modifier.fillMaxWidth()
@@ -230,7 +219,7 @@ fun HomeScreen(
                             }
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = PurpleGradientStart)
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
                 ) {
                     Text("Create", color = Color.White)
                 }
@@ -243,17 +232,17 @@ fun HomeScreen(
         )
     }
 
-    Scaffold(
+    Scaffold(contentWindowInsets = WindowInsets(0, 0, 0, 0), 
         containerColor = BackgroundDark,
         floatingActionButton = {
             if (isUploading) {
-                FloatingActionButton(onClick = { }, containerColor = PurpleGradientStart) {
+                FloatingActionButton(onClick = { }, containerColor = AccentBlue) {
                     CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp))
                 }
             } else {
                 FloatingActionButton(
                     onClick = { filePickerLauncher.launch("*/*") },
-                    containerColor = PurpleGradientStart,
+                    containerColor = AccentBlue,
                     contentColor = Color.White
                 ) {
                     Icon(Icons.Default.Add, contentDescription = "Upload File")
@@ -297,7 +286,7 @@ fun HomeScreen(
                         modifier = Modifier.background(SurfaceDark, CircleShape)
                     ) {
                         if (isLoading) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp), color = PurpleGradientStart)
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), color = AccentBlue)
                         } else {
                             Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = TextPrimary)
                         }
@@ -326,7 +315,7 @@ fun HomeScreen(
                             )
                             Button(
                                 onClick = { viewModel.loadData() },
-                                colors = ButtonDefaults.buttonColors(containerColor = PurpleGradientStart)
+                                colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
                             ) {
                                 Text("Retry", fontSize = 12.sp)
                             }
@@ -337,7 +326,7 @@ fun HomeScreen(
             }
 
             item {
-                StorageOverviewCard(accounts = accounts, recentFilesCount = recentFiles.size)
+                StorageOverviewCard(accounts = accounts)
                 Spacer(modifier = Modifier.height(28.dp))
             }
 
@@ -359,98 +348,55 @@ fun HomeScreen(
             }
 
             item {
-                var isGridView by remember { mutableStateOf(false) }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                Card(
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            brush = Brush.linearGradient(
+                                colors = listOf(AccentBlue, AccentSky)
+                            ),
+                            shape = RoundedCornerShape(20.dp)
+                        )
                 ) {
-                    Text(
-                        text = "Recent Files",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = TextPrimary
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = { isGridView = !isGridView }) {
-                            Icon(
-                                imageVector = if (isGridView) Icons.AutoMirrored.Filled.ViewList else Icons.Default.GridView,
-                                contentDescription = "Toggle Grid/List View",
-                                tint = PurpleGradientStart
-                            )
-                        }
-                        if (recentFiles.isNotEmpty()) {
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "View All",
-                                color = PurpleGradientStart,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.clickable { navController.navigate("files") }
-                            )
-                        }
-                    }
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-            }
-
-            if (recentFiles.isEmpty()) {
-                item {
-                    Card(
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(containerColor = SurfaceDark),
-                        modifier = Modifier.fillMaxWidth()
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(24.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Column(
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Premium Features Active",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 18.sp
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                "Enjoy unlimited storage, zero-compression media streaming, and offline auto-caching.",
+                                color = Color.White.copy(alpha = 0.85f),
+                                fontSize = 13.sp,
+                                lineHeight = 18.sp
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Box(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(32.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
+                                .size(56.dp)
+                                .background(Color.White.copy(alpha = 0.2f), CircleShape),
+                            contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                Icons.Default.Folder,
+                                Icons.Default.Cloud,
                                 contentDescription = null,
-                                tint = TextSecondary,
-                                modifier = Modifier.size(48.dp)
+                                tint = Color.White,
+                                modifier = Modifier.size(28.dp)
                             )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Text(
-                                text = if (accounts.isEmpty()) "No linked drives yet" else "No files in this drive yet",
-                                color = TextPrimary,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = if (accounts.isEmpty()) "Link an account to start managing files" else "Tap + to upload your first file",
-                                color = TextSecondary,
-                                fontSize = 13.sp
-                            )
-                            Spacer(modifier = Modifier.height(16.dp))
-                            Button(
-                                onClick = {
-                                    if (accounts.isEmpty()) {
-                                        navController.navigate("accounts")
-                                    } else {
-                                        filePickerLauncher.launch("*/*")
-                                    }
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = PurpleGradientStart)
-                            ) {
-                                Text(if (accounts.isEmpty()) "Add Drive" else "Upload File", color = Color.White)
-                            }
                         }
                     }
-                }
-            } else {
-                items(recentFiles) { file ->
-                    val accId = currentAccountId ?: accounts.firstOrNull()?.effectiveId ?: "root"
-                    FileListItem(
-                        file = file,
-                        navController = rootNavController,
-                        accountId = accId,
-                        files = recentFiles
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
                 }
             }
         }
@@ -458,10 +404,10 @@ fun HomeScreen(
 }
 
 @Composable
-fun StorageOverviewCard(accounts: List<Account>, recentFilesCount: Int) {
+fun StorageOverviewCard(accounts: List<Account>) {
     val totalUsageBytes = accounts.sumOf { it.usageBytes }
     val totalCapacityBytes = accounts.sumOf { it.totalBytes }
-    val totalFilesReported = accounts.sumOf { it.fileCount ?: 0 }.let { if (it > 0) it else recentFilesCount }
+    val totalFilesReported = accounts.sumOf { it.fileCount ?: 0 }
     val connectedDrivesCount = accounts.size
 
     val usageFormatted = formatBytes(totalUsageBytes)
@@ -495,7 +441,7 @@ fun StorageOverviewCard(accounts: List<Account>, recentFilesCount: Int) {
                         )
                         val sweep = (percentage / 100f).coerceIn(0.05f, 1f) * 360f
                         drawArc(
-                            brush = Brush.linearGradient(listOf(PurpleGradientStart, BlueGradientEnd)),
+                            brush = Brush.linearGradient(listOf(AccentBlue, AccentSky)),
                             startAngle = -90f,
                             sweepAngle = sweep,
                             useCenter = false,
@@ -512,9 +458,9 @@ fun StorageOverviewCard(accounts: List<Account>, recentFilesCount: Int) {
                     Text("Total Capacity", color = TextSecondary, fontSize = 13.sp)
                     Spacer(modifier = Modifier.height(4.dp))
                     if (totalCapacityBytes > 0L) {
-                        Text(formatBytes(totalCapacityBytes), color = PurpleGradientStart, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+                        Text(formatBytes(totalCapacityBytes), color = AccentBlue, fontSize = 28.sp, fontWeight = FontWeight.Bold)
                     } else {
-                        Text("∞", color = PurpleGradientStart, fontSize = 42.sp, fontWeight = FontWeight.Bold)
+                        Text("∞", color = AccentBlue, fontSize = 42.sp, fontWeight = FontWeight.Bold)
                         Text("Unlimited TG Storage", color = TextSecondary, fontSize = 12.sp)
                     }
                 }
@@ -580,7 +526,7 @@ fun QuickActionButton(icon: ImageVector, label: String, onClick: () -> Unit) {
                 .clip(CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Icon(icon, contentDescription = label, tint = PurpleGradientStart)
+            Icon(icon, contentDescription = label, tint = AccentBlue)
         }
         Spacer(modifier = Modifier.height(8.dp))
         Text(label, color = TextPrimary, fontSize = 12.sp)
@@ -628,13 +574,13 @@ fun FileListItem(
                         val state = painter.state
                         if (state is AsyncImagePainter.State.Loading) {
                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                CircularProgressIndicator(color = PurpleGradientStart, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                CircularProgressIndicator(color = AccentBlue, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                             }
                         } else if (state is AsyncImagePainter.State.Error) {
                             Icon(
                                 imageVector = if (file.isVideo) Icons.Default.Movie else Icons.Default.Image,
                                 contentDescription = null,
-                                tint = PurpleGradientStart,
+                                tint = AccentBlue,
                                 modifier = Modifier.size(24.dp)
                             )
                         } else {
@@ -652,9 +598,9 @@ fun FileListItem(
                         }
                     }
                 } else if (file.isFolderItem) {
-                    Icon(Icons.Default.Folder, contentDescription = null, tint = PurpleGradientStart, modifier = Modifier.size(28.dp))
+                    Icon(Icons.Default.Folder, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(28.dp))
                 } else if (file.isAudio) {
-                    Icon(Icons.Default.MusicNote, contentDescription = null, tint = BlueGradientEnd, modifier = Modifier.size(26.dp))
+                    Icon(Icons.Default.MusicNote, contentDescription = null, tint = AccentSky, modifier = Modifier.size(26.dp))
                 } else if (file.isPdf) {
                     Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = Color(0xFFEF4444), modifier = Modifier.size(26.dp))
                 } else if (file.isTextOrCode) {
