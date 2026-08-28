@@ -13,6 +13,7 @@ import coil.ImageLoader
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import com.example.api.ApiClient
+import com.example.api.OfflineFileManager
 import com.example.sync.AutoSyncManager
 import com.example.ui.AppNavigation
 import com.example.ui.theme.BackgroundDark
@@ -22,7 +23,7 @@ class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     ApiClient.init(this)
-    
+    OfflineFileManager.init(this)
     AutoSyncManager.init(this, lifecycleScope)
 
     // Configure Coil global ImageLoader with memory and disk cache for high-speed previews

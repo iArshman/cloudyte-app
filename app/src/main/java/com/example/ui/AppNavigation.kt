@@ -1,9 +1,6 @@
 package com.example.ui
 
 import androidx.compose.runtime.Composable
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.core.tween
 import androidx.navigation.NavController
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -34,51 +31,43 @@ fun openFileInViewer(
     }
 }
 
-
 @Composable
 fun AppNavigation() {
     val navController = rememberNavController()
     
-    NavHost(
-        navController = navController, 
-        startDestination = "splash",
-        enterTransition = { fadeIn(animationSpec = tween(300)) },
-        exitTransition = { fadeOut(animationSpec = tween(300)) },
-        popEnterTransition = { fadeIn(animationSpec = tween(300)) },
-        popExitTransition = { fadeOut(animationSpec = tween(300)) }
-    ) {
+    NavHost(navController = navController, startDestination = "splash") {
         composable("splash") { SplashScreen(navController) }
         composable("login") { LoginScreen(navController) }
         composable("main") { MainScreen(navController) }
         composable("file_detail/{accountId}/{fileId}") { backStackEntry ->
             val accountId = backStackEntry.arguments?.getString("accountId") ?: ""
             val fileId = backStackEntry.arguments?.getString("fileId") ?: ""
-            FileDetailScreen(navController, accountId, fileId, FileRepository.getActiveList())
+            FileDetailScreen(navController, accountId, fileId)
         }
         composable("video_player/{accountId}/{fileId}") { backStackEntry ->
             val accountId = backStackEntry.arguments?.getString("accountId") ?: ""
             val fileId = backStackEntry.arguments?.getString("fileId") ?: ""
-            VideoPlayerScreen(navController, accountId, fileId, FileRepository.getActiveList())
+            VideoPlayerScreen(navController, accountId, fileId)
         }
         composable("image_viewer/{accountId}/{fileId}") { backStackEntry ->
             val accountId = backStackEntry.arguments?.getString("accountId") ?: ""
             val fileId = backStackEntry.arguments?.getString("fileId") ?: ""
-            ImageViewerScreen(navController, accountId, fileId, FileRepository.getActiveList())
+            ImageViewerScreen(navController, accountId, fileId)
         }
         composable("audio_player/{accountId}/{fileId}") { backStackEntry ->
             val accountId = backStackEntry.arguments?.getString("accountId") ?: ""
             val fileId = backStackEntry.arguments?.getString("fileId") ?: ""
-            AudioPlayerScreen(navController, accountId, fileId, FileRepository.getActiveList())
+            AudioPlayerScreen(navController, accountId, fileId)
         }
         composable("text_editor/{accountId}/{fileId}") { backStackEntry ->
             val accountId = backStackEntry.arguments?.getString("accountId") ?: ""
             val fileId = backStackEntry.arguments?.getString("fileId") ?: ""
-            TextEditorScreen(navController, accountId, fileId, FileRepository.getActiveList())
+            TextEditorScreen(navController, accountId, fileId)
         }
         composable("pdf_viewer/{accountId}/{fileId}") { backStackEntry ->
             val accountId = backStackEntry.arguments?.getString("accountId") ?: ""
             val fileId = backStackEntry.arguments?.getString("fileId") ?: ""
-            PdfViewerScreen(navController, accountId, fileId, FileRepository.getActiveList())
+            PdfViewerScreen(navController, accountId, fileId)
         }
     }
 }

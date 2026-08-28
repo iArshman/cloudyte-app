@@ -52,6 +52,7 @@ import com.example.api.ApiClient
 import com.example.api.CloudFile
 import com.example.api.FileRepository
 import com.example.api.FolderRequest
+
 import com.example.api.RenameRequest
 import com.example.api.ShareRequest
 import com.example.db.AppDatabase
@@ -92,7 +93,7 @@ class FilesViewModel(application: android.app.Application) : AndroidViewModel(ap
 
     val currentFolderId: String? get() = _breadcrumbs.value.lastOrNull()?.id
 
-    private val _isLoading = MutableStateFlow(true)
+    private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
     private val _errorMessage = MutableStateFlow<String?>(null)
@@ -112,6 +113,7 @@ class FilesViewModel(application: android.app.Application) : AndroidViewModel(ap
 
     fun loadFiles() {
         viewModelScope.launch {
+            _isLoading.value = true
             _errorMessage.value = null
             try {
                 // 1. Instant load cached accounts
@@ -304,7 +306,7 @@ fun FilesScreen(
 
     val context = LocalContext.current
     val sharedPrefs = remember { context.getSharedPreferences("cloudyte_ui_prefs", Context.MODE_PRIVATE) }
-    var isGridView by remember { mutableStateOf(sharedPrefs.getBoolean("is_grid_view", false)) }
+    var isGridView by remember { mutableStateOf(sharedPrefs.getBoolean("is_grid_view", true)) }
 
     val coroutineScope = rememberCoroutineScope()
     var isUploading by remember { mutableStateOf(false) }
@@ -481,6 +483,8 @@ fun FilesScreen(
             }
         )
     }
+
+    
     val effectiveAccountId = currentAccountId ?: accounts.firstOrNull()?.effectiveId ?: "root"
 
     val filteredAndSortedFiles = remember(files, searchQuery, selectedFilter, sortOrder) {
@@ -492,7 +496,7 @@ fun FilesScreen(
                 "Images" -> file.isImage
                 "Audio" -> file.isAudio
                 "Docs" -> file.isPdf || file.isTextOrCode
-                "Offline" -> !file.isFolderItem && (false || false)
+                "Offline" -> false
                 else -> true
             }
             matchesSearch && matchesFilter
@@ -511,7 +515,7 @@ fun FilesScreen(
     val regularFiles = filteredAndSortedFiles.filter { !it.isFolderItem }
     val selectedAccount = accounts.find { it.effectiveId == currentAccountId } ?: accounts.firstOrNull()
 
-    Scaffold(contentWindowInsets = WindowInsets(0, 0, 0, 0), 
+    Scaffold(
         containerColor = BackgroundDark,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
@@ -544,7 +548,6 @@ fun FilesScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(top = 16.dp)
         ) {
             // High-End Google Drive / OneDrive Style Top Bar
             Row(
@@ -559,10 +562,11 @@ fun FilesScreen(
                     val providerColor = when {
                         selectedAccount?.effectiveType?.contains("google", ignoreCase = true) == true -> Color(0xFF4285F4)
                         selectedAccount?.effectiveType?.contains("one", ignoreCase = true) == true -> Color(0xFF0078D4)
-                        selectedAccount?.effectiveType?.contains("tele", ignoreCase = true) == true -> Color(0xFF24A1DE)
+                        selectedAccount?.effectiveType?.contains("tele", ignoreCase = true) == true -> AccentSky
                         else -> AccentBlue
                     }
                     val initialLetter = (selectedAccount?.effectiveName?.firstOrNull() ?: 'C').uppercaseChar().toString()
+
                     Box(
                         modifier = Modifier
                             .size(42.dp)
@@ -579,6 +583,7 @@ fun FilesScreen(
                             fontSize = 16.sp
                         )
                     }
+
                     DropdownMenu(
                         expanded = showAccountDropdown,
                         onDismissRequest = { showAccountDropdown = false },
@@ -599,7 +604,7 @@ fun FilesScreen(
                             val driveColor = when {
                                 acc.effectiveType.contains("google", ignoreCase = true) -> Color(0xFF4285F4)
                                 acc.effectiveType.contains("one", ignoreCase = true) -> Color(0xFF0078D4)
-                                else -> Color(0xFF24A1DE)
+                                else -> AccentSky
                             }
                             DropdownMenuItem(
                                 text = {
@@ -728,15 +733,33 @@ fun FilesScreen(
                     shape = RoundedCornerShape(24.dp),
                     singleLine = true
                 )
-                
-                // Sort & Filter Dropdown Icon Button
+
+                // Layout Style Switcher (List vs Grid)
+                IconButton(
+                    onClick = {
+                        isGridView = !isGridView
+                        sharedPrefs.edit().putBoolean("is_grid_view", isGridView).apply()
+                    },
+                    modifier = Modifier
+                        .size(42.dp)
+                        .background(SurfaceDark, CircleShape)
+                ) {
+                    Icon(
+                        imageVector = if (isGridView) Icons.AutoMirrored.Filled.ViewList else Icons.Default.GridView,
+                        contentDescription = if (isGridView) "Switch to List View" else "Switch to Grid View",
+                        tint = AccentBlue,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                // Filter Dropdown Icon Button
                 Box {
                     IconButton(
                         onClick = { showFilterDropdown = true },
                         modifier = Modifier
                             .size(42.dp)
                             .background(
-                                if (selectedFilter != "All" || sortOrder != FileSortOrder.NAME_ASC) AccentBlue.copy(alpha = 0.18f) else SurfaceDark,
+                                if (selectedFilter != "All") AccentBlue.copy(alpha = 0.18f) else SurfaceDark,
                                 CircleShape
                             )
                     ) {
@@ -752,46 +775,18 @@ fun FilesScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.FilterList,
-                                contentDescription = "Sort and Filter files",
-                                tint = if (selectedFilter != "All" || sortOrder != FileSortOrder.NAME_ASC) AccentBlue else TextPrimary,
+                                contentDescription = "Filter files",
+                                tint = if (selectedFilter != "All") AccentBlue else TextPrimary,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
                     }
+
                     DropdownMenu(
                         expanded = showFilterDropdown,
                         onDismissRequest = { showFilterDropdown = false },
                         modifier = Modifier.background(SurfaceDark)
                     ) {
-                        Text(
-                            text = "Sort Files By",
-                            color = TextSecondary,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                        )
-                        FileSortOrder.values().forEach { order ->
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        text = order.displayName,
-                                        color = if (sortOrder == order) AccentBlue else TextPrimary,
-                                        fontWeight = if (sortOrder == order) FontWeight.Bold else FontWeight.Normal,
-                                        fontSize = 13.sp
-                                    )
-                                },
-                                trailingIcon = {
-                                    if (sortOrder == order) {
-                                        Icon(Icons.Default.Check, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(16.dp))
-                                    }
-                                },
-                                onClick = {
-                                    sortOrder = order
-                                    showFilterDropdown = false
-                                }
-                            )
-                        }
-                        HorizontalDivider(color = Color(0xFF2C2C3E))
                         Text(
                             text = "Filter Files By",
                             color = TextSecondary,
@@ -799,6 +794,8 @@ fun FilesScreen(
                             fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                         )
+                        HorizontalDivider(color = Color(0xFF2C2C3E))
+
                         val filterOptions = listOf(
                             Triple("All", "All Files", Icons.Default.FolderOpen),
                             
@@ -808,6 +805,7 @@ fun FilesScreen(
                             Triple("Audio", "Audio & Music", Icons.Default.MusicNote),
                             Triple("Docs", "Documents & Code", Icons.Default.Description)
                         )
+
                         filterOptions.forEach { (filterKey, filterLabel, filterIcon) ->
                             DropdownMenuItem(
                                 text = {
@@ -845,25 +843,8 @@ fun FilesScreen(
                         }
                     }
                 }
-
-                // Layout Style Switcher (List vs Grid)
-                IconButton(
-                    onClick = {
-                        isGridView = !isGridView
-                        sharedPrefs.edit().putBoolean("is_grid_view", isGridView).apply()
-                    },
-                    modifier = Modifier
-                        .size(42.dp)
-                        .background(SurfaceDark, CircleShape)
-                ) {
-                    Icon(
-                        imageVector = if (isGridView) Icons.AutoMirrored.Filled.ViewList else Icons.Default.GridView,
-                        contentDescription = if (isGridView) "Switch to List View" else "Switch to Grid View",
-                        tint = AccentBlue,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
             }
+
             Spacer(modifier = Modifier.height(6.dp))
 
             // Active Filter Pill indicator if not "All"
@@ -1091,6 +1072,8 @@ fun FileRow(
         ApiClient.getFileUrl(accountId, file.effectiveId, preview = true)
     }
     var showMenu by remember { mutableStateOf(false) }
+    
+    val isOffline = false
 
     Card(
         shape = RoundedCornerShape(16.dp),
@@ -1119,7 +1102,7 @@ fun FileRow(
             ) {
                 if (file.isImage || file.isVideo) {
                     SubcomposeAsyncImage(
-                        model = coil.request.ImageRequest.Builder(context).data(previewUrl).memoryCacheKey(file.effectiveId).diskCacheKey(file.effectiveId).crossfade(true).build(),
+                        model = previewUrl,
                         contentDescription = file.effectiveName,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop
@@ -1153,7 +1136,7 @@ fun FileRow(
                 } else if (file.isFolderItem) {
                     Icon(Icons.Default.Folder, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(28.dp))
                 } else if (file.isAudio) {
-                    Icon(Icons.Default.MusicNote, contentDescription = null, tint = AccentSky, modifier = Modifier.size(26.dp))
+                    Icon(Icons.Default.MusicNote, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(26.dp))
                 } else if (file.isPdf) {
                     Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = Color(0xFFEF4444), modifier = Modifier.size(26.dp))
                 } else if (file.isTextOrCode) {
@@ -1181,6 +1164,45 @@ fun FileRow(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false)
                     )
+                    if (isOffline) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = "Saved Offline",
+                            tint = Color(0xFF10B981),
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = if (file.isFolderItem) "Folder" else if (isOffline) "${file.formattedSize} • ${file.effectiveType.uppercase()} • Offline" else "${file.formattedSize} • ${file.effectiveType.uppercase()}",
+                    color = if (isOffline) Color(0xFF10B981) else TextSecondary,
+                    fontSize = 12.sp
+                )
+            }
+
+            Box {
+                IconButton(onClick = { showMenu = true }) {
+                    Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = TextSecondary)
+                }
+
+                DropdownMenu(
+                    expanded = showMenu,
+                    onDismissRequest = { showMenu = false },
+                    modifier = Modifier.background(SurfaceDark)
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Details & Info", color = TextPrimary) },
+                        leadingIcon = { Icon(Icons.Default.Info, contentDescription = null, tint = TextSecondary) },
+                        onClick = {
+                            showMenu = false
+                            navController.navigate("file_detail/$accountId/${file.effectiveId}")
+                        }
+                    )
+                    if (!file.isFolderItem) {
+                        // Offline functionality disabled
+                    }
                     DropdownMenuItem(
                         text = { Text("Share Link", color = TextPrimary) },
                         leadingIcon = { Icon(Icons.Default.Share, contentDescription = null, tint = TextSecondary) },
@@ -1265,6 +1287,8 @@ fun FileGridItem(
         ApiClient.getFileUrl(accountId, file.effectiveId, preview = true)
     }
     var showMenu by remember { mutableStateOf(false) }
+    
+    val isOffline = false
 
     Card(
         shape = RoundedCornerShape(16.dp),
@@ -1292,7 +1316,7 @@ fun FileGridItem(
             ) {
                 if (file.isImage || file.isVideo) {
                     SubcomposeAsyncImage(
-                        model = coil.request.ImageRequest.Builder(context).data(previewUrl).memoryCacheKey(file.effectiveId).diskCacheKey(file.effectiveId).crossfade(true).build(),
+                        model = previewUrl,
                         contentDescription = file.effectiveName,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop
@@ -1326,7 +1350,7 @@ fun FileGridItem(
                 } else if (file.isFolderItem) {
                     Icon(Icons.Default.Folder, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(42.dp))
                 } else if (file.isAudio) {
-                    Icon(Icons.Default.MusicNote, contentDescription = null, tint = AccentSky, modifier = Modifier.size(38.dp))
+                    Icon(Icons.Default.MusicNote, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(38.dp))
                 } else if (file.isPdf) {
                     Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = Color(0xFFEF4444), modifier = Modifier.size(38.dp))
                 } else if (file.isTextOrCode) {
@@ -1338,6 +1362,19 @@ fun FileGridItem(
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp
                     )
+                }
+
+                if (isOffline) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(6.dp)
+                            .size(20.dp)
+                            .background(Color(0xFF10B981), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.Check, contentDescription = "Offline", tint = Color.White, modifier = Modifier.size(12.dp))
+                    }
                 }
             }
 
@@ -1359,8 +1396,8 @@ fun FileGridItem(
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = if (file.isFolderItem) "Folder" else file.formattedSize,
-                        color = TextSecondary,
+                        text = if (file.isFolderItem) "Folder" else if (isOffline) "${file.formattedSize} • Offline" else file.formattedSize,
+                        color = if (isOffline) Color(0xFF10B981) else TextSecondary,
                         fontSize = 11.sp
                     )
                 }
@@ -1384,6 +1421,8 @@ fun FileGridItem(
                             }
                         )
                         if (!file.isFolderItem) {
+                            // Offline functionality disabled
+                        }
                         DropdownMenuItem(
                             text = { Text("Share Link", color = TextPrimary) },
                             leadingIcon = { Icon(Icons.Default.Share, contentDescription = null, tint = TextSecondary) },
@@ -1450,5 +1489,4 @@ fun FileGridItem(
             }
         }
     }
-}
 }
