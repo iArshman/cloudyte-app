@@ -20,8 +20,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.navigation.NavController
 import androidx.navigation.compose.currentBackStackEntryAsState
 import com.example.ui.theme.BackgroundDark
-import com.example.ui.theme.BlueGradientEnd
-import com.example.ui.theme.PurpleGradientStart
+import com.example.ui.theme.AccentSky
+import com.example.ui.theme.AccentBlue
 import com.example.ui.theme.SurfaceDark
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
@@ -48,7 +48,7 @@ fun BottomNavBar(navController: NavController) {
                     if (isSelected) {
                         // Use gradient brush for icon tint if we had custom Modifier.drawWithCache
                         // For simplicity in standard item, we can use the Purple color
-                        Icon(imageVector = item.icon, contentDescription = item.label, tint = PurpleGradientStart)
+                        Icon(imageVector = item.icon, contentDescription = item.label, tint = AccentBlue)
                     } else {
                         Icon(imageVector = item.icon, contentDescription = item.label, tint = TextSecondary)
                     }
@@ -56,7 +56,7 @@ fun BottomNavBar(navController: NavController) {
                 label = {
                     Text(
                         text = item.label,
-                        color = if (isSelected) PurpleGradientStart else TextSecondary
+                        color = if (isSelected) AccentBlue else TextSecondary
                     )
                 },
                 selected = isSelected,
@@ -72,9 +72,9 @@ fun BottomNavBar(navController: NavController) {
                     }
                 },
                 colors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = PurpleGradientStart,
+                    selectedIconColor = AccentBlue,
                     unselectedIconColor = TextSecondary,
-                    selectedTextColor = PurpleGradientStart,
+                    selectedTextColor = AccentBlue,
                     unselectedTextColor = TextSecondary,
                     indicatorColor = Color.Transparent
                 )

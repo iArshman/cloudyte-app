@@ -45,7 +45,7 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
     private val _accounts = MutableStateFlow<List<Account>>(emptyList())
     val accounts: StateFlow<List<Account>> = _accounts.asStateFlow()
 
-    private val _isLoading = MutableStateFlow(false)
+    private val _isLoading = MutableStateFlow(true)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
     private val _errorMessage = MutableStateFlow<String?>(null)
@@ -115,7 +115,7 @@ fun AccountsScreen(
         )
     }
 
-    Scaffold(
+    Scaffold(contentWindowInsets = WindowInsets(0, 0, 0, 0), 
         containerColor = BackgroundDark
     ) { innerPadding ->
         LazyColumn(
@@ -155,7 +155,7 @@ fun AccountsScreen(
                     }
                     IconButton(onClick = { viewModel.loadAccounts() }) {
                         if (isLoading) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp), color = PurpleGradientStart)
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), color = AccentBlue)
                         } else {
                             Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = TextPrimary)
                         }
@@ -184,7 +184,7 @@ fun AccountsScreen(
                             )
                             Button(
                                 onClick = { viewModel.loadAccounts() },
-                                colors = ButtonDefaults.buttonColors(containerColor = PurpleGradientStart)
+                                colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
                             ) {
                                 Text("Retry", fontSize = 12.sp)
                             }
@@ -210,7 +210,7 @@ fun AccountsScreen(
                             Icon(
                                 Icons.Default.Cloud,
                                 contentDescription = null,
-                                tint = PurpleGradientStart,
+                                tint = AccentBlue,
                                 modifier = Modifier.size(56.dp)
                             )
                             Spacer(modifier = Modifier.height(16.dp))
@@ -230,7 +230,7 @@ fun AccountsScreen(
                             Spacer(modifier = Modifier.height(20.dp))
                             Button(
                                 onClick = { showAddDialog = true },
-                                colors = ButtonDefaults.buttonColors(containerColor = PurpleGradientStart)
+                                colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
                             ) {
                                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
@@ -336,10 +336,10 @@ fun AccountCard(account: Account, onDelete: () -> Unit) {
                 if (account.isDefault == true) {
                     Box(
                         modifier = Modifier
-                            .background(PurpleGradientStart.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
+                            .background(AccentBlue.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
-                        Text("Default", color = PurpleGradientStart, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text("Default", color = AccentBlue, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                 }
@@ -407,9 +407,9 @@ fun AddAccountCard(onClick: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
-            Icon(Icons.Default.Add, contentDescription = "Add", tint = PurpleGradientStart)
+            Icon(Icons.Default.Add, contentDescription = "Add", tint = AccentBlue)
             Spacer(modifier = Modifier.width(8.dp))
-            Text("Add New Drive Account", color = PurpleGradientStart, fontWeight = FontWeight.SemiBold)
+            Text("Add New Drive Account", color = AccentBlue, fontWeight = FontWeight.SemiBold)
         }
     }
 }

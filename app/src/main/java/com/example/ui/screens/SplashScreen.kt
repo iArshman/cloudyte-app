@@ -26,8 +26,8 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.example.api.ApiClient
 import com.example.ui.theme.BackgroundDark
-import com.example.ui.theme.BlueGradientEnd
-import com.example.ui.theme.PurpleGradientStart
+import com.example.ui.theme.AccentSky
+import com.example.ui.theme.AccentBlue
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import kotlinx.coroutines.delay
@@ -71,7 +71,7 @@ fun SplashScreen(navController: NavController) {
                     .size(100.dp)
                     .background(
                         brush = Brush.linearGradient(
-                            colors = listOf(PurpleGradientStart, BlueGradientEnd)
+                            colors = listOf(AccentBlue, AccentSky)
                         ),
                         shape = androidx.compose.foundation.shape.CircleShape
                     )

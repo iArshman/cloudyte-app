@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import android.content.Intent
+import com.example.api.DownloadHelper
 import android.net.Uri
 import android.util.Log
 import androidx.compose.animation.AnimatedVisibility
@@ -113,7 +114,7 @@ fun AddAccountDialog(
                             modifier = Modifier
                                 .weight(1f)
                                 .clip(RoundedCornerShape(10.dp))
-                                .background(if (isSelected) PurpleGradientStart else Color.Transparent)
+                                .background(if (isSelected) AccentBlue else Color.Transparent)
                                 .clickable {
                                     if (!isLoading) {
                                         selectedProvider = provider
@@ -169,10 +170,7 @@ fun AddAccountDialog(
                                         val url = resp.url
                                         if (!url.isNullOrBlank()) {
                                             oauthWaitingForReturn = true
-                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
-                                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                            }
-                                            context.startActivity(intent)
+                                            DownloadHelper.downloadFile(context, url, "downloaded_file", com.example.api.ApiClient.getToken())
                                         } else {
                                             errorMsg = "Server did not return a valid Google authorization URL."
                                         }
@@ -202,10 +200,7 @@ fun AddAccountDialog(
                                         val url = resp.url
                                         if (!url.isNullOrBlank()) {
                                             oauthWaitingForReturn = true
-                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
-                                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                            }
-                                            context.startActivity(intent)
+                                            DownloadHelper.downloadFile(context, url, "downloaded_file", com.example.api.ApiClient.getToken())
                                         } else {
                                             errorMsg = "Server did not return a valid OneDrive authorization URL."
                                         }
@@ -319,7 +314,7 @@ fun GoogleDriveLinkPanel(
                     Spacer(modifier = Modifier.height(12.dp))
                     Button(
                         onClick = onVerifyCompleted,
-                        colors = ButtonDefaults.buttonColors(containerColor = PurpleGradientStart),
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -406,7 +401,7 @@ fun OneDriveLinkPanel(
                     Spacer(modifier = Modifier.height(12.dp))
                     Button(
                         onClick = onVerifyCompleted,
-                        colors = ButtonDefaults.buttonColors(containerColor = PurpleGradientStart),
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -455,7 +450,7 @@ fun TelegramLinkPanel(
                 modifier = Modifier.padding(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.Info, contentDescription = null, tint = BlueGradientEnd, modifier = Modifier.size(20.dp))
+                Icon(Icons.Default.Info, contentDescription = null, tint = AccentSky, modifier = Modifier.size(20.dp))
                 Spacer(modifier = Modifier.width(10.dp))
                 Text(
                     text = "Ensure the Cloudyte Bot is added as an Administrator with upload permissions in your Telegram channel.",
@@ -476,7 +471,7 @@ fun TelegramLinkPanel(
             colors = OutlinedTextFieldDefaults.colors(
                 focusedTextColor = TextPrimary,
                 unfocusedTextColor = TextPrimary,
-                focusedBorderColor = PurpleGradientStart,
+                focusedBorderColor = AccentBlue,
                 unfocusedBorderColor = TextSecondary
             )
         )
@@ -491,7 +486,7 @@ fun TelegramLinkPanel(
             colors = OutlinedTextFieldDefaults.colors(
                 focusedTextColor = TextPrimary,
                 unfocusedTextColor = TextPrimary,
-                focusedBorderColor = PurpleGradientStart,
+                focusedBorderColor = AccentBlue,
                 unfocusedBorderColor = TextSecondary
             )
         )
@@ -500,7 +495,7 @@ fun TelegramLinkPanel(
 
         Button(
             onClick = onSubmit,
-            colors = ButtonDefaults.buttonColors(containerColor = PurpleGradientStart),
+            colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
             modifier = Modifier.fillMaxWidth(),
             enabled = !isLoading
         ) {

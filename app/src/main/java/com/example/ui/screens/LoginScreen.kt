@@ -165,11 +165,11 @@ fun LoginScreen(navController: NavController, viewModel: LoginViewModel = viewMo
                 leadingIcon = { Icon(Icons.Default.Person, contentDescription = "Username", tint = TextSecondary) },
                 modifier = Modifier.fillMaxWidth(),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = PurpleGradientStart,
+                    focusedBorderColor = AccentBlue,
                     unfocusedBorderColor = SurfaceDark,
                     focusedContainerColor = SurfaceDark,
                     unfocusedContainerColor = SurfaceDark,
-                    cursorColor = PurpleGradientStart,
+                    cursorColor = AccentBlue,
                     focusedTextColor = TextPrimary,
                     unfocusedTextColor = TextPrimary
                 ),
@@ -194,11 +194,11 @@ fun LoginScreen(navController: NavController, viewModel: LoginViewModel = viewMo
                 visualTransformation = if (passwordVisible) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
                 modifier = Modifier.fillMaxWidth(),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = PurpleGradientStart,
+                    focusedBorderColor = AccentBlue,
                     unfocusedBorderColor = SurfaceDark,
                     focusedContainerColor = SurfaceDark,
                     unfocusedContainerColor = SurfaceDark,
-                    cursorColor = PurpleGradientStart,
+                    cursorColor = AccentBlue,
                     focusedTextColor = TextPrimary,
                     unfocusedTextColor = TextPrimary
                 ),
@@ -217,7 +217,7 @@ fun LoginScreen(navController: NavController, viewModel: LoginViewModel = viewMo
                         checked = rememberMe,
                         onCheckedChange = { rememberMe = it },
                         colors = CheckboxDefaults.colors(
-                            checkedColor = PurpleGradientStart,
+                            checkedColor = AccentBlue,
                             uncheckedColor = TextSecondary,
                             checkmarkColor = Color.White
                         )
@@ -257,7 +257,7 @@ fun LoginScreen(navController: NavController, viewModel: LoginViewModel = viewMo
                     .height(56.dp)
                     .background(
                         brush = Brush.linearGradient(
-                            colors = listOf(PurpleGradientStart, BlueGradientEnd)
+                            colors = listOf(AccentBlue, AccentSky)
                         ),
                         shape = RoundedCornerShape(16.dp)
                     ),
@@ -285,7 +285,7 @@ fun LoginScreen(navController: NavController, viewModel: LoginViewModel = viewMo
                 )
                 Text(
                     text = if (isRegisterMode) "Log In" else "Register",
-                    color = BlueGradientEnd,
+                    color = AccentSky,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.clickable { viewModel.toggleMode() }
                 )
