@@ -142,18 +142,43 @@ data class Account(
 
 @Stable
 @JsonClass(generateAdapter = true)
+data class StorageCategories(
+    val images: Long = 0L,
+    val documents: Long = 0L,
+    val videos: Long = 0L,
+    val archives: Long = 0L,
+    val audio: Long = 0L,
+    val other: Long = 0L
+) {
+    val totalCategoryBytes: Long
+        get() = images.coerceAtLeast(0L) +
+            documents.coerceAtLeast(0L) +
+            videos.coerceAtLeast(0L) +
+            archives.coerceAtLeast(0L) +
+            audio.coerceAtLeast(0L) +
+            other.coerceAtLeast(0L)
+}
+
+@Stable
+@JsonClass(generateAdapter = true)
 data class StorageSummary(
     val accountId: String = "",
     val accountType: String = "",
     val usedBytes: Long = 0L,
     val totalBytes: Long? = null,
     val fileCount: Int? = null,
-    val categories: Map<String, Long>? = null
+    val categories: StorageCategories? = null
 ) {
+    val isUnlimited: Boolean
+        get() = totalBytes == null ||
+            totalBytes <= 0L ||
+            accountType.contains("telegram", ignoreCase = true) ||
+            accountType.contains("tg", ignoreCase = true)
+
     val percentage: Float
         get() {
             val total = totalBytes ?: return 0f
-            if (total <= 0L || usedBytes <= 0L) return 0f
+            if (isUnlimited || total <= 0L || usedBytes <= 0L) return 0f
             return ((usedBytes.toFloat() / total.toFloat()) * 100f).coerceIn(0f, 100f)
         }
 }

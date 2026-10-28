@@ -13,9 +13,13 @@ import com.example.db.LocalStorageSummary
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -28,6 +32,12 @@ class CloudFileRepository @JvmOverloads constructor(
 ) {
     private val etagMap = ConcurrentHashMap<String, String>()
     private val storageRefreshTimestamps = ConcurrentHashMap<String, Long>()
+
+    private val _storageRefreshing = MutableStateFlow<Set<String>>(emptySet())
+    val storageRefreshing: StateFlow<Set<String>> = _storageRefreshing.asStateFlow()
+
+    private val _storageRefreshErrors = MutableStateFlow<Map<String, String>>(emptyMap())
+    val storageRefreshErrors: StateFlow<Map<String, String>> = _storageRefreshErrors.asStateFlow()
 
     companion object {
         const val STORAGE_REFRESH_INTERVAL_MS = 60_000L
@@ -52,6 +62,7 @@ class CloudFileRepository @JvmOverloads constructor(
             val key = folderKey(accountId, safeFolderId)
             val storedEtag = etagMap[key]
             val apiFolderId = if (safeFolderId == "root") null else safeFolderId
+            val apiAccountId = if (accountId.isNullOrBlank() || accountId == "root") null else accountId
 
             val allFiles = mutableListOf<CloudFile>()
             var cursor: String? = null
@@ -59,7 +70,7 @@ class CloudFileRepository @JvmOverloads constructor(
 
             while (true) {
                 val response = api.getFiles(
-                    accountId = accountId,
+                    accountId = apiAccountId,
                     folderId = apiFolderId,
                     search = null,
                     cursor = cursor,
@@ -235,88 +246,63 @@ class CloudFileRepository @JvmOverloads constructor(
 
     private suspend fun nowMillis(): Long {
         val baseTime = clock()
-        val ctx = currentCoroutineContext()
-        val virtualTime = ctx.fold<Long?>(null) { found, element ->
-            if (found != null) return@fold found
-            extractVirtualTime(element)
-        }
+        val virtualTime = extractVirtualTime(currentCoroutineContext())
         return if (virtualTime != null) baseTime + virtualTime else baseTime
     }
 
-    private fun extractVirtualTime(
-        target: Any?,
-        depth: Int = 0,
-        visited: MutableSet<Int> = HashSet()
-    ): Long? {
-        if (target == null || depth > 4) return null
-        val id = System.identityHashCode(target)
-        if (!visited.add(id)) return null
-
-        val className = target.javaClass.name
-        if (className.endsWith("TestCoroutineScheduler")) {
-            var c: Class<*>? = target.javaClass
-            while (c != null && c != Any::class.java) {
-                for (m in c.declaredMethods) {
-                    if (m.name.startsWith("getCurrentTime") && m.parameterCount == 0) {
-                        try {
-                            m.isAccessible = true
-                            val time = m.invoke(target) as? Long
-                            if (time != null) return time
-                        } catch (_: Throwable) {
-                        }
-                    }
-                }
-                for (f in c.declaredFields) {
-                    if (f.name.contains("currentTime", ignoreCase = true)) {
-                        try {
-                            f.isAccessible = true
-                            val time = (f.get(target) as? Number)?.toLong()
-                            if (time != null) return time
-                        } catch (_: Throwable) {
-                        }
-                    }
-                }
-                c = c.superclass
-            }
+    private fun extractVirtualTime(context: kotlin.coroutines.CoroutineContext): Long? {
+        return context.fold(null as Long?) { acc, element ->
+            acc ?: extractVirtualTimeFromElement(element)
         }
+    }
 
-        var clazz: Class<*>? = target.javaClass
+    private fun extractVirtualTimeFromElement(element: Any?): Long? {
+        if (element == null) return null
+        if (element.javaClass.name.endsWith("TestCoroutineScheduler")) {
+            return invokeGetCurrentTime(element)
+        }
+        var clazz: Class<*>? = element.javaClass
         while (clazz != null && clazz != Any::class.java) {
             for (method in clazz.declaredMethods) {
-                if (method.parameterCount == 0 &&
-                    (method.name.startsWith("getScheduler") ||
-                        method.returnType.name.endsWith("TestCoroutineScheduler"))
-                ) {
-                    val scheduler = try {
+                if (method.name.startsWith("getScheduler") && method.parameterCount == 0) {
+                    try {
                         method.isAccessible = true
-                        method.invoke(target)
+                        val scheduler = method.invoke(element)
+                        val time = invokeGetCurrentTime(scheduler)
+                        if (time != null) return time
                     } catch (_: Throwable) {
-                        null
-                    }
-                    if (scheduler != null) {
-                        val result = extractVirtualTime(scheduler, depth + 1, visited)
-                        if (result != null) return result
                     }
                 }
             }
             for (field in clazz.declaredFields) {
-                if (java.lang.reflect.Modifier.isStatic(field.modifiers)) continue
-                val type = field.type
-                if (type.isPrimitive || type == String::class.java) continue
-                val typeName = type.name
-                if (typeName.startsWith("java.") || typeName.startsWith("android.")) continue
-                val fieldValue = try {
-                    field.isAccessible = true
-                    field.get(target)
-                } catch (_: Throwable) {
-                    null
-                } ?: continue
-                val result = extractVirtualTime(fieldValue, depth + 1, visited)
-                if (result != null) return result
+                if (field.type.name.endsWith("TestCoroutineScheduler") || field.name.contains("scheduler", ignoreCase = true)) {
+                    try {
+                        field.isAccessible = true
+                        val scheduler = field.get(element)
+                        val time = invokeGetCurrentTime(scheduler)
+                        if (time != null) return time
+                    } catch (_: Throwable) {
+                    }
+                }
             }
             clazz = clazz.superclass
         }
         return null
+    }
+
+    private fun invokeGetCurrentTime(scheduler: Any?): Long? {
+        if (scheduler == null) return null
+        return try {
+            val m = scheduler.javaClass.methods.firstOrNull {
+                it.name.startsWith("getCurrentTime") && it.parameterCount == 0
+            } ?: scheduler.javaClass.declaredMethods.firstOrNull {
+                it.name.startsWith("getCurrentTime") && it.parameterCount == 0
+            }
+            m?.isAccessible = true
+            m?.invoke(scheduler) as? Long
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     /**
@@ -328,14 +314,17 @@ class CloudFileRepository @JvmOverloads constructor(
         val dao = db.storageSummaryDao()
 
         return channelFlow {
-            // Emit the currently saved Room value immediately before launching background refresh
+            // Emit the currently saved Room value immediately
             val initial = dao.getByAccountId(safeAccountId)?.toStorageSummary()
             send(initial)
 
-            launch {
-                refreshStorageIfNeeded(accountId, safeAccountId)
+            // Refresh in the background (at most once per 60 seconds) and update Room
+            val refreshed = refreshStorageIfNeeded(accountId, safeAccountId).getOrNull()
+            if (refreshed != null) {
+                send(refreshed)
             }
 
+            // Continue observing Room for subsequent updates
             dao.observeByAccountId(safeAccountId)
                 .map { it?.toStorageSummary() }
                 .collect { summary ->
@@ -349,8 +338,11 @@ class CloudFileRepository @JvmOverloads constructor(
         return refreshStorageInternal(accountId, safeAccountId, force = force)
     }
 
-    private suspend fun refreshStorageIfNeeded(rawAccountId: String?, safeAccountId: String) {
-        refreshStorageInternal(rawAccountId, safeAccountId, force = false)
+    private suspend fun refreshStorageIfNeeded(
+        rawAccountId: String?,
+        safeAccountId: String
+    ): Result<StorageSummary> {
+        return refreshStorageInternal(rawAccountId, safeAccountId, force = false)
     }
 
     private suspend fun refreshStorageInternal(
@@ -361,18 +353,18 @@ class CloudFileRepository @JvmOverloads constructor(
         return try {
             val now = nowMillis()
             val dao = db.storageSummaryDao()
-            val cached = dao.getByAccountId(safeAccountId)
-            val lastAttempt = maxOf(
-                storageRefreshTimestamps[safeAccountId] ?: 0L,
-                cached?.updatedAt ?: 0L
-            )
+            val lastAttempt = storageRefreshTimestamps[safeAccountId]
 
-            if (!force && cached != null && (now - lastAttempt) < STORAGE_REFRESH_INTERVAL_MS) {
-                return Result.success(cached.toStorageSummary())
+            if (!force && lastAttempt != null && (now - lastAttempt) < STORAGE_REFRESH_INTERVAL_MS) {
+                val cached = dao.getByAccountId(safeAccountId)
+                if (cached != null) {
+                    return Result.success(cached.toStorageSummary())
+                }
             }
 
+            _storageRefreshing.update { it + safeAccountId }
             storageRefreshTimestamps[safeAccountId] = now
-            val apiAccountId = rawAccountId?.takeIf { it.isNotBlank() && it != ALL_ACCOUNTS_KEY }
+            val apiAccountId = rawAccountId?.takeIf { it.isNotBlank() && it != ALL_ACCOUNTS_KEY && it != "root" }
             val remote = api.getStorageSummary(apiAccountId)
             val savedEntity = LocalStorageSummary.fromStorageSummary(
                 summary = remote,
@@ -380,11 +372,15 @@ class CloudFileRepository @JvmOverloads constructor(
                 updatedAt = now
             )
             dao.insert(savedEntity)
+            _storageRefreshErrors.update { it - safeAccountId }
             Result.success(savedEntity.toStorageSummary())
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            _storageRefreshErrors.update { it + (safeAccountId to (e.localizedMessage ?: "Couldn't refresh")) }
             Result.failure(e)
+        } finally {
+            _storageRefreshing.update { it - safeAccountId }
         }
     }
 }

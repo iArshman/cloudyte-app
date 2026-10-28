@@ -2,6 +2,7 @@ package com.example.db
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import com.example.api.StorageCategories
 import com.example.api.StorageSummary
 import org.json.JSONObject
 
@@ -16,18 +17,19 @@ data class LocalStorageSummary(
     val updatedAt: Long
 ) {
     fun toStorageSummary(): StorageSummary {
-        val parsedCategories: Map<String, Long>? = categoriesJson
+        val parsedCategories: StorageCategories? = categoriesJson
             ?.takeIf { it.isNotBlank() }
             ?.let { raw ->
                 try {
                     val json = JSONObject(raw)
-                    val map = LinkedHashMap<String, Long>()
-                    val keys = json.keys()
-                    while (keys.hasNext()) {
-                        val key = keys.next()
-                        map[key] = json.optLong(key, 0L)
-                    }
-                    map
+                    StorageCategories(
+                        images = json.optLong("images", 0L),
+                        documents = json.optLong("documents", 0L),
+                        videos = json.optLong("videos", 0L),
+                        archives = json.optLong("archives", 0L),
+                        audio = json.optLong("audio", 0L),
+                        other = json.optLong("other", 0L)
+                    )
                 } catch (_: Exception) {
                     null
                 }
@@ -46,14 +48,19 @@ data class LocalStorageSummary(
     companion object {
         fun fromStorageSummary(
             summary: StorageSummary,
-            fallbackAccountId: String,
+            fallbackAccountId: String = "",
             updatedAt: Long = System.currentTimeMillis()
         ): LocalStorageSummary {
-            val resolvedAccountId = summary.accountId.ifBlank { fallbackAccountId }
-            val serializedCategories = summary.categories?.let { map ->
-                val json = JSONObject()
-                map.forEach { (k, v) -> json.put(k, v) }
-                json.toString()
+            val resolvedAccountId = summary.accountId.ifBlank { fallbackAccountId.ifBlank { "all" } }
+            val serializedCategories = summary.categories?.let { cats ->
+                JSONObject().apply {
+                    put("images", cats.images)
+                    put("documents", cats.documents)
+                    put("videos", cats.videos)
+                    put("archives", cats.archives)
+                    put("audio", cats.audio)
+                    put("other", cats.other)
+                }.toString()
             }
             return LocalStorageSummary(
                 accountId = resolvedAccountId,

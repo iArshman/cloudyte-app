@@ -145,7 +145,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private val _accounts = MutableStateFlow<List<Account>>(emptyList())
     val accounts: StateFlow<List<Account>> = _accounts.asStateFlow()
 
-    private val _currentAccountId = MutableStateFlow<String?>("root")
+    private val _currentAccountId = MutableStateFlow<String?>(null)
     val currentAccountId: StateFlow<String?> = _currentAccountId.asStateFlow()
 
     private val _recentFiles = MutableStateFlow<List<CloudFile>>(emptyList())
@@ -233,11 +233,18 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 val defaultAcc = _accounts.value.firstOrNull { it.isDefault == true } ?: _accounts.value.firstOrNull()
-                val accId = defaultAcc?.effectiveId?.ifEmpty { null }
+                val accId = defaultAcc?.effectiveId?.takeIf { it.isNotBlank() && it != "root" }
                 _currentAccountId.value = accId
 
                 if (forceStorageRefresh) {
                     repository.refreshStorage(selectedStorageAccountId.value, force = true)
+                }
+
+                if (accId != null) {
+                    val cachedFiles = db.cloudFileDao().getFilesForFolder(accId, "root")
+                    if (cachedFiles.isNotEmpty() && _recentFiles.value.isEmpty()) {
+                        _recentFiles.value = cachedFiles.map { it.toCloudFile() }.take(8)
+                    }
                 }
 
                 val files = try {
@@ -248,7 +255,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 if (files.isNotEmpty()) {
                     _recentFiles.value = files.take(8)
-                    db.cloudFileDao().insertFiles(files.map { LocalCloudFile.fromCloudFile(it, accId, "root") })
+                    db.cloudFileDao().insertFiles(files.map { LocalCloudFile.fromCloudFile(it, accId ?: "root", "root") })
                     FileRepository.cacheFiles(files)
                 }
             } catch (e: Exception) {
