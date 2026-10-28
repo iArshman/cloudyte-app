@@ -253,6 +253,11 @@ class FilesViewModel(
     init {
         viewModelScope.launch {
             try {
+                val cached = db.accountDao().getAllAccounts()
+                if (currentAccountId.value == null && cached.isNotEmpty()) {
+                    val def = cached.find { it.isDefault == true } ?: cached.first()
+                    currentAccountId.value = def.id
+                }
                 val fetched = api.getAccounts()
                 if (fetched.isNotEmpty()) {
                     db.accountDao().insertAccounts(fetched.map { LocalAccount.fromAccount(it) })
@@ -262,6 +267,7 @@ class FilesViewModel(
                     }
                 }
             } catch (_: Exception) {}
+            refresh(force = false)
         }
         viewModelScope.launch {
             accounts.collect { accs ->
@@ -271,7 +277,6 @@ class FilesViewModel(
                 }
             }
         }
-        refresh(force = false)
     }
 
     fun selectAccount(accountId: String) {
@@ -313,7 +318,7 @@ class FilesViewModel(
     }
 
     fun refresh(force: Boolean = true) {
-        val accId = currentAccountId.value ?: accounts.value.firstOrNull()?.effectiveId ?: "root"
+        val accId = currentAccountId.value ?: accounts.value.firstOrNull()?.effectiveId
         val folderId = currentFolderId.value
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {

@@ -17,6 +17,9 @@ interface StorageSummaryDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(summary: LocalStorageSummary)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(summary: LocalStorageSummary)
+
     @Query("DELETE FROM storage_summary WHERE accountId = :accountId")
     suspend fun deleteByAccountId(accountId: String)
 

@@ -16,6 +16,7 @@ import com.example.api.RegisterRequest
 import com.example.api.RenameRequest
 import com.example.api.ShareRequest
 import com.example.api.ShareResponse
+import com.example.api.StorageCategories
 import com.example.api.StorageSummary
 import com.example.api.TgDriveRegisterRequest
 import com.example.api.UserProfile
@@ -124,19 +125,25 @@ class FakeCloudyteApi : CloudyteApi {
     override suspend fun copyFile(request: MoveCopyRequest): Response<Unit> = Response.success(Unit)
     override suspend fun shareFile(request: ShareRequest): ShareResponse = ShareResponse()
 
-    var getStorageSummaryHandler: suspend (accountId: String?) -> StorageSummary = { accountId ->
+    var storageSummaryHandler: suspend (accountId: String?) -> StorageSummary = { accountId ->
         StorageSummary(
             accountId = accountId ?: "all",
             accountType = "gdrive",
             usedBytes = 100L,
             totalBytes = 1000L,
             fileCount = 5,
-            categories = mapOf("image" to 60L, "pdf" to 40L)
+            categories = StorageCategories(images = 60L, documents = 40L)
         )
     }
 
+    var getStorageSummaryHandler: suspend (accountId: String?) -> StorageSummary
+        get() = storageSummaryHandler
+        set(value) {
+            storageSummaryHandler = value
+        }
+
     override suspend fun getStorageSummary(accountId: String?): StorageSummary {
-        return getStorageSummaryHandler(accountId)
+        return storageSummaryHandler(accountId)
     }
 }
 
@@ -260,13 +267,14 @@ class CloudFileRepositoryTest {
 
     @Test
     fun observeStorage_emitsSavedValueImmediatelyAndRefreshesAtMostOncePer60Seconds() = runTest {
+        repository = CloudFileRepository(db, fakeApi) { 100_000L + testScheduler.currentTime }
         val savedSummary = StorageSummary(
             accountId = "acc1",
             accountType = "gdrive",
             usedBytes = 500L,
             totalBytes = 10_000L,
             fileCount = 12,
-            categories = mapOf("image" to 300L, "pdf" to 200L)
+            categories = StorageCategories(images = 300L, documents = 200L)
         )
         // Seed old updatedAt so the first background refresh executes
         db.storageSummaryDao().insert(
@@ -286,7 +294,7 @@ class CloudFileRepositoryTest {
                 usedBytes = 1500L + apiCalls,
                 totalBytes = 10_000L,
                 fileCount = 25,
-                categories = mapOf("image" to 1000L, "pdf" to 500L + apiCalls)
+                categories = StorageCategories(images = 1000L, documents = 500L + apiCalls)
             )
         }
 
