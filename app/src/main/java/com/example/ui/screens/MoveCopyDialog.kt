@@ -78,7 +78,7 @@ fun MoveCopyDialog(
         errorMessage = null
         coroutineScope.launch {
             try {
-                val items = ApiClient.apiService.getFiles(selectedAccountId, currentTargetFolderId, null)
+                val items = ApiClient.apiService.getFiles(selectedAccountId, currentTargetFolderId, null).body().orEmpty()
                 // Filter only folders, and exclude self if this item itself is a folder
                 folderItems = items.filter { it.isFolderItem && it.effectiveId != file.effectiveId }
             } catch (e: Exception) {
@@ -97,8 +97,8 @@ fun MoveCopyDialog(
 
     Dialog(onDismissRequest = { if (!isExecuting) onDismiss() }) {
         Card(
-            shape = RoundedCornerShape(24.dp),
-            colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+            shape = MaterialTheme.shapes.extraLarge,
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 400.dp, max = 560.dp)
@@ -176,9 +176,9 @@ fun MoveCopyDialog(
                         items(accounts) { acc ->
                             val isSelected = acc.effectiveId == selectedAccountId
                             Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = if (isSelected) AccentBlue.copy(alpha = 0.25f) else Color(0xFF262636),
-                                border = if (isSelected) androidx.compose.foundation.BorderStroke(1.5.dp, AccentBlue) else null,
+                                shape = MaterialTheme.shapes.medium,
+                                color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
+                                border = if (isSelected) androidx.compose.foundation.BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
                                 modifier = Modifier.clickable {
                                     if (!isExecuting && selectedAccountId != acc.effectiveId) {
                                         selectedAccountId = acc.effectiveId
@@ -249,8 +249,8 @@ fun MoveCopyDialog(
                 LazyRow(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xFF20202E))
+                        .clip(MaterialTheme.shapes.small)
+                        .background(MaterialTheme.colorScheme.surfaceContainerLow)
                         .padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -337,13 +337,13 @@ fun MoveCopyDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFF1E1E2C))
+                        .clip(MaterialTheme.shapes.medium)
+                        .background(MaterialTheme.colorScheme.surfaceContainerLowest)
                         .padding(8.dp)
                 ) {
                     if (isLoadingFolders) {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator(color = AccentBlue, modifier = Modifier.size(24.dp))
+                            com.example.ui.components.AppLoadingIndicator(size = 24.dp)
                         }
                     } else if (folderItems.isEmpty()) {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -360,7 +360,7 @@ fun MoveCopyDialog(
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clip(RoundedCornerShape(8.dp))
+                                        .clip(MaterialTheme.shapes.small)
                                         .clickable {
                                             targetFolderBreadcrumbs = targetFolderBreadcrumbs + BreadcrumbItem(folder.effectiveId, folder.effectiveName)
                                         }
@@ -440,13 +440,13 @@ fun MoveCopyDialog(
                                 }
                             }
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                         enabled = !isExecuting
                     ) {
                         if (isExecuting) {
-                            CircularProgressIndicator(color = Color.White, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            com.example.ui.components.AppLoadingIndicator(size = 18.dp, color = MaterialTheme.colorScheme.onPrimary)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text(if (isMove) "Moving..." else "Copying...", color = Color.White, fontSize = 13.sp)
+                            Text(if (isMove) "Moving..." else "Copying...", color = MaterialTheme.colorScheme.onPrimary, fontSize = 13.sp)
                         } else {
                             Icon(
                                 imageVector = if (isMove) Icons.Default.DriveFileMove else Icons.Default.ContentCopy,

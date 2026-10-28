@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="theme_options">
+        <item>System Default</item>
+        <item>Light</item>
+        <item>Dark</item>
+    </string-array>
+
+    <string-array name="view_mode_options">
+        <item>Grid View</item>
+        <item>List View</item>
+        <item>Compact List View</item>
+    </string-array>
+
+    <string-array name="density_options">
+        <item>Comfortable</item>
+        <item>Compact</item>
+    </string-array>
+
+    <string-array name="schedule_options">
+        <item>Manual</item>
+        <item>Hourly</item>
+        <item>Daily</item>
+        <item>Weekly</item>
+    </string-array>
+
+    <string-array name="network_options">
+        <item>Wi-Fi Only</item>
+        <item>Any Network</item>
+    </string-array>
+
+    <string-array name="lock_timeout_options">
+        <item>Immediately</item>
+        <item>1 minute</item>
+        <item>5 minutes</item>
+        <item>15 minutes</item>
+    </string-array>
+
+    <string-array name="download_dir_options">
+        <item>Internal Storage</item>
+        <item>External Storage / SD Card</item>
+    </string-array>
+
+    <string-array name="language_options">
+        <item>System Default</item>
+        <item>English</item>
+        <item>Spanish</item>
+        <item>French</item>
+        <item>German</item>
+    </string-array>
+</resources>

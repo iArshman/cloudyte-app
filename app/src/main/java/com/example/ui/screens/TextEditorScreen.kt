@@ -189,9 +189,9 @@ fun TextEditorScreen(
                     if (isEditMode || textContent != originalContent) {
                         IconButton(onClick = { saveContent() }) {
                             if (isSaving) {
-                                CircularProgressIndicator(color = AccentBlue, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                com.example.ui.components.AppLoadingIndicator(size = 20.dp, color = MaterialTheme.colorScheme.primary)
                             } else {
-                                Icon(Icons.Default.Save, contentDescription = "Save", tint = AccentBlue)
+                                Icon(Icons.Default.Save, contentDescription = "Save", tint = MaterialTheme.colorScheme.primary)
                             }
                         }
                     } else {
@@ -202,11 +202,11 @@ fun TextEditorScreen(
                             clipboard.setPrimaryClip(clip)
                             Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
                         }) {
-                            Icon(Icons.Default.ContentCopy, contentDescription = "Copy", tint = TextPrimary)
+                            Icon(Icons.Default.ContentCopy, contentDescription = "Copy", tint = MaterialTheme.colorScheme.onSurface)
                         }
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF161622))
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
             )
         }
     ) { innerPadding ->
@@ -218,7 +218,7 @@ fun TextEditorScreen(
             // Search Bar
             AnimatedVisibility(visible = showSearchBar) {
                 Surface(
-                    color = SurfaceDark,
+                    color = MaterialTheme.colorScheme.surfaceContainer,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
@@ -230,17 +230,17 @@ fun TextEditorScreen(
                         OutlinedTextField(
                             value = searchQuery,
                             onValueChange = { searchQuery = it },
-                            placeholder = { Text("Find in document...", color = TextSecondary, fontSize = 13.sp) },
+                            placeholder = { Text("Find in document...", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp) },
                             singleLine = true,
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = AccentBlue,
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
                                 unfocusedBorderColor = Color.Transparent,
-                                focusedContainerColor = Color(0xFF1E1E2D),
-                                unfocusedContainerColor = Color(0xFF1E1E2D),
-                                focusedTextColor = TextPrimary,
-                                unfocusedTextColor = TextPrimary
+                                focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface
                             ),
-                            shape = RoundedCornerShape(8.dp),
+                            shape = MaterialTheme.shapes.small,
                             modifier = Modifier.weight(1f)
                         )
                         if (searchQuery.isNotBlank()) {
@@ -248,7 +248,7 @@ fun TextEditorScreen(
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 "$matches lines",
-                                color = AccentBlue,
+                                color = MaterialTheme.colorScheme.primary,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
@@ -258,13 +258,7 @@ fun TextEditorScreen(
             }
 
             if (isLoading) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator(color = AccentBlue)
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text("Reading document...", color = TextSecondary)
-                    }
-                }
+                com.example.ui.components.LoadingState(message = "Reading document...")
             } else if (errorMessage != null) {
                 Box(
                     modifier = Modifier

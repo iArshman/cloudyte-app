@@ -7,13 +7,16 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.example.api.ApiClient
-import com.example.api.CloudFile
 import com.example.api.FolderRequest
+import com.example.data.UserPreferences
 import com.example.db.AppDatabase
 import com.example.db.LocalCloudFile
 import com.example.db.LocalUploadRecord
 import com.example.ui.screens.UploadHelper
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
+import retrofit2.HttpException
+import java.io.IOException
 import java.util.Locale
 
 class BackupWorker(
@@ -27,6 +30,9 @@ class BackupWorker(
     private var skippedFilesCount = 0
     private var failedFilesCount = 0
     private var forceReupload = false
+    private var maxUploadBytes = 500L * 1024L * 1024L
+    private var sawRetryableError = false
+    private var sawFatalClientError = false
 
     override suspend fun doWork(): Result {
         val context = applicationContext
@@ -40,6 +46,9 @@ class BackupWorker(
             SyncLogger.log("Auto-backup skipped (feature is disabled in settings)", SyncLogLevel.INFO)
             return Result.success()
         }
+
+        val prefs = UserPreferences.observe(context).first()
+        maxUploadBytes = prefs.backupMaxFileSizeMb.toLong().coerceAtLeast(1L) * 1024L * 1024L
 
         val uriString = SyncPreferences.getBackupUri(context).first()
         if (uriString.isNullOrBlank()) {
@@ -78,6 +87,8 @@ class BackupWorker(
             uploadedFilesCount = 0
             skippedFilesCount = 0
             failedFilesCount = 0
+            sawRetryableError = false
+            sawFatalClientError = false
 
             SyncLogger.log("Found $totalFilesToProcess total file(s) to verify.", SyncLogLevel.INFO)
             SyncLogger.updateStatus(
@@ -92,12 +103,16 @@ class BackupWorker(
             syncDirectory(context, db, accountId, null, rootDoc, "")
 
             val summary = if (failedFilesCount == 0) {
-                "Completed: $uploadedFilesCount uploaded, $skippedFilesCount up-to-date"
+                "Completed: $uploadedFilesCount uploaded, $skippedFilesCount up-to-date/skipped"
             } else {
-                "Finished with $failedFilesCount error(s). $uploadedFilesCount uploaded, $skippedFilesCount up-to-date"
+                "Finished with $failedFilesCount error(s). $uploadedFilesCount uploaded, $skippedFilesCount skipped"
             }
 
-            val finalState = if (failedFilesCount > 0 && uploadedFilesCount == 0 && skippedFilesCount == 0) SyncState.ERROR else SyncState.SUCCESS
+            val finalState = if (failedFilesCount > 0 && uploadedFilesCount == 0 && skippedFilesCount == 0) {
+                SyncState.ERROR
+            } else {
+                SyncState.SUCCESS
+            }
             val finalLogLevel = if (failedFilesCount == 0) SyncLogLevel.SUCCESS else SyncLogLevel.WARNING
 
             SyncLogger.log("✓ $summary", finalLogLevel)
@@ -109,13 +124,36 @@ class BackupWorker(
                 summary = summary
             )
 
-            return Result.success()
+            return when {
+                sawRetryableError -> Result.retry()
+                sawFatalClientError -> Result.failure()
+                else -> Result.success()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: IOException) {
+            Log.e("BackupWorker", "Backup failed with IOException", e)
+            val errMsg = e.localizedMessage ?: e.message ?: "Network I/O error"
+            SyncLogger.log("✗ Sync interrupted (I/O): $errMsg", SyncLogLevel.ERROR)
+            SyncLogger.updateStatus(SyncState.ERROR, summary = "Interrupted: $errMsg")
+            return Result.retry()
+        } catch (e: HttpException) {
+            val code = e.code()
+            Log.e("BackupWorker", "Backup failed with HTTP $code", e)
+            val errMsg = "HTTP $code: ${e.message()}"
+            SyncLogger.log("✗ Sync interrupted: $errMsg", SyncLogLevel.ERROR)
+            SyncLogger.updateStatus(SyncState.ERROR, summary = "Interrupted: $errMsg")
+            return if (code == 429 || code in 500..599) {
+                Result.retry()
+            } else {
+                Result.failure()
+            }
         } catch (e: Exception) {
             Log.e("BackupWorker", "Backup failed with exception", e)
             val errMsg = e.localizedMessage ?: e.message ?: "Unknown error"
             SyncLogger.log("✗ Sync interrupted: $errMsg", SyncLogLevel.ERROR)
             SyncLogger.updateStatus(SyncState.ERROR, summary = "Interrupted: $errMsg")
-            return Result.retry()
+            return if (e.cause is IOException) Result.retry() else Result.failure()
         }
     }
 
@@ -145,10 +183,34 @@ class BackupWorker(
 
         // 1. Fetch remote files to check current drive state
         val cloudFiles = try {
-            val fetched = ApiClient.apiService.getFiles(accountId, currentCloudFolderId, null)
-            // Cache remote folder files in Room DB
-            db.cloudFileDao().insertFiles(fetched.map { LocalCloudFile.fromCloudFile(it, accountId, safeFolderId) })
-            fetched
+            val response = ApiClient.apiService.getFiles(accountId, currentCloudFolderId, null)
+            if (response.isSuccessful) {
+                val fetched = response.body().orEmpty()
+                db.cloudFileDao().insertFiles(fetched.map { LocalCloudFile.fromCloudFile(it, accountId, safeFolderId) })
+                fetched
+            } else {
+                val code = response.code()
+                if (code == 429 || code in 500..599) {
+                    sawRetryableError = true
+                } else if (code in 400..499) {
+                    sawFatalClientError = true
+                }
+                db.cloudFileDao().getFilesForFolder(accountId, safeFolderId).map { it.toCloudFile() }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: IOException) {
+            sawRetryableError = true
+            SyncLogger.log("Using cached files for '$pathLabel': ${e.message}", SyncLogLevel.WARNING)
+            db.cloudFileDao().getFilesForFolder(accountId, safeFolderId).map { it.toCloudFile() }
+        } catch (e: HttpException) {
+            if (e.code() == 429 || e.code() in 500..599) {
+                sawRetryableError = true
+            } else if (e.code() in 400..499) {
+                sawFatalClientError = true
+            }
+            SyncLogger.log("Using cached files for '$pathLabel': ${e.message}", SyncLogLevel.WARNING)
+            db.cloudFileDao().getFilesForFolder(accountId, safeFolderId).map { it.toCloudFile() }
         } catch (e: Exception) {
             SyncLogger.log("Using cached files for '$pathLabel': ${e.message}", SyncLogLevel.WARNING)
             db.cloudFileDao().getFilesForFolder(accountId, safeFolderId).map { it.toCloudFile() }
@@ -156,92 +218,154 @@ class BackupWorker(
 
         val localItems = localDir.listFiles()
 
-        // 2. Process and synchronize files
+        // 2. Process and synchronize files — wrap each file upload in its own try/catch so one failing file does not stop the batch
         for (file in localItems) {
             if (file.isFile) {
                 val fileName = file.name ?: continue
                 processedFilesCount++
-                val fileSize = file.length()
-                val lastModified = file.lastModified()
-                val sizeFormatted = formatFileSize(fileSize)
 
-                val existsOnCloud = cloudFiles.any { !it.isFolderItem && it.effectiveName == fileName }
-                val hasLocalUploadRecord = if (!forceReupload) {
-                    db.uploadRecordDao().findMatchingSuccessRecord(fileName, fileSize, accountId) != null
-                } else false
+                try {
+                    val fileSize = file.length()
+                    val lastModified = file.lastModified()
+                    val sizeFormatted = formatFileSize(fileSize)
 
-                val isAlreadyUpToDate = !forceReupload && (existsOnCloud || hasLocalUploadRecord)
-
-                if (isAlreadyUpToDate) {
-                    skippedFilesCount++
-                    SyncLogger.log("• [$processedFilesCount/$totalFilesToProcess] '$fileName' is already up to date.", SyncLogLevel.INFO)
-                    SyncLogger.updateStatus(
-                        SyncState.SYNCING,
-                        action = "Skipping up-to-date files...",
-                        file = fileName,
-                        uploadedCount = uploadedFilesCount,
-                        totalCount = totalFilesToProcess
-                    )
-                } else {
-                    SyncLogger.log("↑ [$processedFilesCount/$totalFilesToProcess] Uploading '$fileName' ($sizeFormatted)...", SyncLogLevel.INFO)
-                    SyncLogger.updateStatus(
-                        SyncState.SYNCING,
-                        action = "Uploading: $fileName ($sizeFormatted)",
-                        file = fileName,
-                        uploadedCount = uploadedFilesCount,
-                        totalCount = totalFilesToProcess
-                    )
-
-                    val uploadResult = UploadHelper.uploadFile(
-                        context = context,
-                        accountId = accountId,
-                        folderId = currentCloudFolderId,
-                        uri = file.uri,
-                        explicitFileName = fileName,
-                        explicitMimeType = file.type
-                    )
-
-                    if (uploadResult.isSuccess) {
-                        uploadedFilesCount++
-                        SyncLogger.log("✓ Uploaded '$fileName' successfully", SyncLogLevel.SUCCESS)
-
-                        // Save to local upload history database
-                        db.uploadRecordDao().insertRecord(
-                            LocalUploadRecord(
-                                localUri = file.uri.toString(),
-                                fileName = fileName,
-                                fileSize = fileSize,
-                                lastModified = lastModified,
-                                targetAccountId = accountId,
-                                targetFolderId = safeFolderId,
-                                uploadedAt = System.currentTimeMillis(),
-                                status = "SUCCESS"
-                            )
+                    // Skip files over maxUploadSizeMb
+                    if (fileSize > maxUploadBytes) {
+                        skippedFilesCount++
+                        val maxMb = maxUploadBytes / (1024L * 1024L)
+                        SyncLogger.log(
+                            "• [$processedFilesCount/$totalFilesToProcess] Skipping '$fileName' ($sizeFormatted exceeds max ${maxMb} MB).",
+                            SyncLogLevel.WARNING
                         )
-                    } else {
-                        failedFilesCount++
-                        SyncLogger.log("✗ Failed '$fileName': ${uploadResult.errorMessage ?: "Upload failed"}", SyncLogLevel.ERROR)
-                        db.uploadRecordDao().insertRecord(
-                            LocalUploadRecord(
-                                localUri = file.uri.toString(),
-                                fileName = fileName,
-                                fileSize = fileSize,
-                                lastModified = lastModified,
-                                targetAccountId = accountId,
-                                targetFolderId = safeFolderId,
-                                uploadedAt = System.currentTimeMillis(),
-                                status = "FAILED"
-                            )
-                        )
+                        continue
                     }
 
-                    SyncLogger.updateStatus(
-                        SyncState.SYNCING,
-                        action = "Syncing files...",
-                        file = fileName,
-                        uploadedCount = uploadedFilesCount,
-                        totalCount = totalFilesToProcess
-                    )
+                    // Check if unchanged in LocalUploadRecord (matching fileName, fileSize, and lastModified)
+                    val matchingRecord = if (!forceReupload) {
+                        db.uploadRecordDao().findMatchingSuccessRecord(
+                            fileName = fileName,
+                            fileSize = fileSize,
+                            lastModified = lastModified,
+                            accountId = accountId
+                        )
+                    } else {
+                        null
+                    }
+
+                    val previousRecordForFile = if (!forceReupload) {
+                        db.uploadRecordDao().getRecord(fileName, accountId, safeFolderId)
+                    } else {
+                        null
+                    }
+
+                    val existsUnchangedOnCloud = !forceReupload &&
+                        previousRecordForFile == null &&
+                        cloudFiles.any {
+                            !it.isFolderItem &&
+                                it.effectiveName == fileName &&
+                                (it.sizeBytes <= 0L || it.sizeBytes == fileSize) &&
+                                (it.updatedAt == null || lastModified <= 0L || it.updatedAt >= lastModified)
+                        }
+
+                    val isAlreadyUpToDate = !forceReupload && (matchingRecord != null || existsUnchangedOnCloud)
+
+                    if (isAlreadyUpToDate) {
+                        skippedFilesCount++
+                        SyncLogger.log("• [$processedFilesCount/$totalFilesToProcess] '$fileName' is already up to date.", SyncLogLevel.INFO)
+                        SyncLogger.updateStatus(
+                            SyncState.SYNCING,
+                            action = "Skipping up-to-date files...",
+                            file = fileName,
+                            uploadedCount = uploadedFilesCount,
+                            totalCount = totalFilesToProcess
+                        )
+                    } else {
+                        SyncLogger.log("↑ [$processedFilesCount/$totalFilesToProcess] Uploading '$fileName' ($sizeFormatted)...", SyncLogLevel.INFO)
+                        SyncLogger.updateStatus(
+                            SyncState.SYNCING,
+                            action = "Uploading: $fileName ($sizeFormatted)",
+                            file = fileName,
+                            uploadedCount = uploadedFilesCount,
+                            totalCount = totalFilesToProcess
+                        )
+
+                        val uploadResult = UploadHelper.uploadFile(
+                            context = context,
+                            accountId = accountId,
+                            folderId = currentCloudFolderId,
+                            uri = file.uri,
+                            explicitFileName = fileName,
+                            explicitMimeType = file.type,
+                            explicitFileSize = fileSize
+                        )
+
+                        if (uploadResult.isSuccess) {
+                            uploadedFilesCount++
+                            SyncLogger.log("✓ Uploaded '$fileName' successfully", SyncLogLevel.SUCCESS)
+
+                            db.uploadRecordDao().insertRecord(
+                                LocalUploadRecord(
+                                    localUri = file.uri.toString(),
+                                    fileName = fileName,
+                                    fileSize = fileSize,
+                                    lastModified = lastModified,
+                                    targetAccountId = accountId,
+                                    targetFolderId = safeFolderId,
+                                    uploadedAt = System.currentTimeMillis(),
+                                    status = "SUCCESS"
+                                )
+                            )
+                        } else {
+                            failedFilesCount++
+                            if (uploadResult.isRetryable) {
+                                sawRetryableError = true
+                            } else if (uploadResult.isFatalClientError) {
+                                sawFatalClientError = true
+                            }
+                            SyncLogger.log("✗ Failed '$fileName': ${uploadResult.errorMessage ?: "Upload failed"}", SyncLogLevel.ERROR)
+                            db.uploadRecordDao().insertRecord(
+                                LocalUploadRecord(
+                                    localUri = file.uri.toString(),
+                                    fileName = fileName,
+                                    fileSize = fileSize,
+                                    lastModified = lastModified,
+                                    targetAccountId = accountId,
+                                    targetFolderId = safeFolderId,
+                                    uploadedAt = System.currentTimeMillis(),
+                                    status = "FAILED"
+                                )
+                            )
+                        }
+
+                        SyncLogger.updateStatus(
+                            SyncState.SYNCING,
+                            action = "Syncing files...",
+                            file = fileName,
+                            uploadedCount = uploadedFilesCount,
+                            totalCount = totalFilesToProcess
+                        )
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: IOException) {
+                    failedFilesCount++
+                    sawRetryableError = true
+                    SyncLogger.log("✗ I/O error uploading '$fileName': ${e.message}", SyncLogLevel.ERROR)
+                } catch (e: HttpException) {
+                    failedFilesCount++
+                    val code = e.code()
+                    if (code == 429 || code in 500..599) {
+                        sawRetryableError = true
+                    } else if (code in 400..499) {
+                        sawFatalClientError = true
+                    }
+                    SyncLogger.log("✗ HTTP $code uploading '$fileName': ${e.message()}", SyncLogLevel.ERROR)
+                } catch (e: Exception) {
+                    failedFilesCount++
+                    if (e.cause is IOException) {
+                        sawRetryableError = true
+                    }
+                    SyncLogger.log("✗ Error uploading '$fileName': ${e.message}", SyncLogLevel.ERROR)
                 }
             }
         }
@@ -254,12 +378,33 @@ class BackupWorker(
                 if (cloudFolder == null) {
                     SyncLogger.log("Creating cloud folder: '$subFolderName'...", SyncLogLevel.INFO)
                     try {
-                        ApiClient.apiService.createFolder(accountId, FolderRequest(subFolderName, currentCloudFolderId))
-                        val updatedFiles = ApiClient.apiService.getFiles(accountId, currentCloudFolderId, null)
+                        val createResp = ApiClient.apiService.createFolder(accountId, FolderRequest(subFolderName, currentCloudFolderId))
+                        if (!createResp.isSuccessful) {
+                            val code = createResp.code()
+                            if (code == 429 || code in 500..599) {
+                                sawRetryableError = true
+                            } else if (code in 400..499) {
+                                sawFatalClientError = true
+                            }
+                        }
+                        val response = ApiClient.apiService.getFiles(accountId, currentCloudFolderId, null)
+                        val updatedFiles = response.body().orEmpty()
                         cloudFolder = updatedFiles.find { it.isFolderItem && it.effectiveName == subFolderName }
                         if (cloudFolder != null) {
                             db.cloudFileDao().insertFiles(listOf(LocalCloudFile.fromCloudFile(cloudFolder, accountId, safeFolderId)))
                         }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: IOException) {
+                        sawRetryableError = true
+                        SyncLogger.log("Failed to create folder '$subFolderName': ${e.message}", SyncLogLevel.ERROR)
+                    } catch (e: HttpException) {
+                        if (e.code() == 429 || e.code() in 500..599) {
+                            sawRetryableError = true
+                        } else if (e.code() in 400..499) {
+                            sawFatalClientError = true
+                        }
+                        SyncLogger.log("Failed to create folder '$subFolderName': ${e.message}", SyncLogLevel.ERROR)
                     } catch (e: Exception) {
                         SyncLogger.log("Failed to create folder '$subFolderName': ${e.message}", SyncLogLevel.ERROR)
                     }

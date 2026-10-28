@@ -5,7 +5,6 @@ import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.*
@@ -14,25 +13,19 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
-import coil.compose.AsyncImagePainter
-import coil.compose.SubcomposeAsyncImage
-import coil.compose.SubcomposeAsyncImageContent
+import com.example.R
 import com.example.api.ApiClient
-import com.example.api.CloudFile
-
+import com.example.ui.components.FileThumb
 import com.example.ui.openFileInViewer
-import com.example.ui.theme.*
-import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -55,6 +48,11 @@ fun FileDetailScreen(
     var isMoveAction by remember { mutableStateOf(true) }
     var actionFeedbackMessage by remember { mutableStateOf<String?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
+
+    val strShareLink = stringResource(R.string.files_menu_share_link)
+    val strDownloadStarted = stringResource(R.string.detail_download_started)
+    val strDownloadFailed = stringResource(R.string.detail_download_failed)
+    val strDownloadingDesc = stringResource(R.string.detail_downloading_desc)
 
     LaunchedEffect(actionFeedbackMessage) {
         actionFeedbackMessage?.let {
@@ -86,9 +84,19 @@ fun FileDetailScreen(
     if (shareUrl != null) {
         AlertDialog(
             onDismissRequest = { viewModel.clearShareUrl() },
-            containerColor = SurfaceDark,
-            title = { Text("Share Link", color = TextPrimary) },
-            text = { Text(shareUrl!!, color = TextSecondary) },
+            containerColor = MaterialTheme.colorScheme.surface,
+            title = {
+                Text(
+                    text = stringResource(R.string.files_menu_share_link),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            },
+            text = {
+                Text(
+                    text = shareUrl!!,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
             confirmButton = {
                 Button(
                     onClick = {
@@ -96,17 +104,23 @@ fun FileDetailScreen(
                             type = "text/plain"
                             putExtra(Intent.EXTRA_TEXT, shareUrl)
                         }
-                        context.startActivity(Intent.createChooser(shareIntent, "Share Link"))
+                        context.startActivity(Intent.createChooser(shareIntent, strShareLink))
                         viewModel.clearShareUrl()
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                 ) {
-                    Text("Share", color = Color.White)
+                    Text(
+                        text = stringResource(R.string.action_share),
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
                 }
             },
             dismissButton = {
                 TextButton(onClick = { viewModel.clearShareUrl() }) {
-                    Text("Close", color = TextSecondary)
+                    Text(
+                        text = stringResource(R.string.action_close),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         )
@@ -115,9 +129,19 @@ fun FileDetailScreen(
     if (showDeleteConfirm) {
         AlertDialog(
             onDismissRequest = { showDeleteConfirm = false },
-            containerColor = SurfaceDark,
-            title = { Text("Delete File", color = TextPrimary) },
-            text = { Text("Are you sure you want to delete this file?", color = TextSecondary) },
+            containerColor = MaterialTheme.colorScheme.surface,
+            title = {
+                Text(
+                    text = stringResource(R.string.detail_delete_title),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            },
+            text = {
+                Text(
+                    text = stringResource(R.string.detail_delete_confirm),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
             confirmButton = {
                 Button(
                     onClick = {
@@ -127,21 +151,27 @@ fun FileDetailScreen(
                             navController.popBackStack()
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                 ) {
-                    Text("Delete", color = Color.White)
+                    Text(
+                        text = stringResource(R.string.action_delete),
+                        color = MaterialTheme.colorScheme.onError
+                    )
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteConfirm = false }) {
-                    Text("Cancel", color = TextSecondary)
+                    Text(
+                        text = stringResource(R.string.action_cancel),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         )
     }
 
     Scaffold(
-        containerColor = BackgroundDark,
+        containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             Row(
@@ -153,11 +183,24 @@ fun FileDetailScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = { navController.popBackStack() }) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextPrimary)
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = stringResource(R.string.action_back),
+                        tint = MaterialTheme.colorScheme.onBackground
+                    )
                 }
-                Text("File Details", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Text(
+                    text = stringResource(R.string.detail_title),
+                    color = MaterialTheme.colorScheme.onBackground,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp
+                )
                 IconButton(onClick = { showRenameDialog = true }) {
-                    Icon(Icons.Default.Edit, contentDescription = "Rename", tint = TextPrimary)
+                    Icon(
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = stringResource(R.string.action_rename),
+                        tint = MaterialTheme.colorScheme.onBackground
+                    )
                 }
             }
         }
@@ -167,21 +210,26 @@ fun FileDetailScreen(
             if (newFileName.isEmpty()) newFileName = nonNullFileForDialog.effectiveName
             AlertDialog(
                 onDismissRequest = { showRenameDialog = false },
-                title = { Text("Rename File", color = TextPrimary) },
+                title = {
+                    Text(
+                        text = stringResource(R.string.files_rename_title),
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                },
                 text = {
                     OutlinedTextField(
                         value = newFileName,
                         onValueChange = { newFileName = it },
                         singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = TextPrimary,
-                            unfocusedTextColor = TextPrimary,
-                            focusedBorderColor = AccentBlue,
-                            unfocusedBorderColor = TextSecondary
+                            focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     )
                 },
-                containerColor = SurfaceDark,
+                containerColor = MaterialTheme.colorScheme.surface,
                 confirmButton = {
                     TextButton(onClick = {
                         if (newFileName.isNotBlank()) {
@@ -190,32 +238,31 @@ fun FileDetailScreen(
                             }
                         }
                     }) {
-                        Text("Save", color = AccentBlue)
+                        Text(
+                            text = stringResource(R.string.action_save),
+                            color = MaterialTheme.colorScheme.primary
+                        )
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { showRenameDialog = false }) {
-                        Text("Cancel", color = TextSecondary)
+                        Text(
+                            text = stringResource(R.string.action_cancel),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             )
         }
 
         if (file == null) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator(color = AccentBlue)
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text("Loading file details...", color = TextSecondary)
-                }
+            Box(modifier = Modifier.fillMaxSize().padding(innerPadding), contentAlignment = Alignment.Center) {
+                com.example.ui.components.LoadingState(stringResource(R.string.detail_loading))
             }
             return@Scaffold
         }
 
         val nonNullFile = file!!
-        val previewUrl = remember(nonNullFile.effectiveId, accountId) {
-            ApiClient.getFileUrl(accountId, nonNullFile.effectiveId, preview = true)
-        }
 
         Column(
             modifier = Modifier
@@ -223,104 +270,83 @@ fun FileDetailScreen(
                 .padding(innerPadding)
                 .padding(horizontal = 20.dp)
         ) {
-            // Media Preview Area
-            Box(
+            // Media Preview Area using FileThumb
+            FileThumb(
+                file = nonNullFile,
+                accountId = accountId,
+                sizeDp = 200.dp,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(200.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(SurfaceDark)
                     .clickable {
                         openFileInViewer(nonNullFile, accountId, navController)
                     },
-                contentAlignment = Alignment.Center
-            ) {
-                if (nonNullFile.isImage || nonNullFile.isVideo) {
-                    SubcomposeAsyncImage(
-                        model = previewUrl,
-                        contentDescription = "File Preview",
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
-                    ) {
-                        val state = painter.state
-                        if (state is AsyncImagePainter.State.Loading) {
-                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                CircularProgressIndicator(color = AccentBlue, modifier = Modifier.size(24.dp))
-                            }
-                        } else if (state is AsyncImagePainter.State.Error) {
-                            Icon(
-                                imageVector = if (nonNullFile.isVideo) Icons.Default.Movie else Icons.Default.Image,
-                                contentDescription = null,
-                                tint = AccentBlue,
-                                modifier = Modifier.size(48.dp)
-                            )
-                        } else {
-                            SubcomposeAsyncImageContent()
-                        }
-                    }
-                    if (nonNullFile.isVideo) {
-                        Box(
-                            modifier = Modifier
-                                .size(56.dp)
-                                .background(Color.Black.copy(alpha = 0.65f), CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = "Play", tint = Color.White, modifier = Modifier.size(32.dp))
-                        }
-                    }
-                } else if (nonNullFile.isFolderItem) {
-                    Icon(Icons.Default.Folder, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(64.dp))
-                } else if (nonNullFile.isAudio) {
-                    Icon(Icons.Default.MusicNote, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(64.dp))
-                } else if (nonNullFile.isPdf) {
-                    Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = Color(0xFFEF4444), modifier = Modifier.size(64.dp))
-                } else if (nonNullFile.isTextOrCode) {
-                    Icon(Icons.Default.Code, contentDescription = null, tint = Color(0xFF10B981), modifier = Modifier.size(64.dp))
-                } else {
-                    Icon(Icons.Default.Description, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(64.dp))
-                }
-            }
-            
+                cornerRadius = 16.dp
+            )
+
             Spacer(modifier = Modifier.height(16.dp))
-            
+
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    nonNullFile.effectiveName,
-                    color = TextPrimary,
+                    text = nonNullFile.effectiveName,
+                    color = MaterialTheme.colorScheme.onBackground,
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     maxLines = 2
                 )
                 Spacer(modifier = Modifier.height(4.dp))
-                Text("${nonNullFile.formattedSize} • ${nonNullFile.effectiveType.uppercase()}", color = TextSecondary, fontSize = 14.sp)
+                Text(
+                    text = "${nonNullFile.formattedSize} • ${nonNullFile.effectiveType.uppercase()}",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 14.sp
+                )
             }
-            
+
             Spacer(modifier = Modifier.height(16.dp))
-            
+
             val dateFormat = SimpleDateFormat("MMM dd, yyyy hh:mm a", Locale.getDefault())
             val dateStr = nonNullFile.time?.let { dateFormat.format(Date(it)) }
                 ?: nonNullFile.createdAt
-                ?: "Recent"
+                ?: stringResource(R.string.detail_uploaded_recent)
 
             Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                shape = MaterialTheme.shapes.large,
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(18.dp)) {
-                    Text("Details", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text(
+                        text = stringResource(R.string.detail_section_title),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp
+                    )
                     Spacer(modifier = Modifier.height(12.dp))
-                    DetailRow("Location", nonNullFile.location ?: nonNullFile.path ?: "Root")
-                    DetailRow("Uploaded", dateStr)
-                    DetailRow("Size", nonNullFile.formattedSize)
-                    DetailRow("Type", nonNullFile.effectiveType.uppercase())
+                    DetailRow(
+                        label = stringResource(R.string.detail_location),
+                        value = nonNullFile.location ?: nonNullFile.path ?: stringResource(R.string.detail_location_root)
+                    )
+                    DetailRow(
+                        label = stringResource(R.string.detail_uploaded),
+                        value = dateStr
+                    )
+                    DetailRow(
+                        label = stringResource(R.string.detail_size),
+                        value = nonNullFile.formattedSize
+                    )
+                    DetailRow(
+                        label = stringResource(R.string.detail_type),
+                        value = nonNullFile.effectiveType.uppercase()
+                    )
                 }
             }
 
             Spacer(modifier = Modifier.height(14.dp))
 
             Spacer(modifier = Modifier.weight(1f))
-            
+
+            val primaryColor = MaterialTheme.colorScheme.primary
+
             // Action button: Open in viewer / player / editor
             Button(
                 onClick = {
@@ -328,9 +354,9 @@ fun FileDetailScreen(
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp)
-                    .background(Brush.linearGradient(listOf(AccentBlue, AccentBlue)), RoundedCornerShape(14.dp)),
-                colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+                    .height(52.dp),
+                shape = MaterialTheme.shapes.medium,
+                colors = ButtonDefaults.buttonColors(containerColor = primaryColor),
                 contentPadding = PaddingValues()
             ) {
                 Icon(
@@ -343,19 +369,19 @@ fun FileDetailScreen(
                         else -> Icons.Default.OpenInNew
                     },
                     contentDescription = null,
-                    tint = Color.White
+                    tint = MaterialTheme.colorScheme.onPrimary
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = when {
-                        nonNullFile.isVideo -> "Play Video"
-                        nonNullFile.isImage -> "View Image"
-                        nonNullFile.isAudio -> "Play Audio"
-                        nonNullFile.isTextOrCode -> "Open Editor"
-                        nonNullFile.isPdf -> "View PDF"
-                        else -> "Open File"
+                        nonNullFile.isVideo -> stringResource(R.string.detail_play_video)
+                        nonNullFile.isImage -> stringResource(R.string.detail_view_image)
+                        nonNullFile.isAudio -> stringResource(R.string.detail_play_audio)
+                        nonNullFile.isTextOrCode -> stringResource(R.string.detail_open_editor)
+                        nonNullFile.isPdf -> stringResource(R.string.detail_view_pdf)
+                        else -> stringResource(R.string.detail_open_file)
                     },
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onPrimary,
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp
                 )
@@ -371,12 +397,17 @@ fun FileDetailScreen(
                         showMoveCopyDialog = true
                     },
                     modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary)
+                    shape = MaterialTheme.shapes.medium,
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onBackground)
                 ) {
-                    Icon(Icons.Default.DriveFileMove, contentDescription = null, modifier = Modifier.size(18.dp), tint = AccentBlue)
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.DriveFileMove,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Move", fontSize = 13.sp)
+                    Text(text = stringResource(R.string.action_move), fontSize = 13.sp)
                 }
 
                 OutlinedButton(
@@ -385,44 +416,49 @@ fun FileDetailScreen(
                         showMoveCopyDialog = true
                     },
                     modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary)
+                    shape = MaterialTheme.shapes.medium,
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onBackground)
                 ) {
-                    Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp), tint = AccentBlue)
+                    Icon(
+                        imageVector = Icons.Default.ContentCopy,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Copy", fontSize = 13.sp)
+                    Text(text = stringResource(R.string.action_copy), fontSize = 13.sp)
                 }
             }
 
             Spacer(modifier = Modifier.height(10.dp))
-            
+
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 OutlinedButton(
                     onClick = {
                         val token = ApiClient.getToken()
                         val downloadUrl = "${ApiClient.API_BASE_URL}/api/download/$accountId/${nonNullFile.effectiveId}?token=$token"
-                        
+
                         try {
                             val request = android.app.DownloadManager.Request(Uri.parse(downloadUrl))
                             request.setTitle(nonNullFile.effectiveName)
-                            request.setDescription("Downloading file")
+                            request.setDescription(strDownloadingDesc)
                             request.setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                             request.setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, nonNullFile.effectiveName)
-                            
+
                             val downloadManager = context.getSystemService(android.content.Context.DOWNLOAD_SERVICE) as android.app.DownloadManager
                             downloadManager.enqueue(request)
-                            actionFeedbackMessage = "Download started"
+                            actionFeedbackMessage = strDownloadStarted
                         } catch (e: Exception) {
-                            actionFeedbackMessage = "Download failed"
+                            actionFeedbackMessage = strDownloadFailed
                         }
                     },
                     modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary)
+                    shape = MaterialTheme.shapes.medium,
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onBackground)
                 ) {
                     Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Download", fontSize = 13.sp)
+                    Text(text = stringResource(R.string.action_download), fontSize = 13.sp)
                 }
 
                 Spacer(modifier = Modifier.width(10.dp))
@@ -430,29 +466,37 @@ fun FileDetailScreen(
                 OutlinedButton(
                     onClick = { viewModel.shareFile(accountId, nonNullFile.effectiveId) },
                     modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary)
+                    shape = MaterialTheme.shapes.medium,
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onBackground)
                 ) {
                     Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Share", fontSize = 13.sp)
+                    Text(text = stringResource(R.string.action_share), fontSize = 13.sp)
                 }
 
                 Spacer(modifier = Modifier.width(10.dp))
 
                 OutlinedButton(
                     onClick = { showDeleteConfirm = true },
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Red)
+                    shape = MaterialTheme.shapes.medium,
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
                 ) {
                     if (isDeleting) {
-                        CircularProgressIndicator(color = Color.Red, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        com.example.ui.components.AppLoadingIndicator(
+                            color = MaterialTheme.colorScheme.error,
+                            size = 18.dp
+                        )
                     } else {
-                        Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red, modifier = Modifier.size(18.dp))
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = stringResource(R.string.action_delete),
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(20.dp + com.example.ui.components.LocalBottomBarInset.current))
         }
     }
 }
@@ -465,7 +509,7 @@ fun DetailRow(label: String, value: String) {
             .padding(vertical = 6.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Text(label, color = TextSecondary, fontSize = 13.sp)
-        Text(value, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+        Text(value, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Medium)
     }
 }

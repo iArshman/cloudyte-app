@@ -1,10 +1,16 @@
 package com.example.db
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.example.api.CloudFile
 
-@Entity(tableName = "cloud_files")
+@Entity(
+    tableName = "cloud_files",
+    indices = [
+        Index(value = ["accountId", "folderId"])
+    ]
+)
 data class LocalCloudFile(
     @PrimaryKey val id: String,
     val name: String,
@@ -19,7 +25,9 @@ data class LocalCloudFile(
     val mimeType: String? = null,
     val shareId: String? = null,
     val isShared: Boolean = false,
-    val cachedAt: Long = System.currentTimeMillis()
+    val cachedAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long? = null,
+    val thumbUrl: String? = null
 ) {
     fun toCloudFile(): CloudFile {
         return CloudFile(
@@ -30,7 +38,9 @@ data class LocalCloudFile(
             time = this.time,
             isFolder = this.isFolder,
             path = this.path,
-            mimeType = this.mimeType
+            mimeType = this.mimeType,
+            updatedAt = this.updatedAt,
+            thumbUrl = this.thumbUrl
         )
     }
 
@@ -49,7 +59,9 @@ data class LocalCloudFile(
                 folderId = safeFolderId,
                 accountId = accountId,
                 mimeType = file.mimeType,
-                cachedAt = System.currentTimeMillis()
+                cachedAt = System.currentTimeMillis(),
+                updatedAt = file.updatedAt,
+                thumbUrl = file.thumbUrl
             )
         }
     }

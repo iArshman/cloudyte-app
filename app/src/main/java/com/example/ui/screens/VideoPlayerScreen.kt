@@ -43,7 +43,6 @@ import com.example.api.CloudFile
 import com.example.api.FileRepository
 import com.example.api.OfflineFileManager
 import com.example.ui.theme.AccentBlue
-import com.example.ui.theme.SurfaceDark
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import kotlinx.coroutines.delay
@@ -172,8 +171,8 @@ fun VideoPlayerScreen(
         val speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
         AlertDialog(
             onDismissRequest = { showSpeedDialog = false },
-            containerColor = SurfaceDark,
-            title = { Text("Playback Speed", color = TextPrimary) },
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            title = { Text("Playback Speed", color = MaterialTheme.colorScheme.onSurface) },
             text = {
                 Column {
                     speeds.forEach { speed ->
@@ -264,10 +263,9 @@ fun VideoPlayerScreen(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
             ) {
-                CircularProgressIndicator(
-                    color = AccentBlue,
-                    modifier = Modifier.size(52.dp),
-                    strokeWidth = 4.dp
+                com.example.ui.components.AppLoadingIndicator(
+                    size = 52.dp,
+                    color = MaterialTheme.colorScheme.primary
                 )
             }
         }

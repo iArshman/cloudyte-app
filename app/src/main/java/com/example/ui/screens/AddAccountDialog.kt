@@ -40,12 +40,13 @@ enum class CloudProviderType(val displayName: String, val subtitle: String) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddAccountDialog(
+    initialProvider: CloudProviderType = CloudProviderType.GOOGLE_DRIVE,
     onDismiss: () -> Unit,
     onSuccess: () -> Unit
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    var selectedProvider by remember { mutableStateOf(CloudProviderType.GOOGLE_DRIVE) }
+    var selectedProvider by remember(initialProvider) { mutableStateOf(initialProvider) }
 
     // Telegram inputs
     var channelId by remember { mutableStateOf("") }
@@ -57,8 +58,8 @@ fun AddAccountDialog(
 
     Dialog(onDismissRequest = { if (!isLoading) onDismiss() }) {
         Card(
-            shape = RoundedCornerShape(24.dp),
-            colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+            shape = MaterialTheme.shapes.extraLarge,
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(vertical = 12.dp)
@@ -77,13 +78,13 @@ fun AddAccountDialog(
                     Column {
                         Text(
                             "Link Cloud Drive",
-                            color = TextPrimary,
+                            color = MaterialTheme.colorScheme.onSurface,
                             fontWeight = FontWeight.Bold,
                             fontSize = 18.sp
                         )
                         Text(
                             "Add a new storage provider to Cloudyte",
-                            color = TextSecondary,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 12.sp
                         )
                     }
@@ -92,7 +93,7 @@ fun AddAccountDialog(
                         enabled = !isLoading,
                         modifier = Modifier.size(28.dp)
                     ) {
-                        Icon(Icons.Default.Close, contentDescription = "Close", tint = TextSecondary)
+                        Icon(Icons.Default.Close, contentDescription = "Close", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
 
@@ -102,8 +103,8 @@ fun AddAccountDialog(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFF20202E))
+                        .clip(MaterialTheme.shapes.medium)
+                        .background(MaterialTheme.colorScheme.surfaceContainer)
                         .padding(4.dp),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -112,8 +113,8 @@ fun AddAccountDialog(
                         Box(
                             modifier = Modifier
                                 .weight(1f)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(if (isSelected) AccentBlue else Color.Transparent)
+                                .clip(MaterialTheme.shapes.small)
+                                .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
                                 .clickable {
                                     if (!isLoading) {
                                         selectedProvider = provider
@@ -143,7 +144,7 @@ fun AddAccountDialog(
                 if (errorMsg != null) {
                     Card(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f)),
-                        shape = RoundedCornerShape(10.dp),
+                        shape = MaterialTheme.shapes.small,
                         modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
                     ) {
                         Text(
@@ -302,8 +303,8 @@ fun GoogleDriveLinkPanel(
 
         if (oauthWaiting) {
             Card(
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF262636)),
-                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                shape = MaterialTheme.shapes.medium,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
@@ -331,12 +332,12 @@ fun GoogleDriveLinkPanel(
         } else {
             Button(
                 onClick = onConnectClick,
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4285F4)),
+                colors = ButtonDefaults.buttonColors(containerColor = ProviderGoogle),
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !isLoading
             ) {
                 if (isLoading) {
-                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    com.example.ui.components.AppLoadingIndicator(size = 18.dp, color = Color.White)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Opening Google...", color = Color.White)
                 } else {
@@ -389,8 +390,8 @@ fun OneDriveLinkPanel(
 
         if (oauthWaiting) {
             Card(
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF262636)),
-                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                shape = MaterialTheme.shapes.medium,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
@@ -418,12 +419,12 @@ fun OneDriveLinkPanel(
         } else {
             Button(
                 onClick = onConnectClick,
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0078D4)),
+                colors = ButtonDefaults.buttonColors(containerColor = ProviderOneDrive),
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !isLoading
             ) {
                 if (isLoading) {
-                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    com.example.ui.components.AppLoadingIndicator(size = 18.dp, color = Color.White)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Opening Microsoft...", color = Color.White)
                 } else {
@@ -447,8 +448,8 @@ fun TelegramLinkPanel(
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Card(
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF262636)),
-            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            shape = MaterialTheme.shapes.medium,
             modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
         ) {
             Row(
@@ -459,7 +460,7 @@ fun TelegramLinkPanel(
                 Spacer(modifier = Modifier.width(10.dp))
                 Text(
                     text = "Ensure the Cloudyte Bot is added as an Administrator with upload permissions in your Telegram channel.",
-                    color = TextSecondary,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 11.sp,
                     lineHeight = 15.sp
                 )
@@ -469,30 +470,30 @@ fun TelegramLinkPanel(
         OutlinedTextField(
             value = driveName,
             onValueChange = onDriveNameChange,
-            label = { Text("Drive Name (Optional)", color = TextSecondary, fontSize = 12.sp) },
-            placeholder = { Text("e.g. My Personal Cloud", color = TextSecondary.copy(alpha = 0.5f), fontSize = 12.sp) },
+            label = { Text("Drive Name (Optional)", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp) },
+            placeholder = { Text("e.g. My Personal Cloud", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f), fontSize = 12.sp) },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             colors = OutlinedTextFieldDefaults.colors(
-                focusedTextColor = TextPrimary,
-                unfocusedTextColor = TextPrimary,
+                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
                 focusedBorderColor = AccentSky,
-                unfocusedBorderColor = TextSecondary
+                unfocusedBorderColor = MaterialTheme.colorScheme.outline
             )
         )
         Spacer(modifier = Modifier.height(10.dp))
         OutlinedTextField(
             value = channelId,
             onValueChange = onChannelIdChange,
-            label = { Text("Channel ID *", color = TextSecondary, fontSize = 12.sp) },
-            placeholder = { Text("e.g. -1001987654321", color = TextSecondary.copy(alpha = 0.5f), fontSize = 12.sp) },
+            label = { Text("Channel ID *", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp) },
+            placeholder = { Text("e.g. -1001987654321", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f), fontSize = 12.sp) },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             colors = OutlinedTextFieldDefaults.colors(
-                focusedTextColor = TextPrimary,
-                unfocusedTextColor = TextPrimary,
+                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
                 focusedBorderColor = AccentSky,
-                unfocusedBorderColor = TextSecondary
+                unfocusedBorderColor = MaterialTheme.colorScheme.outline
             )
         )
 
@@ -505,7 +506,7 @@ fun TelegramLinkPanel(
             enabled = !isLoading
         ) {
             if (isLoading) {
-                CircularProgressIndicator(color = Color.White, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                com.example.ui.components.AppLoadingIndicator(size = 18.dp, color = Color.White)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Registering...", color = Color.White)
             } else {
