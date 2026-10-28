@@ -371,7 +371,7 @@ fun ImageViewerScreen(
                                 DropdownMenu(
                                     expanded = showMoreMenu,
                                     onDismissRequest = { showMoreMenu = false },
-                                    modifier = Modifier.background(SurfaceDark)
+                                    modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer)
                                 ) {
                                     val cf = currentFile
                                     if (cf != null) {
@@ -454,12 +454,12 @@ fun ImageViewerScreen(
                                 Box(
                                     modifier = Modifier
                                         .size(width = 54.dp, height = 54.dp)
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(SurfaceDark)
+                                        .clip(MaterialTheme.shapes.small)
+                                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                                         .border(
                                             width = if (isSelected) 2.5.dp else 1.dp,
-                                            color = if (isSelected) AccentBlue else Color.White.copy(alpha = 0.15f),
-                                            shape = RoundedCornerShape(10.dp)
+                                            color = if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.15f),
+                                            shape = MaterialTheme.shapes.small
                                         )
                                         .clickable {
                                             coroutineScope.launch {
@@ -608,9 +608,9 @@ private fun MediaPageContent(
                         is AsyncImagePainter.State.Loading -> {
                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    CircularProgressIndicator(color = AccentBlue, strokeWidth = 3.dp)
+                                    com.example.ui.components.AppLoadingIndicator(size = 32.dp, color = MaterialTheme.colorScheme.primary)
                                     Spacer(modifier = Modifier.height(12.dp))
-                                    Text("Loading image...", color = TextSecondary, fontSize = 13.sp)
+                                    Text("Loading image...", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
                                 }
                             }
                         }
@@ -651,8 +651,8 @@ private fun MediaPageContent(
                 contentAlignment = Alignment.Center
             ) {
                 Card(
-                    shape = RoundedCornerShape(24.dp),
-                    colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                    shape = MaterialTheme.shapes.extraLarge,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
                     modifier = Modifier
                         .padding(24.dp)
                         .fillMaxWidth(0.9f)
@@ -665,7 +665,7 @@ private fun MediaPageContent(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(200.dp)
-                                .clip(RoundedCornerShape(16.dp))
+                                .clip(MaterialTheme.shapes.large)
                                 .background(Color(0xFF1E1E2E)),
                             contentAlignment = Alignment.Center
                         ) {
@@ -710,7 +710,7 @@ private fun MediaPageContent(
                         Button(
                             onClick = { navController.navigate("video_player/$accountId/${file.effectiveId}") },
                             colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
-                            shape = RoundedCornerShape(12.dp),
+                            shape = MaterialTheme.shapes.medium,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Icon(Icons.Default.PlayCircle, contentDescription = null, modifier = Modifier.size(20.dp))
@@ -732,8 +732,8 @@ private fun MediaPageContent(
                 contentAlignment = Alignment.Center
             ) {
                 Card(
-                    shape = RoundedCornerShape(24.dp),
-                    colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                    shape = MaterialTheme.shapes.extraLarge,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
                     modifier = Modifier
                         .padding(24.dp)
                         .fillMaxWidth(0.9f)
@@ -746,7 +746,7 @@ private fun MediaPageContent(
                             modifier = Modifier
                                 .size(110.dp)
                                 .background(
-                                    Brush.linearGradient(listOf(AccentBlue, AccentBlue)),
+                                    Brush.linearGradient(listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.primary)),
                                     CircleShape
                                 ),
                             contentAlignment = Alignment.Center
@@ -774,8 +774,8 @@ private fun MediaPageContent(
 
                         Button(
                             onClick = { navController.navigate("audio_player/$accountId/${file.effectiveId}") },
-                            colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
-                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            shape = MaterialTheme.shapes.medium,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Icon(Icons.Default.PlayArrow, contentDescription = null)
@@ -797,8 +797,8 @@ private fun MediaPageContent(
                 contentAlignment = Alignment.Center
             ) {
                 Card(
-                    shape = RoundedCornerShape(24.dp),
-                    colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                    shape = MaterialTheme.shapes.extraLarge,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
                     modifier = Modifier
                         .padding(24.dp)
                         .fillMaxWidth(0.9f)
@@ -836,7 +836,7 @@ private fun MediaPageContent(
                         Button(
                             onClick = { navController.navigate("pdf_viewer/$accountId/${file.effectiveId}") },
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935)),
-                            shape = RoundedCornerShape(12.dp),
+                            shape = MaterialTheme.shapes.medium,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Icon(Icons.Default.MenuBook, contentDescription = null)
@@ -858,8 +858,8 @@ private fun MediaPageContent(
                 contentAlignment = Alignment.Center
             ) {
                 Card(
-                    shape = RoundedCornerShape(24.dp),
-                    colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                    shape = MaterialTheme.shapes.extraLarge,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
                     modifier = Modifier
                         .padding(24.dp)
                         .fillMaxWidth(0.9f)
@@ -871,10 +871,10 @@ private fun MediaPageContent(
                         Box(
                             modifier = Modifier
                                 .size(90.dp)
-                                .background(AccentBlue.copy(alpha = 0.15f), CircleShape),
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f), CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Default.Code, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(46.dp))
+                            Icon(Icons.Default.Code, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(46.dp))
                         }
 
                         Spacer(modifier = Modifier.height(20.dp))
@@ -896,8 +896,8 @@ private fun MediaPageContent(
 
                         Button(
                             onClick = { navController.navigate("text_editor/$accountId/${file.effectiveId}") },
-                            colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
-                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            shape = MaterialTheme.shapes.medium,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Icon(Icons.Default.EditNote, contentDescription = null)
@@ -919,8 +919,8 @@ private fun MediaPageContent(
                 contentAlignment = Alignment.Center
             ) {
                 Card(
-                    shape = RoundedCornerShape(24.dp),
-                    colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                    shape = MaterialTheme.shapes.extraLarge,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
                     modifier = Modifier
                         .padding(24.dp)
                         .fillMaxWidth(0.9f)
@@ -932,7 +932,7 @@ private fun MediaPageContent(
                         Box(
                             modifier = Modifier
                                 .size(90.dp)
-                                .background(Color(0xFF2C2C3E), CircleShape),
+                                .background(MaterialTheme.colorScheme.surfaceContainerHighest, CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(Icons.AutoMirrored.Filled.InsertDriveFile, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(46.dp))
@@ -957,8 +957,8 @@ private fun MediaPageContent(
 
                         Button(
                             onClick = { navController.navigate("file_detail/$accountId/${file.effectiveId}") },
-                            colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
-                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            shape = MaterialTheme.shapes.medium,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Icon(Icons.Default.Info, contentDescription = null)

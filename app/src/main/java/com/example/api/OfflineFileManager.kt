@@ -148,13 +148,8 @@ object OfflineFileManager {
 
         val tempFile = File(getVaultDir(context), "${targetFile.name}.tmp")
         try {
-            val downloadUrl = ApiClient.getFileUrl(accountId, fid, preview = false)
-            val token = ApiClient.getToken()
+            val downloadUrl = ApiClient.getCleanDownloadUrl(accountId, fid, preview = false)
             val requestBuilder = Request.Builder().url(downloadUrl)
-            if (!token.isNullOrEmpty()) {
-                requestBuilder.addHeader("Authorization", "Bearer $token")
-            }
-
             val response = ApiClient.okHttpClient.newCall(requestBuilder.build()).execute()
             if (!response.isSuccessful) {
                 throw Exception("Download failed with HTTP ${response.code}")

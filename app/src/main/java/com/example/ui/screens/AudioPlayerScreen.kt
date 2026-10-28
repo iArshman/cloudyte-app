@@ -140,8 +140,8 @@ fun AudioPlayerScreen(
         val speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
         AlertDialog(
             onDismissRequest = { showSpeedDialog = false },
-            containerColor = SurfaceDark,
-            title = { Text("Playback Speed", color = TextPrimary) },
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            title = { Text("Playback Speed", color = MaterialTheme.colorScheme.onSurface) },
             text = {
                 Column {
                     speeds.forEach { speed ->
@@ -163,12 +163,12 @@ fun AudioPlayerScreen(
                                     exoPlayer.setPlaybackSpeed(speed)
                                     showSpeedDialog = false
                                 },
-                                colors = RadioButtonDefaults.colors(selectedColor = AccentBlue)
+                                colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = if (speed == 1f) "Normal (1x)" else "${speed}x",
-                                color = TextPrimary,
+                                color = MaterialTheme.colorScheme.onSurface,
                                 fontSize = 16.sp
                             )
                         }
@@ -180,13 +180,13 @@ fun AudioPlayerScreen(
     }
 
     Scaffold(
-        containerColor = BackgroundDark,
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("Audio Player", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold) },
+                title = { Text("Audio Player", color = MaterialTheme.colorScheme.onBackground, fontSize = 18.sp, fontWeight = FontWeight.SemiBold) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextPrimary)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.onBackground)
                     }
                 },
                 actions = {
@@ -197,16 +197,16 @@ fun AudioPlayerScreen(
                         }
                         context.startActivity(Intent.createChooser(shareIntent, "Share Audio Link"))
                     }) {
-                        Icon(Icons.Default.Share, contentDescription = "Share", tint = TextPrimary)
+                        Icon(Icons.Default.Share, contentDescription = "Share", tint = MaterialTheme.colorScheme.onBackground)
                     }
                     IconButton(onClick = {
                         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(audioUrl))
                         context.startActivity(intent)
                     }) {
-                        Icon(Icons.Default.Download, contentDescription = "Download", tint = TextPrimary)
+                        Icon(Icons.Default.Download, contentDescription = "Download", tint = MaterialTheme.colorScheme.onBackground)
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = BackgroundDark)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
             )
         }
     ) { innerPadding ->
@@ -319,9 +319,9 @@ fun AudioPlayerScreen(
                         }
                     },
                     colors = SliderDefaults.colors(
-                        thumbColor = AccentBlue,
-                        activeTrackColor = AccentBlue,
-                        inactiveTrackColor = SurfaceDark
+                        thumbColor = MaterialTheme.colorScheme.primary,
+                        activeTrackColor = MaterialTheme.colorScheme.primary,
+                        inactiveTrackColor = MaterialTheme.colorScheme.surfaceContainerHighest
                     ),
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -332,12 +332,12 @@ fun AudioPlayerScreen(
                 ) {
                     Text(
                         text = formatAudioTime(currentPosition),
-                        color = TextSecondary,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 13.sp
                     )
                     Text(
                         text = formatAudioTime(duration),
-                        color = TextSecondary,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 13.sp
                     )
                 }
@@ -358,7 +358,7 @@ fun AudioPlayerScreen(
                     Icon(
                         Icons.Default.Repeat,
                         contentDescription = "Loop",
-                        tint = if (isLooping) AccentBlue else TextSecondary
+                        tint = if (isLooping) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
 
@@ -370,7 +370,7 @@ fun AudioPlayerScreen(
                     },
                     modifier = Modifier.size(48.dp)
                 ) {
-                    Icon(Icons.Default.Replay10, contentDescription = "Rewind 10s", tint = TextPrimary, modifier = Modifier.size(32.dp))
+                    Icon(Icons.Default.Replay10, contentDescription = "Rewind 10s", tint = MaterialTheme.colorScheme.onBackground, modifier = Modifier.size(32.dp))
                 }
 
                 IconButton(
@@ -384,12 +384,12 @@ fun AudioPlayerScreen(
                     modifier = Modifier
                         .size(72.dp)
                         .background(
-                            Brush.linearGradient(listOf(AccentBlue, AccentBlue)),
+                            Brush.linearGradient(listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.primary)),
                             CircleShape
                         )
                 ) {
                     if (isBuffering) {
-                        CircularProgressIndicator(color = Color.White, modifier = Modifier.size(32.dp))
+                        com.example.ui.components.AppLoadingIndicator(size = 32.dp, color = Color.White)
                     } else {
                         Icon(
                             imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,

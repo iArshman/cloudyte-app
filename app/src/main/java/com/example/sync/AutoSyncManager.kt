@@ -2,6 +2,7 @@ package com.example.sync
 
 import android.content.Context
 import android.util.Log
+import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.Data
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -10,6 +11,7 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import com.example.data.UserPreferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -21,8 +23,9 @@ import java.util.concurrent.TimeUnit
 
 object AutoSyncManager {
     private const val TAG = "AutoSyncManager"
-    private const val UNIQUE_PERIODIC_WORK = "AutoBackup"
-    private const val UNIQUE_IMMEDIATE_WORK = "ImmediateAutoBackup"
+    const val UNIQUE_PERIODIC_WORK = "AutoBackup"
+    const val UNIQUE_IMMEDIATE_WORK = "ImmediateAutoBackup"
+    const val UNIQUE_MANUAL_WORK = "ManualSyncNow"
     private var foregroundWatcherJob: Job? = null
 
     fun init(context: Context, scope: CoroutineScope) {
@@ -30,8 +33,7 @@ object AutoSyncManager {
         scope.launch(Dispatchers.IO) {
             val isEnabled = SyncPreferences.getAutoBackupEnabled(context).first()
             if (isEnabled) {
-                scheduleAutoBackup(context)
-                // Trigger immediate background sync check on app launch
+                scheduleAutoBackup(context, ExistingPeriodicWorkPolicy.KEEP)
                 triggerImmediateSync(context, forceReupload = false, isManual = false)
             }
         }
@@ -43,7 +45,7 @@ object AutoSyncManager {
         scope.launch {
             SyncPreferences.setAutoBackupEnabled(context, enabled)
             if (enabled) {
-                scheduleAutoBackup(context)
+                scheduleAutoBackup(context, ExistingPeriodicWorkPolicy.UPDATE)
                 SyncLogger.log("Auto-backup enabled: Starting immediate initial sync check...", SyncLogLevel.INFO)
                 triggerImmediateSync(context, forceReupload = false, isManual = false)
             } else {
@@ -54,43 +56,68 @@ object AutoSyncManager {
         }
     }
 
-    fun scheduleAutoBackup(context: Context) {
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
+    suspend fun buildConstraintsFromPreferences(context: Context): Constraints {
+        val prefs = UserPreferences.observe(context).first()
+        val networkType = if (prefs.backupWifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED
+        return Constraints.Builder()
+            .setRequiredNetworkType(networkType)
+            .setRequiresCharging(prefs.backupChargingOnly)
+            .setRequiresBatteryNotLow(true)
             .build()
+    }
 
-        val periodicRequest = PeriodicWorkRequestBuilder<BackupWorker>(15, TimeUnit.MINUTES)
-            .setConstraints(constraints)
-            .build()
+    fun scheduleAutoBackup(
+        context: Context,
+        policy: ExistingPeriodicWorkPolicy = ExistingPeriodicWorkPolicy.UPDATE
+    ) {
+        val scope = CoroutineScope(Dispatchers.IO)
+        scope.launch {
+            val prefs = UserPreferences.observe(context).first()
+            val constraints = buildConstraintsFromPreferences(context)
+            val intervalHours = prefs.backupIntervalHours.toLong().coerceAtLeast(1L)
 
-        WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-            UNIQUE_PERIODIC_WORK,
-            ExistingPeriodicWorkPolicy.UPDATE,
-            periodicRequest
-        )
+            val periodicRequest = PeriodicWorkRequestBuilder<BackupWorker>(intervalHours, TimeUnit.HOURS)
+                .setConstraints(constraints)
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+                .build()
+
+            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+                UNIQUE_PERIODIC_WORK,
+                policy,
+                periodicRequest
+            )
+        }
     }
 
     fun triggerImmediateSync(context: Context, forceReupload: Boolean = false, isManual: Boolean = false) {
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
+        val scope = CoroutineScope(Dispatchers.IO)
+        scope.launch {
+            val constraints = if (isManual) {
+                Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .build()
+            } else {
+                buildConstraintsFromPreferences(context)
+            }
 
-        val data = Data.Builder()
-            .putBoolean("is_manual", isManual)
-            .putBoolean("force_reupload", forceReupload)
-            .build()
+            val data = Data.Builder()
+                .putBoolean("is_manual", isManual)
+                .putBoolean("force_reupload", forceReupload)
+                .build()
 
-        val workRequest = OneTimeWorkRequestBuilder<BackupWorker>()
-            .setInputData(data)
-            .setConstraints(constraints)
-            .build()
+            val workRequest = OneTimeWorkRequestBuilder<BackupWorker>()
+                .setInputData(data)
+                .setConstraints(constraints)
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+                .build()
 
-        val workName = if (isManual) "ManualSyncNow" else UNIQUE_IMMEDIATE_WORK
-        WorkManager.getInstance(context).enqueueUniqueWork(
-            workName,
-            ExistingWorkPolicy.REPLACE,
-            workRequest
-        )
+            val workName = if (isManual) UNIQUE_MANUAL_WORK else UNIQUE_IMMEDIATE_WORK
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                workName,
+                ExistingWorkPolicy.REPLACE,
+                workRequest
+            )
+        }
     }
 
     fun onFolderOrAccountChanged(context: Context) {
@@ -98,6 +125,7 @@ object AutoSyncManager {
         scope.launch {
             val isEnabled = SyncPreferences.getAutoBackupEnabled(context).first()
             if (isEnabled) {
+                scheduleAutoBackup(context, ExistingPeriodicWorkPolicy.UPDATE)
                 SyncLogger.log("Sync configuration updated: Triggering auto-sync...", SyncLogLevel.INFO)
                 triggerImmediateSync(context, forceReupload = false, isManual = false)
             }
@@ -107,7 +135,6 @@ object AutoSyncManager {
     private fun startForegroundWatcher(context: Context, scope: CoroutineScope) {
         foregroundWatcherJob?.cancel()
         foregroundWatcherJob = scope.launch(Dispatchers.IO) {
-            // Check every 45 seconds while app is active
             while (isActive) {
                 delay(45_000)
                 try {
@@ -116,7 +143,6 @@ object AutoSyncManager {
                     val accountId = SyncPreferences.getBackupAccountId(context).first()
 
                     if (isEnabled && !uri.isNullOrBlank() && !accountId.isNullOrBlank()) {
-                        // Background auto-scan
                         triggerImmediateSync(context, forceReupload = false, isManual = false)
                     }
                 } catch (e: Exception) {

@@ -35,7 +35,6 @@ import com.example.api.ApiClient
 import com.example.api.FileRepository
 import com.example.api.OfflineFileManager
 import com.example.ui.theme.AccentBlue
-import com.example.ui.theme.SurfaceDark
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import kotlinx.coroutines.Dispatchers
@@ -203,7 +202,7 @@ fun PdfViewerScreen(
                         Icon(Icons.Default.Download, contentDescription = "Download", tint = TextPrimary)
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = SurfaceDark)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
             )
         }
     ) { innerPadding ->
@@ -214,30 +213,26 @@ fun PdfViewerScreen(
             contentAlignment = Alignment.Center
         ) {
             if (isLoading) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator(color = AccentBlue)
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text("Loading PDF pages...", color = TextSecondary)
-                }
+                com.example.ui.components.LoadingState(message = "Loading PDF pages...")
             } else if (errorMessage != null) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.padding(24.dp)
                 ) {
-                    Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = Color.Red, modifier = Modifier.size(56.dp))
+                    Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(56.dp))
                     Spacer(modifier = Modifier.height(16.dp))
-                    Text("Cannot preview PDF file", color = TextPrimary, fontWeight = FontWeight.Bold)
+                    Text("Cannot preview PDF file", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text(errorMessage ?: "", color = TextSecondary, fontSize = 13.sp)
+                    Text(errorMessage ?: "", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
                     Spacer(modifier = Modifier.height(16.dp))
                     Button(
                         onClick = {
                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(pdfUrl))
                             context.startActivity(intent)
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                     ) {
-                        Text("Open Externally", color = Color.White)
+                        Text("Open Externally", color = MaterialTheme.colorScheme.onPrimary)
                     }
                 }
             } else if (currentBitmap != null) {
@@ -266,7 +261,7 @@ fun PdfViewerScreen(
 
                 // Page Navigation Floating Bar
                 Surface(
-                    shape = RoundedCornerShape(24.dp),
+                    shape = MaterialTheme.shapes.extraLarge,
                     color = Color.Black.copy(alpha = 0.75f),
                     modifier = Modifier
                         .align(Alignment.BottomCenter)

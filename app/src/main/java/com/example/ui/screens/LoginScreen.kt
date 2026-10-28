@@ -131,7 +131,7 @@ fun LoginScreen(navController: NavController, viewModel: LoginViewModel = viewMo
     val error by viewModel.error.collectAsState()
     val isRegisterMode by viewModel.isRegisterMode.collectAsState()
 
-    Scaffold(containerColor = BackgroundDark) { innerPadding ->
+    Scaffold(containerColor = MaterialTheme.colorScheme.background) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -143,14 +143,14 @@ fun LoginScreen(navController: NavController, viewModel: LoginViewModel = viewMo
             Text(
                 text = if (isRegisterMode) "Create Account" else "Welcome Back",
                 style = MaterialTheme.typography.headlineMedium,
-                color = TextPrimary,
+                color = MaterialTheme.colorScheme.onBackground,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.fillMaxWidth()
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = if (isRegisterMode) "Sign up to start organizing your cloud storage" else "Log in to access your linked drives",
-                color = TextSecondary,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.fillMaxWidth()
             )
             Spacer(modifier = Modifier.height(32.dp))
@@ -162,18 +162,18 @@ fun LoginScreen(navController: NavController, viewModel: LoginViewModel = viewMo
                     viewModel.clearError()
                 },
                 label = { Text("Username") },
-                leadingIcon = { Icon(Icons.Default.Person, contentDescription = "Username", tint = TextSecondary) },
+                leadingIcon = { Icon(Icons.Default.Person, contentDescription = "Username", tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                 modifier = Modifier.fillMaxWidth(),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = AccentBlue,
-                    unfocusedBorderColor = SurfaceDark,
-                    focusedContainerColor = SurfaceDark,
-                    unfocusedContainerColor = SurfaceDark,
-                    cursorColor = AccentBlue,
-                    focusedTextColor = TextPrimary,
-                    unfocusedTextColor = TextPrimary
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    cursorColor = MaterialTheme.colorScheme.primary,
+                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface
                 ),
-                shape = RoundedCornerShape(12.dp),
+                shape = MaterialTheme.shapes.medium,
                 singleLine = true
             )
             Spacer(modifier = Modifier.height(16.dp))
@@ -184,25 +184,25 @@ fun LoginScreen(navController: NavController, viewModel: LoginViewModel = viewMo
                     viewModel.clearError()
                 },
                 label = { Text("Password") },
-                leadingIcon = { Icon(Icons.Default.Lock, contentDescription = "Password", tint = TextSecondary) },
+                leadingIcon = { Icon(Icons.Default.Lock, contentDescription = "Password", tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                 trailingIcon = {
                     IconButton(onClick = { passwordVisible = !passwordVisible }) {
                         val icon = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff
-                        Icon(icon, contentDescription = "Toggle Password Visibility", tint = TextSecondary)
+                        Icon(icon, contentDescription = "Toggle Password Visibility", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 },
                 visualTransformation = if (passwordVisible) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
                 modifier = Modifier.fillMaxWidth(),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = AccentBlue,
-                    unfocusedBorderColor = SurfaceDark,
-                    focusedContainerColor = SurfaceDark,
-                    unfocusedContainerColor = SurfaceDark,
-                    cursorColor = AccentBlue,
-                    focusedTextColor = TextPrimary,
-                    unfocusedTextColor = TextPrimary
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    cursorColor = MaterialTheme.colorScheme.primary,
+                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface
                 ),
-                shape = RoundedCornerShape(12.dp),
+                shape = MaterialTheme.shapes.medium,
                 singleLine = true
             )
             
@@ -217,12 +217,12 @@ fun LoginScreen(navController: NavController, viewModel: LoginViewModel = viewMo
                         checked = rememberMe,
                         onCheckedChange = { rememberMe = it },
                         colors = CheckboxDefaults.colors(
-                            checkedColor = AccentBlue,
-                            uncheckedColor = TextSecondary,
-                            checkmarkColor = Color.White
+                            checkedColor = MaterialTheme.colorScheme.primary,
+                            uncheckedColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            checkmarkColor = MaterialTheme.colorScheme.onPrimary
                         )
                     )
-                    Text("Remember me", color = TextSecondary, style = MaterialTheme.typography.bodyMedium)
+                    Text("Remember me", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
                 }
             }
             
@@ -230,7 +230,7 @@ fun LoginScreen(navController: NavController, viewModel: LoginViewModel = viewMo
                 Spacer(modifier = Modifier.height(12.dp))
                 Card(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)),
-                    shape = RoundedCornerShape(8.dp),
+                    shape = MaterialTheme.shapes.small,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
@@ -254,22 +254,17 @@ fun LoginScreen(navController: NavController, viewModel: LoginViewModel = viewMo
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(56.dp)
-                    .background(
-                        brush = Brush.linearGradient(
-                            colors = listOf(AccentBlue, AccentBlue)
-                        ),
-                        shape = RoundedCornerShape(16.dp)
-                    ),
-                colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+                    .height(56.dp),
+                shape = MaterialTheme.shapes.large,
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                 enabled = !isLoading && username.isNotBlank() && password.isNotBlank()
             ) {
                 if (isLoading) {
-                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp))
+                    com.example.ui.components.AppLoadingIndicator(size = 24.dp, color = MaterialTheme.colorScheme.onPrimary)
                 } else {
                     Text(
                         if (isRegisterMode) "Sign Up" else "Log In",
-                        color = Color.White,
+                        color = MaterialTheme.colorScheme.onPrimary,
                         fontWeight = FontWeight.Bold,
                         fontSize = 16.sp
                     )

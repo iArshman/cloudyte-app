@@ -7,6 +7,7 @@ import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.Header
 import retrofit2.http.Multipart
 import retrofit2.http.PATCH
 import retrofit2.http.POST
@@ -54,8 +55,11 @@ interface CloudyteApi {
     suspend fun getFiles(
         @Query("accountId") accountId: String?,
         @Query("folderId") folderId: String?,
-        @Query("search") search: String?
-    ): List<CloudFile>
+        @Query("search") search: String? = null,
+        @Query("cursor") cursor: String? = null,
+        @Query("limit") limit: Int? = null,
+        @Header("If-None-Match") ifNoneMatch: String? = null
+    ): Response<List<CloudFile>>
 
     @POST("/api/folders")
     suspend fun createFolder(
@@ -102,4 +106,9 @@ interface CloudyteApi {
 
     @POST("/api/share")
     suspend fun shareFile(@Body request: ShareRequest): ShareResponse
+
+    @GET("/api/storage/summary")
+    suspend fun getStorageSummary(
+        @Query("accountId") accountId: String? = null
+    ): StorageSummary
 }

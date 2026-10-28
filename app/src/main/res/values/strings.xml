@@ -1,3 +1,250 @@
 <resources>
     <string name="app_name">Cloudyte</string>
+
+    <!-- Bottom Navigation -->
+    <string name="nav_home">Home</string>
+    <string name="nav_files">Files</string>
+    <string name="nav_transfers">Transfers</string>
+    <string name="nav_accounts">Accounts</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- Common Actions -->
+    <string name="action_open">Open</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_close">Close</string>
+    <string name="action_save">Save</string>
+    <string name="action_create">Create</string>
+    <string name="action_rename">Rename</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_share">Share</string>
+    <string name="action_move">Move</string>
+    <string name="action_copy">Copy</string>
+    <string name="action_download">Download</string>
+    <string name="action_retry">Retry</string>
+    <string name="action_refresh">Refresh</string>
+    <string name="action_clear">Clear</string>
+    <string name="action_upload">Upload</string>
+    <string name="action_upload_file">Upload File</string>
+    <string name="action_new_folder">New Folder</string>
+    <string name="action_search">Search</string>
+    <string name="action_drives">Drives</string>
+    <string name="action_back">Back</string>
+    <string name="action_options">Options</string>
+    <string name="action_confirm">Confirm</string>
+    <string name="action_pause">Pause</string>
+    <string name="action_resume">Resume</string>
+    <string name="action_grant">Grant Permission</string>
+    <string name="action_add_rule">Add Rule</string>
+    <string name="action_check_updates">Check for Updates</string>
+    <string name="action_reset">Reset Settings</string>
+
+    <!-- Home Screen -->
+    <string name="home_welcome_back">Welcome Back</string>
+    <string name="home_default_user">Cloud User</string>
+    <string name="home_subtitle">Multi-cloud drive manager</string>
+    <string name="home_storage_overview">Storage Overview</string>
+    <string name="home_used">Used</string>
+    <string name="home_total_capacity">Total Capacity</string>
+    <string name="home_unlimited_symbol">∞</string>
+    <string name="home_unlimited_storage">Unlimited TG Storage</string>
+    <string name="home_total_files">Total Files</string>
+    <string name="home_linked_drives">Linked Drives</string>
+    <string name="home_quick_actions">Quick Actions</string>
+    <string name="home_create_folder_title">Create New Folder</string>
+    <string name="home_folder_name_label">Folder Name</string>
+
+    <!-- Files Screen -->
+    <string name="files_my_drive">My Drive</string>
+    <string name="files_connected_drives">Connected Cloud Drives</string>
+    <string name="files_link_new_drive">Link New Cloud Drive…</string>
+    <string name="files_manage_accounts">Manage Accounts in Settings</string>
+    <string name="files_search_in_drive">Search in %1$s…</string>
+    <string name="files_search_placeholder">Search files…</string>
+    <string name="files_switch_to_list">Switch to List View</string>
+    <string name="files_switch_to_grid">Switch to Grid View</string>
+    <string name="files_filter_files">Filter files</string>
+    <string name="files_filter_by">Filter Files By</string>
+    <string name="files_filter_all">All Files</string>
+    <string name="files_filter_folders">Folders Only</string>
+    <string name="files_filter_images">Photos &amp; Images</string>
+    <string name="files_filter_videos">Videos &amp; Movies</string>
+    <string name="files_filter_audio">Audio &amp; Music</string>
+    <string name="files_filter_docs">Documents &amp; Code</string>
+    <string name="files_active_filter_chip">Filter: %1$s  ✕</string>
+    <string name="files_offline_banner">Offline, showing saved files</string>
+    <string name="files_no_match">No files match \'%1$s\'</string>
+    <string name="files_empty_title">No files found</string>
+    <string name="files_empty_no_accounts">Link an account in Accounts tab</string>
+    <string name="files_empty_upload_hint">Tap + to upload a file to this drive</string>
+    <string name="files_section_folders">Folders</string>
+    <string name="files_section_files">Files</string>
+    <string name="files_type_folder">Folder</string>
+    <string name="files_menu_details">Details &amp; Info</string>
+    <string name="files_menu_share_link">Share Link</string>
+    <string name="files_menu_move_to">Move to…</string>
+    <string name="files_menu_make_copy">Make a Copy…</string>
+    <string name="files_rename_title">Rename File</string>
+    <string name="files_new_name_label">New Name</string>
+    <string name="files_delete_title">Delete Item</string>
+    <string name="files_delete_confirm">Are you sure you want to delete \'%1$s\'?</string>
+    <string name="files_upload_success">File uploaded successfully</string>
+    <string name="files_upload_failed">Upload failed</string>
+    <string name="files_rename_success">Renamed successfully</string>
+    <string name="files_delete_success">Deleted successfully</string>
+    <string name="files_folder_created">Folder created</string>
+    <string name="files_drive_connected">Drive connected successfully</string>
+    <string name="files_share_chooser_title">Share Public Link</string>
+    <string name="files_share_failed">Failed to create share link</string>
+
+    <!-- File Detail Screen -->
+    <string name="detail_title">File Details</string>
+    <string name="detail_loading">Loading file details…</string>
+    <string name="detail_section_title">Details</string>
+    <string name="detail_location">Location</string>
+    <string name="detail_location_root">Root</string>
+    <string name="detail_uploaded">Uploaded</string>
+    <string name="detail_uploaded_recent">Recent</string>
+    <string name="detail_size">Size</string>
+    <string name="detail_type">Type</string>
+    <string name="detail_play_video">Play Video</string>
+    <string name="detail_view_image">View Image</string>
+    <string name="detail_play_audio">Play Audio</string>
+    <string name="detail_open_editor">Open Editor</string>
+    <string name="detail_view_pdf">View PDF</string>
+    <string name="detail_open_file">Open File</string>
+    <string name="detail_delete_title">Delete File</string>
+    <string name="detail_delete_confirm">Are you sure you want to delete this file?</string>
+    <string name="detail_download_started">Download started</string>
+    <string name="detail_download_failed">Download failed</string>
+    <string name="detail_downloading_desc">Downloading file</string>
+
+    <!-- Settings Main Screen -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_section_account">Account</string>
+    <string name="settings_section_account_sub">Server, linked drives, log out</string>
+    <string name="settings_section_backup">Backup</string>
+    <string name="settings_section_backup_sub">Folders, schedule, network</string>
+    <string name="settings_section_storage">Storage</string>
+    <string name="settings_section_storage_sub">Cache, downloads, free space</string>
+    <string name="settings_section_permissions">Permissions</string>
+    <string name="settings_section_permissions_sub">Media access, notifications</string>
+    <string name="settings_section_security">Security</string>
+    <string name="settings_section_security_sub">App lock, screenshots</string>
+    <string name="settings_section_appearance">Appearance</string>
+    <string name="settings_section_appearance_sub">Theme, grid, layout</string>
+    <string name="settings_section_playback">Playback</string>
+    <string name="settings_section_playback_sub">Streaming, background audio</string>
+    <string name="settings_section_notifications">Notifications</string>
+    <string name="settings_section_notifications_sub">Progress and failure alerts</string>
+    <string name="settings_section_advanced">Advanced</string>
+    <string name="settings_section_advanced_sub">Transfers, retries, logging</string>
+    <string name="settings_section_about">About</string>
+    <string name="settings_section_about_sub">Version, links, updates</string>
+
+    <!-- Account Section -->
+    <string name="settings_server_url">Server URL</string>
+    <string name="settings_server_url_sub">Tap to copy URL to clipboard</string>
+    <string name="settings_storage_quota">Storage Quota Usage</string>
+    <string name="settings_quota_used_format">%1$s of %2$s used</string>
+    <string name="settings_server_copied">Server URL copied to clipboard</string>
+    <string name="settings_logout_confirm_title">Log Out</string>
+    <string name="settings_logout_confirm_msg">Are you sure you want to log out of your account?</string>
+
+    <!-- Backup Section -->
+    <string name="settings_auto_backup">Enable Auto Backup</string>
+    <string name="settings_auto_backup_sub">Syncs selected folder in the background periodically</string>
+    <string name="settings_backup_folders">Backup Folders</string>
+    <string name="settings_backup_schedule">Schedule</string>
+    <string name="settings_exclusions">Exclusions</string>
+    <string name="settings_exclusions_sub">Manage file exclusion rules and patterns</string>
+    <string name="settings_max_file_size">Max File Size</string>
+    <string name="settings_network_type">Network Type</string>
+    <string name="settings_delete_after_upload">Delete After Upload</string>
+
+    <!-- Storage Section -->
+    <string name="settings_cache_size">Cache Size</string>
+    <string name="settings_clear_cache">Clear Cache</string>
+    <string name="settings_clear_cache_confirm">Are you sure you want to clear all thumbnail and HTTP cache?</string>
+    <string name="settings_downloads_info">Offline Downloads</string>
+    <string name="settings_clear_downloads">Clear Downloads</string>
+    <string name="settings_clear_downloads_confirm">Are you sure you want to delete all offline saved files?</string>
+    <string name="settings_download_directory">Download Directory</string>
+    <string name="settings_auto_clean_cache">Auto-Clean Cache</string>
+    <string name="settings_all_cache_cleared">All cache cleared</string>
+
+    <!-- Permissions Section -->
+    <string name="settings_perm_media">Media &amp; Storage Permission</string>
+    <string name="settings_perm_notifications">Notifications Permission</string>
+    <string name="settings_perm_granted">Granted</string>
+    <string name="settings_perm_not_granted">Not Granted</string>
+
+    <!-- Security Section -->
+    <string name="settings_app_lock">Require App Lock</string>
+    <string name="settings_lock_timeout">Lock Timeout</string>
+    <string name="settings_block_screenshots">Block Screenshots</string>
+    <string name="settings_block_screenshots_sub">Prevent screenshots and screen recording (FLAG_SECURE)</string>
+    <string name="settings_logout">Log Out</string>
+
+    <!-- Appearance Section -->
+    <string name="settings_theme_mode">Theme Mode</string>
+    <string name="settings_dynamic_color">Dynamic Color</string>
+    <string name="settings_view_mode">View Mode</string>
+    <string name="settings_grid_columns">Grid Column Count</string>
+    <string name="settings_layout_density">Layout Density</string>
+    <string name="settings_show_recent_files">Show Recent Files</string>
+
+    <!-- Playback Section -->
+    <string name="settings_stream_before_download">Stream Before Download</string>
+    <string name="settings_background_audio">Background Audio Playback</string>
+    <string name="settings_auto_play_video">Auto-play Video</string>
+    <string name="settings_audio_crossfade">Audio Crossfade</string>
+    <string name="settings_audio_crossfade_label">%1$d sec</string>
+
+    <!-- Notifications Section -->
+    <string name="settings_enable_notifications">Enable Notifications</string>
+    <string name="settings_progress_alerts">Progress Alerts</string>
+    <string name="settings_failure_alerts">Failure Alerts</string>
+    <string name="settings_completed_alerts">Completed Alerts</string>
+    <string name="settings_sound">Sound</string>
+    <string name="settings_vibration">Vibration</string>
+
+    <!-- Advanced Section -->
+    <string name="settings_transfer_concurrency">Transfer Concurrency</string>
+    <string name="settings_max_retries">Max Retries</string>
+    <string name="settings_metered_transfers">Metered Network Transfers</string>
+    <string name="settings_debug_logging">Debug Logging</string>
+    <string name="settings_export_logs">Export / View Sync Logs</string>
+    <string name="settings_reset_all">Reset All Settings</string>
+    <string name="settings_reset_confirm_title">Reset Settings</string>
+    <string name="settings_reset_confirm_msg">Are you sure you want to reset all settings to default values?</string>
+
+    <!-- About Section -->
+    <string name="settings_app_version">App Version</string>
+    <string name="settings_app_version_sub">v1.0.0 (Build 100)</string>
+    <string name="settings_check_updates">Check for Updates</string>
+    <string name="settings_updates_up_to_date">App is up to date!</string>
+    <string name="settings_terms_of_service">Terms of Service</string>
+    <string name="settings_privacy_policy">Privacy Policy</string>
+    <string name="settings_open_source_licenses">Open Source Licenses</string>
+
+    <!-- Exclusions Screen -->
+    <string name="exclusions_title">Exclusions</string>
+    <string name="exclusions_empty">No exclusion rules added yet</string>
+    <string name="exclusions_add_dialog_title">Add Exclusion Rule</string>
+    <string name="exclusions_pattern_hint">Pattern (e.g. *.tmp, .DS_Store, cache/*)</string>
+    <string name="exclusions_is_regex">Is Regular Expression (Regex)</string>
+
+    <!-- Transfers Screen -->
+    <string name="transfers_title">Transfers</string>
+    <string name="transfers_tab_all">All</string>
+    <string name="transfers_tab_active">Active</string>
+    <string name="transfers_tab_completed">Completed</string>
+    <string name="transfers_tab_failed">Failed</string>
+    <string name="transfers_empty">No transfers in queue</string>
+    <string name="transfers_clear_completed">Clear Completed</string>
+
+    <!-- App Lock Screen -->
+    <string name="lock_screen_title">Cloudyte Locked</string>
+    <string name="lock_screen_subtitle">Unlock to access your cloud drives</string>
+    <string name="lock_screen_unlock_button">Unlock App</string>
 </resources>

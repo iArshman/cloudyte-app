@@ -1,81 +1,81 @@
 package com.example.ui.components
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.navigation.NavController
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.currentBackStackEntryAsState
-import com.example.ui.theme.BackgroundDark
-import com.example.ui.theme.AccentBlue
-import com.example.ui.theme.AccentBlue
-import com.example.ui.theme.SurfaceDark
-import com.example.ui.theme.TextPrimary
-import com.example.ui.theme.TextSecondary
+import com.example.R
 
 @Composable
-fun BottomNavBar(navController: NavController) {
+fun BottomNavBar(
+    navController: NavController,
+    onNavigate: ((String) -> Unit)? = null
+) {
     val items = listOf(
-        NavItem("home", "Home", Icons.Default.Home),
-        NavItem("files", "Files", Icons.Default.Folder),
-        NavItem("settings", "Settings", Icons.Default.Settings)
+        NavItem("home", stringResource(R.string.nav_home), Icons.Default.Home),
+        NavItem("files", stringResource(R.string.nav_files), Icons.Default.Folder),
+        NavItem("settings", stringResource(R.string.nav_settings), Icons.Default.Settings)
     )
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
     NavigationBar(
-        containerColor = SurfaceDark,
-        contentColor = TextPrimary
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface
     ) {
         items.forEach { item ->
             val isSelected = currentRoute == item.route
             NavigationBarItem(
                 icon = {
-                    if (isSelected) {
-                        // Use gradient brush for icon tint if we had custom Modifier.drawWithCache
-                        // For simplicity in standard item, we can use the Purple color
-                        Icon(imageVector = item.icon, contentDescription = item.label, tint = AccentBlue)
-                    } else {
-                        Icon(imageVector = item.icon, contentDescription = item.label, tint = TextSecondary)
-                    }
+                    Icon(
+                        imageVector = item.icon,
+                        contentDescription = item.label,
+                        tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 },
                 label = {
                     Text(
                         text = item.label,
-                        color = if (isSelected) AccentBlue else TextSecondary
+                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 },
                 selected = isSelected,
                 onClick = {
                     if (!isSelected) {
-                        navController.navigate(item.route) {
-                            popUpTo(navController.graph.startDestinationId) {
-                                saveState = true
+                        if (onNavigate != null) {
+                            onNavigate(item.route)
+                        } else {
+                            val startDestination = navController.graph.findStartDestination().route ?: "home"
+                            navController.navigate(item.route) {
+                                popUpTo(startDestination) {
+                                    saveState = true
+                                }
+                                launchSingleTop = true
+                                restoreState = true
                             }
-                            launchSingleTop = true
-                            restoreState = true
                         }
                     }
                 },
                 colors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = AccentBlue,
-                    unselectedIconColor = TextSecondary,
-                    selectedTextColor = AccentBlue,
-                    unselectedTextColor = TextSecondary,
+                    selectedIconColor = MaterialTheme.colorScheme.primary,
+                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
                     indicatorColor = Color.Transparent
                 )
             )
@@ -83,4 +83,4 @@ fun BottomNavBar(navController: NavController) {
     }
 }
 
-data class NavItem(val route: String, val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector)
+data class NavItem(val route: String, val label: String, val icon: ImageVector)

@@ -14,6 +14,14 @@ interface UploadRecordDao {
     @Query("SELECT * FROM upload_records WHERE fileName = :fileName AND fileSize = :fileSize AND targetAccountId = :accountId AND status = 'SUCCESS' LIMIT 1")
     suspend fun findMatchingSuccessRecord(fileName: String, fileSize: Long, accountId: String): LocalUploadRecord?
 
+    @Query("SELECT * FROM upload_records WHERE fileName = :fileName AND fileSize = :fileSize AND lastModified = :lastModified AND targetAccountId = :accountId AND status = 'SUCCESS' LIMIT 1")
+    suspend fun findMatchingSuccessRecord(
+        fileName: String,
+        fileSize: Long,
+        lastModified: Long,
+        accountId: String
+    ): LocalUploadRecord?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertRecord(record: LocalUploadRecord)
 

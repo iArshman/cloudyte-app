@@ -140,7 +140,23 @@ data class Account(
     }
 }
 
-
+@Stable
+@JsonClass(generateAdapter = true)
+data class StorageSummary(
+    val accountId: String = "",
+    val accountType: String = "",
+    val usedBytes: Long = 0L,
+    val totalBytes: Long? = null,
+    val fileCount: Int? = null,
+    val categories: Map<String, Long>? = null
+) {
+    val percentage: Float
+        get() {
+            val total = totalBytes ?: return 0f
+            if (total <= 0L || usedBytes <= 0L) return 0f
+            return ((usedBytes.toFloat() / total.toFloat()) * 100f).coerceIn(0f, 100f)
+        }
+}
 
 @Stable
 @JsonClass(generateAdapter = true)
@@ -157,7 +173,8 @@ data class CloudFile(
     val size: Any? = null,
     val time: Long? = null,
     val createdAt: String? = null,
-    val updatedAt: String? = null,
+    val updatedAt: Long? = null,
+    val thumbUrl: String? = null,
     val location: String? = null,
     val path: String? = null,
     val resolution: String? = null,
