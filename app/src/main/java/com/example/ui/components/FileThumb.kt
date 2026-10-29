@@ -19,16 +19,22 @@ import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImagePainter
 import coil.compose.rememberAsyncImagePainter
 import coil.request.ImageRequest
@@ -46,42 +52,71 @@ fun FileThumb(
     accountId: String,
     sizeDp: Dp = 48.dp,
     modifier: Modifier = Modifier,
-    cornerRadius: Dp = 12.dp
+    cornerRadius: Dp = 12.dp,
+    showTypeBadgeInGrid: Boolean = false
 ) {
     val context = LocalContext.current
-    val isPreviewable = file.isImage || file.isVideo
+    val validAccount = accountId.isNotBlank() && accountId != "root" && accountId != "all"
+    val isPreviewable = (file.isImage || file.isVideo || !file.thumbUrl.isNullOrBlank()) &&
+        file.effectiveId.isNotBlank() &&
+        (validAccount || !file.thumbUrl.isNullOrBlank())
 
-    val thumbUrl = remember(file.effectiveId, file.thumbUrl, accountId, isPreviewable) {
+    val fallbackPreviewUrl = remember(file.effectiveId, accountId, validAccount) {
+        if (validAccount && file.effectiveId.isNotBlank()) {
+            ApiClient.getFileUrl(accountId = accountId, fileId = file.effectiveId, preview = true)
+        } else {
+            null
+        }
+    }
+
+    val primaryThumbUrl = remember(file.effectiveId, file.thumbUrl, fallbackPreviewUrl, isPreviewable) {
         if (!isPreviewable) {
             null
         } else {
             val raw = file.thumbUrl
             if (!raw.isNullOrBlank()) {
-                if (raw.startsWith("http://") || raw.startsWith("https://")) {
+                val fullUrl = if (raw.startsWith("http://") || raw.startsWith("https://")) {
                     raw
                 } else {
                     val path = if (raw.startsWith("/")) raw else "/$raw"
                     "${ApiClient.API_BASE_URL}$path"
                 }
+                val token = ApiClient.getToken()
+                if (!token.isNullOrEmpty() && fullUrl.startsWith(ApiClient.API_BASE_URL) && !fullUrl.contains("token=")) {
+                    val sep = if (fullUrl.contains("?")) "&" else "?"
+                    "$fullUrl${sep}token=$token"
+                } else {
+                    fullUrl
+                }
             } else {
-                ApiClient.getThumbUrl(accountId = accountId, fileId = file.effectiveId, size = 256)
+                fallbackPreviewUrl
             }
         }
     }
 
-    val cacheKey = remember(file.effectiveId, file.updatedAt) {
-        "thumb:${file.effectiveId}:${file.updatedAt}"
+    var useFallbackUrl by remember(primaryThumbUrl) { mutableStateOf(false) }
+    val activeUrl = if (useFallbackUrl && fallbackPreviewUrl != null && fallbackPreviewUrl != primaryThumbUrl) {
+        fallbackPreviewUrl
+    } else {
+        primaryThumbUrl
     }
 
-    val imageRequest = remember(context, thumbUrl, cacheKey) {
-        thumbUrl?.let { url ->
-            ImageRequest.Builder(context)
+    val cacheKey = remember(file.effectiveId, file.updatedAt, useFallbackUrl) {
+        "thumb:${file.effectiveId}:${file.updatedAt}:$useFallbackUrl"
+    }
+
+    val imageRequest = remember(context, activeUrl, cacheKey) {
+        activeUrl?.let { url ->
+            val builder = ImageRequest.Builder(context)
                 .data(url)
                 .memoryCacheKey(cacheKey)
                 .diskCacheKey(cacheKey)
-                .size(256, 256)
                 .crossfade(true)
-                .build()
+            val token = ApiClient.getToken()
+            if (!token.isNullOrEmpty()) {
+                builder.addHeader("Authorization", "Bearer $token")
+            }
+            builder.build()
         }
     }
 
@@ -98,7 +133,7 @@ fun FileThumb(
     Box(
         modifier = containerModifier
             .clip(RoundedCornerShape(cornerRadius))
-            .background(MaterialTheme.colorScheme.surfaceVariant),
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)),
         contentAlignment = Alignment.Center
     ) {
         if (imageRequest != null) {
@@ -108,10 +143,21 @@ fun FileThumb(
             when (state) {
                 is AsyncImagePainter.State.Loading,
                 is AsyncImagePainter.State.Empty -> {
-                    // Plain surfaceVariant background while loading, NO CircularProgressIndicator
+                    FileTypeFallbackContent(
+                        file = file,
+                        iconSize = iconSize,
+                        showTypeBadgeInGrid = showTypeBadgeInGrid
+                    )
                 }
                 is AsyncImagePainter.State.Error -> {
-                    FileTypeFallbackIcon(file = file, iconSize = iconSize)
+                    if (!useFallbackUrl && fallbackPreviewUrl != null && fallbackPreviewUrl != primaryThumbUrl) {
+                        useFallbackUrl = true
+                    }
+                    FileTypeFallbackContent(
+                        file = file,
+                        iconSize = iconSize,
+                        showTypeBadgeInGrid = showTypeBadgeInGrid
+                    )
                 }
                 is AsyncImagePainter.State.Success -> {
                     Image(
@@ -123,7 +169,7 @@ fun FileThumb(
                 }
             }
 
-            if (file.isVideo) {
+            if (file.isVideo && state is AsyncImagePainter.State.Success) {
                 Box(
                     modifier = Modifier
                         .size(badgeSize)
@@ -139,26 +185,44 @@ fun FileThumb(
                 }
             }
         } else {
-            FileTypeFallbackIcon(file = file, iconSize = iconSize)
+            FileTypeFallbackContent(
+                file = file,
+                iconSize = iconSize,
+                showTypeBadgeInGrid = showTypeBadgeInGrid
+            )
         }
     }
 }
 
 @Composable
-private fun FileTypeFallbackIcon(file: CloudFile, iconSize: Dp) {
-    val (icon, tint) = when {
-        file.isFolderItem -> Icons.Default.Folder to MaterialTheme.colorScheme.primary
-        file.isVideo -> Icons.Default.Movie to FileVideo
-        file.isImage -> Icons.Default.Image to FileDoc
-        file.isAudio -> Icons.Default.MusicNote to FileAudio
-        file.isPdf -> Icons.Default.PictureAsPdf to FilePdf
-        file.isTextOrCode -> Icons.Default.Code to FileCode
-        else -> Icons.Default.Description to MaterialTheme.colorScheme.onSurfaceVariant
+private fun FileTypeFallbackContent(
+    file: CloudFile,
+    iconSize: Dp,
+    showTypeBadgeInGrid: Boolean
+) {
+    if (showTypeBadgeInGrid && !file.isFolderItem && !file.isImage && !file.isVideo) {
+        val rawLabel = (file.type ?: file.effectiveType).uppercase().take(4).ifBlank { "FILE" }
+        Text(
+            text = rawLabel,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontWeight = FontWeight.Bold,
+            fontSize = 18.sp
+        )
+    } else {
+        val (icon, tint) = when {
+            file.isFolderItem -> Icons.Default.Folder to MaterialTheme.colorScheme.primary
+            file.isVideo -> Icons.Default.Movie to FileVideo
+            file.isImage -> Icons.Default.Image to FileDoc
+            file.isAudio -> Icons.Default.MusicNote to FileAudio
+            file.isPdf -> Icons.Default.PictureAsPdf to FilePdf
+            file.isTextOrCode -> Icons.Default.Code to FileCode
+            else -> Icons.Default.Description to MaterialTheme.colorScheme.onSurfaceVariant
+        }
+        Icon(
+            imageVector = icon,
+            contentDescription = file.effectiveName,
+            tint = tint,
+            modifier = Modifier.size(iconSize)
+        )
     }
-    Icon(
-        imageVector = icon,
-        contentDescription = file.effectiveName,
-        tint = tint,
-        modifier = Modifier.size(iconSize)
-    )
 }

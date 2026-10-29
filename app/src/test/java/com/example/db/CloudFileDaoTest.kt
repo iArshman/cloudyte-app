@@ -6,6 +6,7 @@ import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -19,6 +20,7 @@ class CloudFileDaoTest {
 
     private lateinit var db: AppDatabase
     private lateinit var dao: CloudFileDao
+    private lateinit var syncMetaDao: FolderSyncMetaDao
 
     @Before
     fun setUp() {
@@ -27,6 +29,7 @@ class CloudFileDaoTest {
             .allowMainThreadQueries()
             .build()
         dao = db.cloudFileDao()
+        syncMetaDao = db.folderSyncMetaDao()
     }
 
     @After
@@ -37,7 +40,7 @@ class CloudFileDaoTest {
     private fun sampleRow(
         id: String,
         name: String,
-        accountId: String = "acc1",
+        accountId: String? = "acc1",
         folderId: String = "root",
         updatedAt: Long? = 1000L
     ): LocalCloudFile {
@@ -50,7 +53,7 @@ class CloudFileDaoTest {
             mimeType = "text/plain",
             time = updatedAt ?: 0L,
             updatedAt = updatedAt,
-            thumbUrl = "/api/thumb/$accountId/$id",
+            thumbUrl = "/api/thumb/${accountId ?: "null"}/$id",
             isFolder = false,
             accountId = accountId,
             folderId = folderId
@@ -101,5 +104,28 @@ class CloudFileDaoTest {
 
         assertTrue(dao.getFilesForFolder("acc1", "root").isEmpty())
         assertEquals(1, dao.getFilesForFolder("acc1", "photos").size)
+    }
+
+    @Test
+    fun folderSyncMetaDao_persistsUpdatesAndClearsEtagsPerFolder() = runTest {
+        assertNull(syncMetaDao.getMeta("acc1", "root"))
+
+        val initialMeta = LocalFolderSyncMeta(
+            accountKey = "acc1",
+            folderId = "root",
+            etag = "etag-v1",
+            lastSyncedAt = 10_000L
+        )
+        syncMetaDao.upsert(initialMeta)
+
+        val loaded = syncMetaDao.getMeta("acc1", "root")
+        assertEquals("etag-v1", loaded?.etag)
+        assertEquals(10_000L, loaded?.lastSyncedAt)
+
+        // Clear ETag on mutation while retaining lastSyncedAt
+        syncMetaDao.clearEtag("acc1", "root")
+        val afterClear = syncMetaDao.getMeta("acc1", "root")
+        assertNull(afterClear?.etag)
+        assertEquals(10_000L, afterClear?.lastSyncedAt)
     }
 }

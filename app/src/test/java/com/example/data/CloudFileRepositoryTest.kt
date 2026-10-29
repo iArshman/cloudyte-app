@@ -24,7 +24,9 @@ import com.example.api.UserSettingsRequest
 import com.example.db.AppDatabase
 import com.example.db.LocalCloudFile
 import com.example.db.LocalStorageSummary
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -50,6 +52,9 @@ import retrofit2.Response
 import java.util.concurrent.Executor
 
 class FakeCloudyteApi : CloudyteApi {
+    var getFilesCallCount: Int = 0
+    val getFilesCalls = mutableListOf<Triple<String?, String?, String?>>() // (accountId, folderId, ifNoneMatch)
+
     var getFilesHandler: suspend (
         accountId: String?,
         folderId: String?,
@@ -66,6 +71,20 @@ class FakeCloudyteApi : CloudyteApi {
         accountId: String?,
         request: RenameRequest
     ) -> Response<Unit> = { _, _, _ ->
+        Response.success(Unit)
+    }
+
+    var deleteHandler: suspend (
+        fileId: String,
+        accountId: String?
+    ) -> Response<Unit> = { _, _ ->
+        Response.success(Unit)
+    }
+
+    var createFolderHandler: suspend (
+        accountId: String?,
+        request: FolderRequest
+    ) -> Response<Unit> = { _, _ ->
         Response.success(Unit)
     }
 
@@ -93,11 +112,13 @@ class FakeCloudyteApi : CloudyteApi {
         limit: Int?,
         ifNoneMatch: String?
     ): Response<List<CloudFile>> {
+        getFilesCallCount++
+        getFilesCalls.add(Triple(accountId, folderId, ifNoneMatch))
         return getFilesHandler(accountId, folderId, search, cursor, limit, ifNoneMatch)
     }
 
     override suspend fun createFolder(accountId: String?, request: FolderRequest): Response<Unit> =
-        Response.success(Unit)
+        createFolderHandler(accountId, request)
 
     override suspend fun uploadFile(
         accountId: String,
@@ -119,7 +140,7 @@ class FakeCloudyteApi : CloudyteApi {
     }
 
     override suspend fun deleteFile(fileId: String, accountId: String?): Response<Unit> =
-        Response.success(Unit)
+        deleteHandler(fileId, accountId)
 
     override suspend fun moveFile(request: MoveCopyRequest): Response<Unit> = Response.success(Unit)
     override suspend fun copyFile(request: MoveCopyRequest): Response<Unit> = Response.success(Unit)
@@ -155,6 +176,7 @@ class CloudFileRepositoryTest {
     private lateinit var db: AppDatabase
     private lateinit var fakeApi: FakeCloudyteApi
     private lateinit var repository: CloudFileRepository
+    private var currentClockMs: Long = 1_000_000L
 
     @Before
     fun setUp() {
@@ -166,12 +188,176 @@ class CloudFileRepositoryTest {
             .setTransactionExecutor(directExecutor)
             .build()
         fakeApi = FakeCloudyteApi()
-        repository = CloudFileRepository(db, fakeApi)
+        currentClockMs = 1_000_000L
+        repository = CloudFileRepository(db, fakeApi, clock = { currentClockMs })
     }
 
     @After
     fun tearDown() {
         db.close()
+    }
+
+    @Test
+    fun coldStart_fetchesAndPersistsFilesAndSyncMeta() = runTest {
+        fakeApi.getFilesHandler = { _, _, _, _, _, _ ->
+            Response.success(
+                listOf(CloudFile(id = "f1", name = "ColdStart.pdf", type = "pdf")),
+                Headers.headersOf("ETag", "\"etag-cold-1\"")
+            )
+        }
+
+        val res = repository.refresh("acc1", "root", force = false)
+        assertTrue(res.isSuccess)
+        assertEquals(1, fakeApi.getFilesCallCount)
+
+        val savedFiles = db.cloudFileDao().getFilesForFolder("acc1", "root")
+        assertEquals(1, savedFiles.size)
+        assertEquals("ColdStart.pdf", savedFiles.first().name)
+
+        val meta = db.folderSyncMetaDao().getMeta("acc1", "root")
+        assertEquals("\"etag-cold-1\"", meta?.etag)
+        assertTrue("Folder should be fresh immediately after sync", repository.isFolderFresh("acc1", "root"))
+    }
+
+    @Test
+    fun warmCacheWithinFreshnessWindow_skipsNetworkRequestWhenForceIsFalse() = runTest {
+        fakeApi.getFilesHandler = { _, _, _, _, _, _ ->
+            Response.success(
+                listOf(CloudFile(id = "f1", name = "WarmFile.txt", type = "file")),
+                Headers.headersOf("ETag", "\"etag-1\"")
+            )
+        }
+
+        // First refresh populates Room and folder_sync_meta
+        assertTrue(repository.refresh("acc1", "root", force = false).isSuccess)
+        assertEquals(1, fakeApi.getFilesCallCount)
+
+        // Advance time by 15s (well within 60s TTL)
+        currentClockMs += 15_000L
+
+        // Second refresh with force = false must skip the network call
+        assertTrue(repository.refresh("acc1", "root", force = false).isSuccess)
+        assertEquals("Expected zero additional network calls when cache is fresh", 1, fakeApi.getFilesCallCount)
+
+        // Even a brand new CloudFileRepository instance (simulating navigating back to FilesScreen)
+        // reads persisted folder_sync_meta from Room and skips the network call!
+        val secondRepoInstance = CloudFileRepository(db, fakeApi, clock = { currentClockMs })
+        assertTrue(secondRepoInstance.refresh("acc1", "root", force = false).isSuccess)
+        assertEquals("New repository instance must also skip network call when Room cache is fresh", 1, fakeApi.getFilesCallCount)
+    }
+
+    @Test
+    fun expiredCacheAfterTtl_performsConditionalRequestWithPersistedEtagAndHandles304() = runTest {
+        fakeApi.getFilesHandler = { _, _, _, _, _, ifNoneMatch ->
+            if (ifNoneMatch == "\"etag-v1\"") {
+                val raw304 = okhttp3.Response.Builder()
+                    .request(okhttp3.Request.Builder().url("https://cloudyte.local/api/files").build())
+                    .protocol(okhttp3.Protocol.HTTP_1_1)
+                    .code(304)
+                    .message("Not Modified")
+                    .addHeader("ETag", "\"etag-v1\"")
+                    .build()
+                Response.error("".toResponseBody(null), raw304)
+            } else {
+                Response.success(
+                    listOf(CloudFile(id = "f1", name = "CachedDoc.pdf", type = "pdf")),
+                    Headers.headersOf("ETag", "\"etag-v1\"")
+                )
+            }
+        }
+
+        // Initial load
+        assertTrue(repository.refresh("acc1", "root", force = false).isSuccess)
+        assertEquals(1, fakeApi.getFilesCallCount)
+        assertEquals(null, fakeApi.getFilesCalls.last().third)
+
+        // Advance clock past 60s TTL
+        currentClockMs += 65_000L
+        assertFalse(repository.isFolderFresh("acc1", "root"))
+
+        // Next refresh sends If-None-Match: "etag-v1" and receives 304 Not Modified
+        assertTrue(repository.refresh("acc1", "root", force = false).isSuccess)
+        assertEquals(2, fakeApi.getFilesCallCount)
+        assertEquals("\"etag-v1\"", fakeApi.getFilesCalls.last().third)
+
+        // Cached files are preserved and folder is marked fresh again
+        val filesInDb = db.cloudFileDao().getFilesForFolder("acc1", "root")
+        assertEquals(1, filesInDb.size)
+        assertEquals("CachedDoc.pdf", filesInDb.first().name)
+        assertTrue("304 response must refresh lastSyncedAt so folder is fresh again", repository.isFolderFresh("acc1", "root"))
+    }
+
+    @Test
+    fun forcedRefresh_bypassesTtlCheckAndUpdatesRoom() = runTest {
+        var version = 1
+        fakeApi.getFilesHandler = { _, _, _, _, _, _ ->
+            Response.success(
+                listOf(CloudFile(id = "f1", name = "Doc_v$version.pdf", type = "pdf")),
+                Headers.headersOf("ETag", "\"etag-v$version\"")
+            )
+        }
+
+        assertTrue(repository.refresh("acc1", "root", force = false).isSuccess)
+        assertEquals(1, fakeApi.getFilesCallCount)
+        assertEquals("Doc_v1.pdf", db.cloudFileDao().getFilesForFolder("acc1", "root").first().name)
+
+        // Still within TTL, but force = true must hit the network
+        version = 2
+        assertTrue(repository.refresh("acc1", "root", force = true).isSuccess)
+        assertEquals(2, fakeApi.getFilesCallCount)
+        assertEquals("Doc_v2.pdf", db.cloudFileDao().getFilesForFolder("acc1", "root").first().name)
+    }
+
+    @Test
+    fun multiPageFailureOnPage2_preservesExistingRoomDataUntouched() = runTest {
+        // Seed existing valid folder state
+        val existing = CloudFile(id = "existing_1", name = "SafeExistingFile.jpg", type = "image")
+        db.cloudFileDao().insertFiles(listOf(LocalCloudFile.fromCloudFile(existing, "acc1", "root")))
+
+        fakeApi.getFilesHandler = { _, _, _, cursor, _, _ ->
+            if (cursor == null) {
+                Response.success(
+                    listOf(CloudFile(id = "partial_p1", name = "PartialPage1.jpg", type = "image")),
+                    Headers.headersOf("X-Next-Cursor", "cursor_page_2")
+                )
+            } else {
+                Response.error(502, """{"error":"Bad Gateway on page 2"}""".toResponseBody("application/json".toMediaType()))
+            }
+        }
+
+        val result = repository.refresh("acc1", "root", force = true)
+        assertTrue(result.isFailure)
+
+        // Existing Room rows must remain intact and NOT be polluted by partial page 1 rows
+        val rowsInRoom = db.cloudFileDao().getFilesForFolder("acc1", "root")
+        assertEquals(1, rowsInRoom.size)
+        assertEquals("existing_1", rowsInRoom.first().id)
+        assertEquals("SafeExistingFile.jpg", rowsInRoom.first().name)
+    }
+
+    @Test
+    fun concurrentRefreshesForSameFolder_deduplicateIntoSingleNetworkRequest() = runTest {
+        val gate = CompletableDeferred<Response<List<CloudFile>>>()
+        fakeApi.getFilesHandler = { _, _, _, _, _, _ ->
+            gate.await()
+        }
+
+        val deferred1 = async { repository.refresh("acc1", "root", force = false) }
+        val deferred2 = async { repository.refresh("acc1", "root", force = false) }
+        testScheduler.runCurrent()
+
+        gate.complete(
+            Response.success(
+                listOf(CloudFile(id = "shared_1", name = "SharedResult.txt", type = "file")),
+                Headers.headersOf("ETag", "\"etag-shared\"")
+            )
+        )
+
+        val res1 = deferred1.await()
+        val res2 = deferred2.await()
+        assertTrue(res1.isSuccess)
+        assertTrue(res2.isSuccess)
+        assertEquals("Concurrent non-forced refreshes for the same folder should share 1 API call", 1, fakeApi.getFilesCallCount)
     }
 
     @Test
@@ -214,6 +400,46 @@ class CloudFileRepositoryTest {
         assertEquals("CorruptedName.xlsx", optimisticNameDuringCall)
         // ...and was rolled back to the original name when the API failed
         assertEquals("Budget2026.xlsx", db.cloudFileDao().getFileById("file_2")?.name)
+    }
+
+    @Test
+    fun optimisticDelete_removesImmediatelyAndRollsBackOnFailure() = runTest {
+        val original = CloudFile(id = "del_1", name = "Important.docx", type = "file")
+        db.cloudFileDao().insertFiles(listOf(LocalCloudFile.fromCloudFile(original, "acc1", "root")))
+
+        var existsDuringApiCall = true
+        fakeApi.deleteHandler = { fileId, _ ->
+            existsDuringApiCall = db.cloudFileDao().getFileById(fileId) != null
+            Response.error(500, """{"error":"Delete failed"}""".toResponseBody("application/json".toMediaType()))
+        }
+
+        val result = repository.delete("del_1", "acc1")
+        assertTrue(result.isFailure)
+        assertFalse("File should be optimistically removed during API call", existsDuringApiCall)
+        assertEquals("Important.docx", db.cloudFileDao().getFileById("del_1")?.name)
+    }
+
+    @Test
+    fun createFolder_insertsOptimisticallyAndReplacesWithCanonicalFolderOnSuccess() = runTest {
+        var folderCountDuringCreate = 0
+        fakeApi.createFolderHandler = { _, _ ->
+            folderCountDuringCreate = db.cloudFileDao().getFilesForFolder("acc1", "root").size
+            Response.success(Unit)
+        }
+        fakeApi.getFilesHandler = { _, _, _, _, _, _ ->
+            Response.success(
+                listOf(CloudFile(id = "server_folder_1", name = "Projects", type = "folder", isFolder = true))
+            )
+        }
+
+        val result = repository.createFolder("Projects", "acc1", "root")
+        assertTrue(result.isSuccess)
+        assertEquals("Temp folder must be present in Room during createFolder API call", 1, folderCountDuringCreate)
+
+        val finalFolders = db.cloudFileDao().getFilesForFolder("acc1", "root")
+        assertEquals(1, finalFolders.size)
+        assertEquals("server_folder_1", finalFolders.first().id)
+        assertEquals("Projects", finalFolders.first().name)
     }
 
     @Test
@@ -267,7 +493,7 @@ class CloudFileRepositoryTest {
 
     @Test
     fun observeStorage_emitsSavedValueImmediatelyAndRefreshesAtMostOncePer60Seconds() = runTest {
-        repository = CloudFileRepository(db, fakeApi) { 100_000L + testScheduler.currentTime }
+        repository = CloudFileRepository(db, fakeApi, clock = { 100_000L + testScheduler.currentTime })
         val savedSummary = StorageSummary(
             accountId = "acc1",
             accountType = "gdrive",
