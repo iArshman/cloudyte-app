@@ -126,7 +126,7 @@ object ApiClient {
     }
 
     fun getThumbUrl(accountId: String, fileId: String, size: Int = 256): String {
-        return "$API_BASE_URL/api/thumb/$accountId/$fileId?s=$size"
+        return getFileUrl(accountId = accountId, fileId = fileId, preview = true)
     }
 
     fun getCleanDownloadUrl(accountId: String, fileId: String, preview: Boolean = false): String {

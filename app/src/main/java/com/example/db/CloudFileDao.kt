@@ -15,10 +15,10 @@ interface CloudFileDao {
     @Query("SELECT * FROM cloud_files WHERE (accountId = :accountId OR (:accountId IS NULL AND accountId IS NULL)) AND folderId = :folderId ORDER BY isFolder DESC, time DESC, name ASC")
     suspend fun getFilesForFolder(accountId: String?, folderId: String): List<LocalCloudFile>
 
-    @Query("SELECT * FROM cloud_files WHERE accountId = :accountId ORDER BY isFolder DESC, time DESC, name ASC")
+    @Query("SELECT * FROM cloud_files WHERE (accountId = :accountId OR (:accountId IS NULL AND accountId IS NULL)) ORDER BY isFolder DESC, time DESC, name ASC")
     suspend fun getFilesForAccount(accountId: String?): List<LocalCloudFile>
 
-    @Query("SELECT * FROM cloud_files WHERE accountId = :accountId AND name LIKE '%' || :query || '%' ORDER BY isFolder DESC, name ASC")
+    @Query("SELECT * FROM cloud_files WHERE (accountId = :accountId OR (:accountId IS NULL AND accountId IS NULL)) AND name LIKE '%' || :query || '%' ORDER BY isFolder DESC, name ASC")
     suspend fun searchFiles(accountId: String?, query: String): List<LocalCloudFile>
 
     @Query("SELECT * FROM cloud_files")
@@ -30,7 +30,7 @@ interface CloudFileDao {
     @Query("DELETE FROM cloud_files WHERE (accountId = :accountId OR (:accountId IS NULL AND accountId IS NULL)) AND folderId = :folderId")
     suspend fun deleteFilesForFolder(accountId: String?, folderId: String)
 
-    @Query("DELETE FROM cloud_files WHERE accountId = :accountId")
+    @Query("DELETE FROM cloud_files WHERE (accountId = :accountId OR (:accountId IS NULL AND accountId IS NULL))")
     suspend fun deleteFilesForAccount(accountId: String?)
 
     @Query("DELETE FROM cloud_files WHERE id = :id")

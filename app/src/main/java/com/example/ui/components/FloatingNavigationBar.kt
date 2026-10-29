@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
@@ -36,8 +35,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -48,8 +47,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
@@ -64,6 +63,7 @@ data class FloatingNavItem(val route: String, val label: String, val icon: Image
 fun FloatingNavigationBar(
     navController: NavController,
     visible: Boolean = true,
+    showNavText: Boolean = true,
     modifier: Modifier = Modifier,
     onNavigate: ((String) -> Unit)? = null
 ) {
@@ -77,7 +77,7 @@ fun FloatingNavigationBar(
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route ?: "home"
-    val activeIndex = items.indexOfFirst { it.route == currentRoute }.coerceAtLeast(0)
+    val selectedIndex = items.indexOfFirst { it.route == currentRoute }.coerceAtLeast(0)
 
     AnimatedVisibility(
         visible = visible,
@@ -88,49 +88,62 @@ fun FloatingNavigationBar(
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp)
-                .height(64.dp)
+                .padding(horizontal = 16.dp, vertical = 8.dp)
                 .testTag("floating_bottom_bar"),
-            shape = MaterialTheme.shapes.extraLarge,
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            shadowElevation = 8.dp,
-            tonalElevation = 2.dp
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            tonalElevation = 4.dp,
+            shadowElevation = 8.dp
         ) {
-            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                val isNarrow = maxWidth < 360.dp
-                val itemWidth = maxWidth / items.size
-                val animatedOffset by animateDpAsState(
-                    targetValue = itemWidth * activeIndex,
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(64.dp)
+                    .padding(horizontal = 6.dp),
+                contentAlignment = Alignment.CenterStart
+            ) {
+                val totalWidth = maxWidth
+                val slotWidth = totalWidth / items.size
+                val pillSize = if (showNavText) 52.dp else 46.dp
+                val targetX = (slotWidth * selectedIndex) + ((slotWidth - pillSize) / 2)
+                val pillX by animateDpAsState(
+                    targetValue = targetX,
                     animationSpec = spring(
-                        stiffness = Spring.StiffnessMediumLow,
-                        dampingRatio = Spring.DampingRatioLowBouncy
+                        dampingRatio = 0.82f,
+                        stiffness = Spring.StiffnessMediumLow
                     ),
-                    label = "PillIndicatorOffset"
+                    label = "pillX"
                 )
 
-                // Active item sliding pill indicator in BrandPrimary
+                // Animated sliding background pill behind active item
                 Box(
                     modifier = Modifier
-                        .offset(x = animatedOffset)
-                        .width(itemWidth)
-                        .fillMaxHeight()
-                        .padding(vertical = 6.dp, horizontal = 4.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary)
+                        .offset(x = pillX)
+                        .size(pillSize)
+                        .align(Alignment.CenterStart)
+                        .background(
+                            color = MaterialTheme.colorScheme.primary,
+                            shape = CircleShape
+                        )
                 )
 
-                // Row of Nav Items
-                Row(modifier = Modifier.fillMaxSize()) {
+                // Row of 5 navigation items
+                Row(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     items.forEachIndexed { index, item ->
-                        val isSelected = index == activeIndex
+                        val isSelected = index == selectedIndex
                         Box(
                             modifier = Modifier
-                                .width(itemWidth)
+                                .weight(1f)
                                 .fillMaxHeight()
+                                .testTag("nav_item_${item.route}")
                                 .clip(CircleShape)
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
-                                    indication = null
+                                    indication = ripple(bounded = false, radius = 26.dp),
+                                    role = Role.Tab
                                 ) {
                                     if (!isSelected) {
                                         onNavigate?.invoke(item.route)
@@ -138,29 +151,35 @@ fun FloatingNavigationBar(
                                 },
                             contentAlignment = Alignment.Center
                         ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center,
-                                modifier = Modifier.padding(vertical = 4.dp)
-                            ) {
+                            if (isSelected) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
+                                ) {
+                                    Icon(
+                                        imageVector = item.icon,
+                                        contentDescription = item.label,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    if (showNavText) {
+                                        Spacer(modifier = Modifier.height(1.dp))
+                                        Text(
+                                            text = item.label,
+                                            color = Color.White,
+                                            fontSize = 10.5.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
+                            } else {
                                 Icon(
                                     imageVector = item.icon,
                                     contentDescription = item.label,
-                                    modifier = Modifier.size(22.dp),
-                                    tint = if (isSelected) MaterialTheme.colorScheme.onPrimary
-                                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                    modifier = Modifier.size(22.dp)
                                 )
-                                if (!isNarrow || isSelected) {
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Text(
-                                        text = item.label,
-                                        fontSize = 11.sp,
-                                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimary
-                                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                        maxLines = 1
-                                    )
-                                }
                             }
                         }
                     }

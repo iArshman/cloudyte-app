@@ -337,9 +337,9 @@ fun GoogleDriveLinkPanel(
                 enabled = !isLoading
             ) {
                 if (isLoading) {
-                    com.example.ui.components.AppLoadingIndicator(size = 18.dp, color = Color.White)
+                    com.example.ui.components.AppLoadingIndicator(size = 20.dp, color = MaterialTheme.colorScheme.primary)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Opening Google...", color = Color.White)
+                    Text("Opening Google...", color = MaterialTheme.colorScheme.onSurface)
                 } else {
                     Icon(Icons.Default.OpenInBrowser, contentDescription = null, modifier = Modifier.size(18.dp), tint = Color.White)
                     Spacer(modifier = Modifier.width(8.dp))
@@ -424,9 +424,9 @@ fun OneDriveLinkPanel(
                 enabled = !isLoading
             ) {
                 if (isLoading) {
-                    com.example.ui.components.AppLoadingIndicator(size = 18.dp, color = Color.White)
+                    com.example.ui.components.AppLoadingIndicator(size = 20.dp, color = MaterialTheme.colorScheme.primary)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Opening Microsoft...", color = Color.White)
+                    Text("Opening Microsoft...", color = MaterialTheme.colorScheme.onSurface)
                 } else {
                     Icon(Icons.Default.OpenInBrowser, contentDescription = null, modifier = Modifier.size(18.dp), tint = Color.White)
                     Spacer(modifier = Modifier.width(8.dp))
@@ -506,9 +506,9 @@ fun TelegramLinkPanel(
             enabled = !isLoading
         ) {
             if (isLoading) {
-                com.example.ui.components.AppLoadingIndicator(size = 18.dp, color = Color.White)
+                com.example.ui.components.AppLoadingIndicator(size = 20.dp, color = MaterialTheme.colorScheme.primary)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Registering...", color = Color.White)
+                Text("Registering...", color = MaterialTheme.colorScheme.onSurface)
             } else {
                 Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(8.dp))

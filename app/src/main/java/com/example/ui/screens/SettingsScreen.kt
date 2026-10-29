@@ -21,11 +21,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.example.R
+import com.example.api.ApiClient
 import com.example.ui.components.GroupedList
 import com.example.ui.components.GroupedListItem
 import com.example.ui.components.SectionRow
@@ -39,11 +41,14 @@ fun SettingsScreen(
     onNavigateExclusions: () -> Unit = {},
     onNavigateTransfers: () -> Unit = {},
     onLogout: () -> Unit = {
+        ApiClient.saveToken(null)
         rootNavController?.navigate("login") {
             popUpTo("main") { inclusive = true }
         }
     }
 ) {
+    val context = LocalContext.current
+
     var selectedSection by remember { mutableStateOf<SettingsSectionType?>(null) }
     var currentSubScreen by remember { mutableStateOf<String?>(null) }
 
@@ -57,11 +62,26 @@ fun SettingsScreen(
         return
     }
 
+    if (currentSubScreen == "ACCOUNTS") {
+        AccountsScreen(
+            navController = bottomNavController ?: remember { androidx.navigation.NavHostController(context) },
+            rootNavController = rootNavController ?: remember { androidx.navigation.NavHostController(context) }
+        )
+        return
+    }
+
     selectedSection?.let { section ->
         SettingsSectionScreen(
             section = section,
             onBack = { selectedSection = null },
             onNavigateExclusions = { currentSubScreen = "EXCLUSIONS" },
+            onNavigateAccounts = {
+                if (bottomNavController != null) {
+                    bottomNavController.navigateSingleTopRestore("accounts")
+                } else {
+                    currentSubScreen = "ACCOUNTS"
+                }
+            },
             onLogout = onLogout
         )
         return

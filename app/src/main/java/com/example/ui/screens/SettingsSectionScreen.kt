@@ -63,6 +63,7 @@ fun SettingsSectionScreen(
     section: SettingsSectionType,
     onBack: () -> Unit,
     onNavigateExclusions: () -> Unit = {},
+    onNavigateAccounts: () -> Unit = {},
     onLogout: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -75,6 +76,31 @@ fun SettingsSectionScreen(
     var showConfirmClearCache by remember { mutableStateOf(false) }
     var showConfirmClearDownloads by remember { mutableStateOf(false) }
     var showConfirmResetSettings by remember { mutableStateOf(false) }
+
+    var profile by remember { mutableStateOf<com.example.api.UserProfile?>(null) }
+    var accounts by remember { mutableStateOf<List<com.example.api.Account>>(emptyList()) }
+
+    androidx.compose.runtime.LaunchedEffect(section) {
+        if (section == SettingsSectionType.ACCOUNT) {
+            val db = com.example.db.AppDatabase.getDatabase(context)
+            try {
+                val cached = db.accountDao().getAllAccounts()
+                if (cached.isNotEmpty()) {
+                    accounts = cached.map { it.toAccount() }
+                }
+            } catch (_: Exception) {}
+            try {
+                profile = ApiClient.apiService.getProfile()
+            } catch (_: Exception) {}
+            try {
+                val fetched = ApiClient.apiService.getAccounts()
+                if (fetched.isNotEmpty()) {
+                    accounts = fetched
+                    db.accountDao().insertAccounts(fetched.map { com.example.db.LocalAccount.fromAccount(it) })
+                }
+            } catch (_: Exception) {}
+        }
+    }
 
     // Dialog state handlers
     var activeDialogType by remember { mutableStateOf<String?>(null) }
@@ -106,48 +132,179 @@ fun SettingsSectionScreen(
         ) {
             when (section) {
                 SettingsSectionType.ACCOUNT -> {
-                    SettingsSectionTitle(stringResource(R.string.settings_section_account))
-                    val accountItems = listOf(
-                        GroupedListItem(key = "server_url") {
-                            SettingsClickRow(
-                                title = stringResource(R.string.settings_server_url),
-                                subtitle = ApiClient.API_BASE_URL,
-                                onClick = {
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    clipboard.setPrimaryClip(ClipData.newPlainText("Server URL", ApiClient.API_BASE_URL))
-                                    Toast.makeText(context, context.getString(R.string.settings_server_copied), Toast.LENGTH_SHORT).show()
-                                }
-                            )
-                        },
-                        GroupedListItem(key = "storage_quota") {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                Text(
-                                    text = stringResource(R.string.settings_storage_quota),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = stringResource(R.string.settings_quota_used_format, "12.4 GB", "50 GB"),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                LinearProgressIndicator(
-                                    progress = { 0.25f },
-                                    modifier = Modifier.fillMaxWidth()
+                    val username = profile?.displayUsername ?: "User"
+                    val userId = profile?.id ?: profile?._id ?: "Active Session"
+                    val email = profile?.email?.takeIf { it.isNotBlank() } ?: "Not set"
+                    val roleLabel = if (profile?.isAdmin == true) "Administrator" else "Standard User"
+                    val usedTotal = accounts.sumOf { it.usageBytes.coerceAtLeast(0L) }
+                    val finiteTotals = accounts.map { it.totalBytes }.filter { it > 0L }
+                    val hasUnlimited = accounts.any {
+                        it.totalBytes <= 0L ||
+                            it.effectiveType.contains("tg", ignoreCase = true) ||
+                            it.effectiveType.contains("tele", ignoreCase = true)
+                    }
+                    val totalCap = if (hasUnlimited || finiteTotals.isEmpty()) 0L else finiteTotals.sum()
+                    val quotaText = if (totalCap > 0L) {
+                        "${com.example.data.formatStorageSize(usedTotal)} of ${com.example.data.formatStorageSize(totalCap)} used"
+                    } else {
+                        "${com.example.data.formatStorageSize(usedTotal)} used • Unlimited"
+                    }
+                    val progressFraction = if (totalCap > 0L) {
+                        (usedTotal.toFloat() / totalCap.toFloat()).coerceIn(0f, 1f)
+                    } else {
+                        0.15f
+                    }
+                    var drivesExpanded by remember { mutableStateOf(false) }
+
+                    SettingsSectionTitle("User Profile")
+                    val profileItems = buildList {
+                        add(
+                            GroupedListItem(key = "username") {
+                                SettingsClickRow(
+                                    title = "Username",
+                                    subtitle = username,
+                                    onClick = {}
                                 )
                             }
-                        },
-                        GroupedListItem(key = "logout") {
-                            SettingsClickRow(
-                                title = stringResource(R.string.settings_logout),
-                                titleColor = MaterialTheme.colorScheme.error,
-                                onClick = { showConfirmLogout = true }
+                        )
+                        add(
+                            GroupedListItem(key = "account_role") {
+                                SettingsClickRow(
+                                    title = "Account Type",
+                                    subtitle = roleLabel,
+                                    onClick = {}
+                                )
+                            }
+                        )
+                        add(
+                            GroupedListItem(key = "user_id") {
+                                SettingsClickRow(
+                                    title = "Account ID",
+                                    subtitle = userId,
+                                    onClick = {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        clipboard.setPrimaryClip(ClipData.newPlainText("Account ID", userId))
+                                        Toast.makeText(context, "Account ID copied", Toast.LENGTH_SHORT).show()
+                                    }
+                                )
+                            }
+                        )
+                        if (email != "Not set") {
+                            add(
+                                GroupedListItem(key = "email") {
+                                    SettingsClickRow(
+                                        title = "Email",
+                                        subtitle = email,
+                                        onClick = {}
+                                    )
+                                }
                             )
                         }
-                    )
-                    GroupedList(items = accountItems)
+                        add(
+                            GroupedListItem(key = "server_url") {
+                                SettingsClickRow(
+                                    title = stringResource(R.string.settings_server_url),
+                                    subtitle = ApiClient.API_BASE_URL,
+                                    onClick = {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        clipboard.setPrimaryClip(ClipData.newPlainText("Server URL", ApiClient.API_BASE_URL))
+                                        Toast.makeText(context, context.getString(R.string.settings_server_copied), Toast.LENGTH_SHORT).show()
+                                    }
+                                )
+                            }
+                        )
+                    }
+                    GroupedList(items = profileItems)
+
+                    SettingsSectionTitle("Storage & Linked Drives")
+                    val driveItems = buildList {
+                        add(
+                            GroupedListItem(key = "storage_quota") {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    Text(
+                                        text = stringResource(R.string.settings_storage_quota),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = quotaText,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    LinearProgressIndicator(
+                                        progress = { progressFraction },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            }
+                        )
+                        add(
+                            GroupedListItem(key = "drives_dropdown_toggle") {
+                                SettingsClickRow(
+                                    title = "Linked Storage Drives (${accounts.size})",
+                                    subtitle = if (drivesExpanded) "Tap to collapse connected drives" else "Tap to view connected drives",
+                                    trailing = {
+                                        Text(
+                                            text = if (drivesExpanded) "Hide ▲" else "Show ▼",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    },
+                                    onClick = { drivesExpanded = !drivesExpanded }
+                                )
+                            }
+                        )
+                        if (drivesExpanded) {
+                            accounts.forEach { acc ->
+                                val accSub = buildString {
+                                    append(acc.effectiveType)
+                                    val detail = acc.email?.takeIf { it.isNotBlank() }
+                                        ?: acc.channelId?.takeIf { it.isNotBlank() }?.let { "Channel: $it" }
+                                    if (!detail.isNullOrBlank()) {
+                                        append(" • ")
+                                        append(detail)
+                                    }
+                                    append(" • ")
+                                    append(com.example.data.formatStorageSize(acc.usageBytes))
+                                    if (acc.isDefault == true) {
+                                        append(" (Default)")
+                                    }
+                                }
+                                add(
+                                    GroupedListItem(key = "drive_${acc.effectiveId}") {
+                                        SettingsClickRow(
+                                            title = acc.effectiveName,
+                                            subtitle = accSub,
+                                            onClick = onNavigateAccounts
+                                        )
+                                    }
+                                )
+                            }
+                            add(
+                                GroupedListItem(key = "manage_drives") {
+                                    SettingsClickRow(
+                                        title = "Manage / Add Storage Drives",
+                                        subtitle = "Connect Telegram, Google Drive, or OneDrive",
+                                        titleColor = MaterialTheme.colorScheme.primary,
+                                        onClick = onNavigateAccounts
+                                    )
+                                }
+                            )
+                        }
+                        add(
+                            GroupedListItem(key = "logout") {
+                                SettingsClickRow(
+                                    title = stringResource(R.string.settings_logout),
+                                    titleColor = MaterialTheme.colorScheme.error,
+                                    onClick = { showConfirmLogout = true }
+                                )
+                            }
+                        )
+                    }
+                    GroupedList(items = driveItems)
                 }
 
                 SettingsSectionType.BACKUP -> {
@@ -322,6 +479,14 @@ fun SettingsSectionScreen(
                                 title = stringResource(R.string.settings_dynamic_color),
                                 checked = prefsState.dynamicColor,
                                 onChange = { scope.launch { UserPreferences.setDynamicColor(context, it) } }
+                            )
+                        },
+                        GroupedListItem(key = "show_nav_text") {
+                            SettingsSwitchRow(
+                                title = "Show Navigation Text",
+                                subtitle = "Display labels below bottom navigation icons",
+                                checked = prefsState.showNavText,
+                                onChange = { scope.launch { UserPreferences.setShowNavText(context, it) } }
                             )
                         },
                         GroupedListItem(key = "view_mode") {

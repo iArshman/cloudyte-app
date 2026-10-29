@@ -10,16 +10,19 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.example.data.UserPreferences
+import com.example.data.UserPreferencesState
 import com.example.ui.components.FloatingNavigationBar
 import com.example.ui.components.LocalBottomBarInset
 import com.example.ui.navigation.NavigationTransitions
@@ -39,17 +42,17 @@ private val tabOrder = listOf("home", "files", "transfers", "accounts", "setting
 
 @Composable
 fun MainScreen(rootNavController: NavController) {
+    val context = LocalContext.current
     val bottomNavController = rememberNavController()
     val filesViewModel: FilesViewModel = viewModel()
+    val prefsState by UserPreferences.observe(context).collectAsState(initial = UserPreferencesState())
 
-    val navBackStackEntry by bottomNavController.currentBackStackEntryAsState()
-    val currentRoute = navBackStackEntry?.destination?.route ?: "home"
-
-    CompositionLocalProvider(LocalBottomBarInset provides 80.dp) {
+    CompositionLocalProvider(LocalBottomBarInset provides 16.dp) {
         Scaffold(
             bottomBar = {
                 FloatingNavigationBar(
                     navController = bottomNavController,
+                    showNavText = prefsState.showNavText,
                     onNavigate = { route ->
                         bottomNavController.navigateSingleTopRestore(route)
                     }

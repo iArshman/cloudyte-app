@@ -15,7 +15,7 @@ import androidx.compose.ui.unit.dp
 fun AppLoadingIndicator(
     modifier: Modifier = Modifier,
     color: Color = MaterialTheme.colorScheme.primary,
-    size: Dp = 24.dp
+    size: Dp = 28.dp
 ) {
     LoadingIndicator(
         modifier = modifier.size(size),

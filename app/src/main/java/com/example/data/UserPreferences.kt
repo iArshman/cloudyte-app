@@ -82,7 +82,8 @@ data class UserPreferencesState(
     val lastUpdateCheckAt: Long = 0L,
     val language: String = "SYSTEM",
     val lastActiveAccountId: String? = null,
-    val homeStorageAccountId: String? = null
+    val homeStorageAccountId: String? = null,
+    val showNavText: Boolean = true
 )
 
 object UserPreferences {
@@ -130,6 +131,7 @@ object UserPreferences {
     private val KEY_LANGUAGE = stringPreferencesKey("language")
     private val KEY_LAST_ACTIVE_ACCOUNT_ID = stringPreferencesKey("last_active_account_id")
     private val KEY_HOME_STORAGE_ACCOUNT_ID = stringPreferencesKey("home_storage_account_id")
+    private val KEY_SHOW_NAV_TEXT = booleanPreferencesKey("show_nav_text")
 
     // Legacy sync_prefs keys
     private val LEGACY_AUTO_BACKUP_ENABLED = booleanPreferencesKey("auto_backup_enabled")
@@ -230,9 +232,14 @@ object UserPreferences {
                 lastUpdateCheckAt = prefs[KEY_LAST_UPDATE_CHECK_AT] ?: 0L,
                 language = prefs[KEY_LANGUAGE] ?: "SYSTEM",
                 lastActiveAccountId = prefs[KEY_LAST_ACTIVE_ACCOUNT_ID],
-                homeStorageAccountId = prefs[KEY_HOME_STORAGE_ACCOUNT_ID]
+                homeStorageAccountId = prefs[KEY_HOME_STORAGE_ACCOUNT_ID],
+                showNavText = prefs[KEY_SHOW_NAV_TEXT] ?: true
             )
         }
+    }
+
+    suspend fun setShowNavText(context: Context, show: Boolean) {
+        context.userPreferencesDataStore.edit { it[KEY_SHOW_NAV_TEXT] = show }
     }
 
     suspend fun setThemeMode(context: Context, mode: ThemeMode) {

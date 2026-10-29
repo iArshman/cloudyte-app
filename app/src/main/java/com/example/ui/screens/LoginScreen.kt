@@ -248,24 +248,34 @@ fun LoginScreen(navController: NavController, viewModel: LoginViewModel = viewMo
 
             Spacer(modifier = Modifier.height(28.dp))
 
-            Button(
-                onClick = {
-                    viewModel.authenticate(username, password) {
-                        navController.navigate("main") {
-                            popUpTo("login") { inclusive = true }
+            if (isLoading) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    com.example.ui.components.AppLoadingIndicator(
+                        size = 40.dp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            } else {
+                Button(
+                    onClick = {
+                        viewModel.authenticate(username, password) {
+                            navController.navigate("main") {
+                                popUpTo("login") { inclusive = true }
+                            }
                         }
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
-                shape = MaterialTheme.shapes.large,
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                enabled = !isLoading && username.isNotBlank() && password.isNotBlank()
-            ) {
-                if (isLoading) {
-                    com.example.ui.components.AppLoadingIndicator(size = 24.dp, color = MaterialTheme.colorScheme.onPrimary)
-                } else {
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    shape = MaterialTheme.shapes.large,
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                    enabled = username.isNotBlank() && password.isNotBlank()
+                ) {
                     Text(
                         if (isRegisterMode) "Sign Up" else "Log In",
                         color = MaterialTheme.colorScheme.onPrimary,

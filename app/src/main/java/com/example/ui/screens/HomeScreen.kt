@@ -15,7 +15,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -50,6 +49,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -70,7 +70,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -92,6 +91,7 @@ import com.example.api.ApiClient
 import com.example.api.CloudFile
 import com.example.api.FileRepository
 import com.example.api.FolderRequest
+import com.example.api.StorageCategories
 import com.example.api.StorageSummary
 import com.example.api.UserProfile
 import com.example.data.ALL_ACCOUNTS_STORAGE_ID
@@ -110,13 +110,6 @@ import com.example.ui.components.FileThumb
 import com.example.ui.components.LocalBottomBarInset
 import com.example.ui.openFileInViewer
 import com.example.ui.theme.BrandPrimary
-import com.example.ui.theme.DarkPrimaryContainer
-import com.example.ui.theme.FileAudio
-import com.example.ui.theme.FileDoc
-import com.example.ui.theme.FileImage
-import com.example.ui.theme.FileUnknown
-import com.example.ui.theme.FileVideo
-import com.example.ui.theme.FileZip
 import com.example.ui.theme.ProviderGoogle
 import com.example.ui.theme.ProviderOneDrive
 import com.example.ui.theme.ProviderTelegram
@@ -133,6 +126,14 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 private val EmphasizedDecelerate = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1.0f)
+
+// Category palette matching the Storage card reference design
+private val CardImagesBlue = Color(0xFF3B66F5)
+private val CardDocsAmber = Color(0xFFF6B93B)
+private val CardMediaCoral = Color(0xFFEB5757)
+private val CardOtherGreen = Color(0xFF56C596)
+private val CardZippedPurple = Color(0xFF9B51E0)
+private val CardUnknownSlate = Color(0xFFB0B7D1)
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
@@ -240,23 +241,16 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     repository.refreshStorage(selectedStorageAccountId.value, force = true)
                 }
 
-                if (accId != null) {
-                    val cachedFiles = db.cloudFileDao().getFilesForFolder(accId, "root")
-                    if (cachedFiles.isNotEmpty() && _recentFiles.value.isEmpty()) {
-                        _recentFiles.value = cachedFiles.map { it.toCloudFile() }.take(8)
-                    }
+                val cachedFiles = db.cloudFileDao().getFilesForFolder(accId, "root")
+                if (cachedFiles.isNotEmpty()) {
+                    _recentFiles.value = cachedFiles.map { it.toCloudFile() }.take(8)
                 }
 
-                val files = try {
-                    ApiClient.apiService.getFiles(accId, null, null).body().orEmpty()
-                } catch (e: Exception) {
-                    Log.w("HomeViewModel", "Files call failed: ${e.message}")
-                    emptyList()
-                }
-                if (files.isNotEmpty()) {
-                    _recentFiles.value = files.take(8)
-                    db.cloudFileDao().insertFiles(files.map { LocalCloudFile.fromCloudFile(it, accId ?: "root", "root") })
-                    FileRepository.cacheFiles(files)
+                repository.refresh(accId, "root", force = forceStorageRefresh)
+                val updatedFiles = db.cloudFileDao().getFilesForFolder(accId, "root").map { it.toCloudFile() }
+                if (updatedFiles.isNotEmpty()) {
+                    _recentFiles.value = updatedFiles.take(8)
+                    FileRepository.cacheFiles(updatedFiles)
                 }
             } catch (e: Exception) {
                 Log.e("HomeViewModel", "General data loading error", e)
@@ -271,9 +265,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 val accId = _currentAccountId.value
-                val response = ApiClient.apiService.createFolder(accId, FolderRequest(name))
-                if (response.isSuccessful) {
-                    loadData(forceStorageRefresh = true)
+                val res = repository.createFolder(name, accId, "root")
+                if (res.isSuccess) {
+                    loadData(forceStorageRefresh = false)
                     onSuccess()
                 }
             } catch (e: Exception) {
@@ -384,16 +378,16 @@ fun HomeScreen(
         )
     }
 
-    val isDark = isSystemInDarkTheme()
-    val headerBgColor = if (isDark) DarkPrimaryContainer else BrandPrimary
-
-    // Resolve effective summary: use saved/live StorageSummary from Room if present;
-    // if Room is empty and refresh failed, derive fallback from loaded accounts if available.
-    val effectiveSummary: StorageSummary? = remember(storageSummary, accounts, selectedStorageAccountId, isStorageRefreshing) {
-        storageSummary ?: if (!isStorageRefreshing && accounts.isNotEmpty()) {
-            deriveSummaryFromAccounts(accounts, selectedStorageAccountId)
+    val effectiveSummary: StorageSummary? = remember(storageSummary, accounts, selectedStorageAccountId, isStorageRefreshing, recentFiles) {
+        val base = storageSummary ?: if (!isStorageRefreshing && accounts.isNotEmpty()) {
+            deriveSummaryFromAccounts(accounts, selectedStorageAccountId, recentFiles)
         } else {
             null
+        }
+        if (base != null && base.categories == null) {
+            base.copy(categories = deriveCategoriesFromFiles(recentFiles, base.usedBytes))
+        } else {
+            base
         }
     }
 
@@ -404,8 +398,11 @@ fun HomeScreen(
             if (isUploading) {
                 FloatingActionButton(
                     onClick = { },
+                    shape = RoundedCornerShape(18.dp),
                     containerColor = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(bottom = LocalBottomBarInset.current)
+                    modifier = Modifier
+                        .padding(bottom = LocalBottomBarInset.current)
+                        .size(56.dp)
                 ) {
                     AppLoadingIndicator(
                         color = MaterialTheme.colorScheme.onPrimary,
@@ -415,15 +412,18 @@ fun HomeScreen(
             } else {
                 FloatingActionButton(
                     onClick = { filePickerLauncher.launch("*/*") },
+                    shape = RoundedCornerShape(18.dp),
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier
                         .padding(bottom = LocalBottomBarInset.current)
+                        .size(56.dp)
                         .testTag("home_upload_fab")
                 ) {
                     Icon(
                         imageVector = Icons.Default.Add,
-                        contentDescription = stringResource(R.string.action_upload_file)
+                        contentDescription = stringResource(R.string.action_upload_file),
+                        modifier = Modifier.size(28.dp)
                     )
                 }
             }
@@ -433,168 +433,147 @@ fun HomeScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
-            contentPadding = PaddingValues(bottom = LocalBottomBarInset.current + 88.dp)
+            contentPadding = PaddingValues(
+                start = 20.dp,
+                end = 20.dp,
+                top = 12.dp,
+                bottom = LocalBottomBarInset.current + 88.dp
+            )
         ) {
-            // Header + White Storage Card
+            // Original Dashboard Header: Welcome Back + Username + Multi-cloud drive manager + Refresh button
             item {
-                Box(
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(headerBgColor)
+                        .statusBarsPadding()
+                        .padding(top = 8.dp, bottom = 20.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .statusBarsPadding()
-                            .padding(horizontal = 24.dp)
-                            .padding(top = 12.dp, bottom = 44.dp)
-                    ) {
-                        // Top Header Row
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column {
-                                Text(
-                                    text = stringResource(R.string.home_welcome_back),
-                                    color = Color.White.copy(alpha = 0.8f),
-                                    fontSize = 13.sp
-                                )
-                                Text(
-                                    text = "My Files",
-                                    fontSize = 30.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = Color.White
-                                )
-                            }
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                IconButton(
-                                    onClick = { viewModel.loadData(forceStorageRefresh = true) },
-                                    modifier = Modifier
-                                        .size(40.dp)
-                                        .background(Color.White.copy(alpha = 0.16f), CircleShape)
-                                        .testTag("home_refresh_button")
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Refresh,
-                                        contentDescription = stringResource(R.string.action_refresh),
-                                        tint = Color.White
-                                    )
-                                }
-                                Surface(
-                                    shape = CircleShape,
-                                    color = Color.White.copy(alpha = 0.22f),
-                                    modifier = Modifier.size(40.dp)
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Text(
-                                            text = (profile?.displayUsername ?: "U").take(1).uppercase(),
-                                            color = Color.White,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 16.sp
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(20.dp))
-
-                        // White Storage Card inside the Header
-                        StorageOverviewCard(
-                            summary = effectiveSummary,
-                            isLoading = effectiveSummary == null && (isStorageRefreshing || isLoading),
-                            refreshError = storageRefreshError,
-                            accounts = accounts,
-                            selectedAccountId = selectedStorageAccountId,
-                            onSelectAccount = { viewModel.selectStorageAccount(it) }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Welcome Back 👋",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium
                         )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = profile?.displayUsername ?: "User",
+                            fontSize = 30.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "Multi-cloud drive manager",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 14.sp
+                        )
+                    }
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainer,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .clickable { viewModel.loadData(forceStorageRefresh = true) }
+                            .testTag("home_refresh_button")
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = stringResource(R.string.action_refresh),
+                                tint = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
                     }
                 }
             }
 
-            // Rounded Sheet Content below Header
+            // Storage Card (Exact segmented bar + 2x3 category breakdown from reference card)
             item {
-                Surface(
-                    shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
-                    color = MaterialTheme.colorScheme.background,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 24.dp, vertical = 24.dp)
+                StorageOverviewCard(
+                    summary = effectiveSummary,
+                    isLoading = effectiveSummary == null && (isStorageRefreshing || isLoading),
+                    refreshError = storageRefreshError,
+                    accounts = accounts,
+                    selectedAccountId = selectedStorageAccountId,
+                    onSelectAccount = { viewModel.selectStorageAccount(it) }
+                )
+                Spacer(modifier = Modifier.height(28.dp))
+            }
+
+            if (errorMessage != null) {
+                item {
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer
+                        ),
+                        shape = MaterialTheme.shapes.medium,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        if (errorMessage != null) {
-                            Card(
-                                colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.errorContainer
-                                ),
-                                shape = MaterialTheme.shapes.medium,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(16.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(
-                                        text = errorMessage ?: "",
-                                        color = MaterialTheme.colorScheme.onErrorContainer,
-                                        modifier = Modifier.weight(1f),
-                                        fontSize = 13.sp
-                                    )
-                                    Button(
-                                        onClick = { viewModel.loadData(forceStorageRefresh = true) },
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = MaterialTheme.colorScheme.primary
-                                        )
-                                    ) {
-                                        Text(
-                                            text = stringResource(R.string.action_retry),
-                                            fontSize = 12.sp
-                                        )
-                                    }
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(20.dp))
-                        }
-
-                        Text(
-                            text = stringResource(R.string.home_quick_actions),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        QuickActionsRow(
-                            onUploadClick = { filePickerLauncher.launch("*/*") },
-                            onNewFolderClick = { showCreateFolderDialog = true },
-                            onSearchClick = { navController.navigateSingleTopRestore("files") },
-                            onDrivesClick = { navController.navigateSingleTopRestore("accounts") }
-                        )
-
-                        if (recentFiles.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(28.dp))
+                        Row(
+                            modifier = Modifier.padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
                             Text(
-                                text = "Recent Files",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface
+                                text = errorMessage ?: "",
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.weight(1f),
+                                fontSize = 13.sp
                             )
-                            Spacer(modifier = Modifier.height(12.dp))
+                            Button(
+                                onClick = { viewModel.loadData(forceStorageRefresh = true) },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary
+                                )
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.action_retry),
+                                    fontSize = 12.sp
+                                )
+                            }
                         }
                     }
+                    Spacer(modifier = Modifier.height(20.dp))
                 }
+            }
+
+            // Quick Actions Section
+            item {
+                Text(
+                    text = stringResource(R.string.home_quick_actions),
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                QuickActionsRow(
+                    onUploadClick = { filePickerLauncher.launch("*/*") },
+                    onNewFolderClick = { showCreateFolderDialog = true },
+                    onSearchClick = { navController.navigateSingleTopRestore("files") },
+                    onDrivesClick = { navController.navigateSingleTopRestore("accounts") }
+                )
             }
 
             if (recentFiles.isNotEmpty()) {
-                items(recentFiles, key = { it.effectiveId }) { file ->
-                    Box(modifier = Modifier.padding(horizontal = 24.dp, vertical = 6.dp)) {
+                item {
+                    Spacer(modifier = Modifier.height(28.dp))
+                    Text(
+                        text = "Recent Files",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+
+                items(recentFiles, key = { it.effectiveId.ifEmpty { it.effectiveName } }) { file ->
+                    Box(modifier = Modifier.padding(vertical = 6.dp)) {
                         FileListItem(
                             file = file,
                             navController = rootNavController,
@@ -608,9 +587,51 @@ fun HomeScreen(
     }
 }
 
+private fun deriveCategoriesFromFiles(
+    files: List<CloudFile>,
+    totalUsedBytes: Long
+): StorageCategories {
+    var images = 0L
+    var documents = 0L
+    var videos = 0L
+    var archives = 0L
+    var audio = 0L
+    var other = 0L
+
+    files.filter { !it.isFolderItem }.forEach { file ->
+        val bytes = file.sizeBytes.coerceAtLeast(0L)
+        val ext = file.effectiveType.lowercase()
+        when {
+            file.isImage -> images += bytes
+            file.isVideo -> videos += bytes
+            file.isAudio -> audio += bytes
+            file.isPdf || file.isTextOrCode || ext in listOf("doc", "docx", "xls", "xlsx", "ppt", "pptx", "pdf", "txt", "rtf", "odt") ->
+                documents += bytes
+            ext in listOf("zip", "rar", "7z", "tar", "gz", "bz2", "xz", "tgz", "iso") ->
+                archives += bytes
+            else -> other += bytes
+        }
+    }
+
+    val sum = images + documents + videos + archives + audio + other
+    if (totalUsedBytes > sum) {
+        other += (totalUsedBytes - sum)
+    }
+
+    return StorageCategories(
+        images = images,
+        documents = documents,
+        videos = videos,
+        archives = archives,
+        audio = audio,
+        other = other
+    )
+}
+
 private fun deriveSummaryFromAccounts(
     accounts: List<Account>,
-    selectedAccountId: String
+    selectedAccountId: String,
+    recentFiles: List<CloudFile> = emptyList()
 ): StorageSummary {
     val perAccountSummaries = accounts.map { acc ->
         val isTg = acc.effectiveType.contains("tg", ignoreCase = true) ||
@@ -624,12 +645,15 @@ private fun deriveSummaryFromAccounts(
             categories = null
         )
     }
-    return if (selectedAccountId == ALL_ACCOUNTS_STORAGE_ID) {
+    val aggregated = if (selectedAccountId == ALL_ACCOUNTS_STORAGE_ID) {
         aggregateStorageSummaries(perAccountSummaries)
     } else {
         perAccountSummaries.firstOrNull { it.accountId == selectedAccountId }
             ?: aggregateStorageSummaries(perAccountSummaries)
     }
+    return aggregated.copy(
+        categories = aggregated.categories ?: deriveCategoriesFromFiles(recentFiles, aggregated.usedBytes)
+    )
 }
 
 @Composable
@@ -642,17 +666,11 @@ fun StorageOverviewCard(
     onSelectAccount: (String) -> Unit = {}
 ) {
     Surface(
-        shape = RoundedCornerShape(28.dp),
+        shape = RoundedCornerShape(24.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
-        shadowElevation = 12.dp,
+        shadowElevation = 6.dp,
         modifier = Modifier
             .fillMaxWidth()
-            .shadow(
-                elevation = 16.dp,
-                shape = RoundedCornerShape(28.dp),
-                ambientColor = BrandPrimary.copy(alpha = 0.14f),
-                spotColor = BrandPrimary.copy(alpha = 0.14f)
-            )
             .testTag("home_storage_card")
     ) {
         Column(modifier = Modifier.padding(20.dp)) {
@@ -664,10 +682,10 @@ fun StorageOverviewCard(
                     accountType = "unknown",
                     usedBytes = 0L,
                     totalBytes = null,
-                    categories = null
+                    categories = StorageCategories()
                 )
 
-                // Title & Usage Row
+                // Top Row: "Storage" on left, "52 GB of 64 GB Used" on right
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -675,19 +693,19 @@ fun StorageOverviewCard(
                 ) {
                     Text(
                         text = "Storage",
-                        style = MaterialTheme.typography.titleMedium,
+                        fontSize = 21.sp,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Column(horizontalAlignment = Alignment.End) {
                         Text(
                             text = formatStorageUsageText(activeSummary),
-                            style = MaterialTheme.typography.bodySmall,
+                            fontSize = 13.sp,
                             fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.testTag("storage_usage_text")
                         )
-                        if (refreshError != null) {
+                        if (refreshError != null && summary == null) {
                             Text(
                                 text = "Couldn't refresh",
                                 style = MaterialTheme.typography.labelSmall,
@@ -699,7 +717,7 @@ fun StorageOverviewCard(
                     }
                 }
 
-                // Account Switcher Chip Row (shown when user has several accounts)
+                // Account Switcher Chip Row (shown when user has multiple drives)
                 if (accounts.size > 1) {
                     Spacer(modifier = Modifier.height(12.dp))
                     StorageAccountChipRow(
@@ -709,126 +727,149 @@ fun StorageOverviewCard(
                     )
                 }
 
-                // Storage Bar + Legend
-                val categories = activeSummary.categories
-                val totalBytes = activeSummary.totalBytes
-                val showSingleBar = categories == null && !activeSummary.isUnlimited && totalBytes != null && totalBytes > 0L
+                val effectiveCategories = activeSummary.categories ?: deriveCategoriesFromFiles(emptyList(), activeSummary.usedBytes)
+                val segments = remember(effectiveCategories, activeSummary.usedBytes) {
+                    calculateSegmentProportions(effectiveCategories, activeSummary.usedBytes)
+                }
 
                 var appeared by remember { mutableStateOf(false) }
                 LaunchedEffect(Unit) {
                     appeared = true
                 }
 
-                if (categories != null) {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    val segments = remember(categories, activeSummary.usedBytes) {
-                        calculateSegmentProportions(categories, activeSummary.usedBytes)
-                    }
+                val animatedProportions = segments.map { segment ->
+                    val anim by animateFloatAsState(
+                        targetValue = if (appeared) segment.proportion else 0f,
+                        animationSpec = tween(durationMillis = 600, easing = EmphasizedDecelerate),
+                        label = "segment_${segment.category.name}"
+                    )
+                    anim
+                }
 
-                    val animatedProportions = segments.map { segment ->
-                        val anim by animateFloatAsState(
-                            targetValue = if (appeared) segment.proportion else 0f,
-                            animationSpec = tween(durationMillis = 600, easing = EmphasizedDecelerate),
-                            label = "segment_${segment.category.name}"
-                        )
-                        anim
-                    }
+                Spacer(modifier = Modifier.height(18.dp))
 
-                    val trackColor = MaterialTheme.colorScheme.surfaceVariant
-                    Canvas(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(10.dp)
-                            .clip(CircleShape)
-                            .background(trackColor)
-                            .testTag("storage_segmented_bar")
-                    ) {
-                        var currentX = 0f
-                        segments.forEachIndexed { index, segment ->
-                            val prop = animatedProportions[index].coerceIn(0f, 1f)
-                            val segWidth = (prop * size.width).coerceAtMost(size.width - currentX)
-                            if (segWidth > 0f) {
-                                drawRect(
-                                    color = categoryColor(segment.category),
-                                    topLeft = Offset(currentX, 0f),
-                                    size = Size(segWidth, size.height)
-                                )
-                                currentX += segWidth
-                            }
+                // Multi-segment horizontal storage bar matching attached reference card
+                val trackColor = CardUnknownSlate.copy(alpha = 0.28f)
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(12.dp)
+                        .clip(CircleShape)
+                        .background(trackColor)
+                        .testTag("storage_segmented_bar")
+                ) {
+                    var currentX = 0f
+                    segments.forEachIndexed { index, segment ->
+                        val prop = animatedProportions[index].coerceIn(0f, 1f)
+                        val segWidth = (prop * size.width).coerceAtMost(size.width - currentX)
+                        if (segWidth > 0f) {
+                            drawRect(
+                                color = categoryColor(segment.category),
+                                topLeft = Offset(currentX, 0f),
+                                size = Size(segWidth, size.height)
+                            )
+                            currentX += segWidth
                         }
                     }
+                }
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(20.dp))
 
-                    // 3-Column Category Legend Grid
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.testTag("storage_category_legend")
-                    ) {
-                        segments.chunked(3).forEach { rowSegments ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                rowSegments.forEach { segment ->
-                                    Row(
-                                        modifier = Modifier.weight(1f),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .width(4.dp)
-                                                .height(26.dp)
-                                                .clip(CircleShape)
-                                                .background(categoryColor(segment.category))
+                // 2 rows x 3 columns Category Legend Grid matching attached reference card:
+                // Row 1: Images, Documents, Media
+                // Row 2: Other, Zipped, Unknown
+                val byCategory = remember(segments) { segments.associateBy { it.category } }
+                val row1Items = listOf(
+                    Triple("Images", CardImagesBlue, byCategory[StorageCategoryType.IMAGES]?.bytes ?: 0L),
+                    Triple("Documents", CardDocsAmber, byCategory[StorageCategoryType.DOCUMENTS]?.bytes ?: 0L),
+                    Triple("Media", CardMediaCoral, byCategory[StorageCategoryType.VIDEOS]?.bytes ?: 0L)
+                )
+                val row2Items = listOf(
+                    Triple("Other", CardOtherGreen, byCategory[StorageCategoryType.OTHER]?.bytes ?: 0L),
+                    Triple("Zipped", CardZippedPurple, byCategory[StorageCategoryType.ARCHIVES]?.bytes ?: 0L),
+                    Triple("Unknown", CardUnknownSlate, byCategory[StorageCategoryType.AUDIO]?.bytes ?: 0L)
+                )
+
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    modifier = Modifier.testTag("storage_category_legend")
+                ) {
+                    listOf(row1Items, row2Items).forEach { rowList ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            rowList.forEach { (label, pillColor, bytes) ->
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .width(6.dp)
+                                            .height(28.dp)
+                                            .clip(CircleShape)
+                                            .background(pillColor)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column {
+                                        Text(
+                                            text = label,
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Column {
-                                            Text(
-                                                text = segment.category.label,
-                                                fontSize = 11.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                            Text(
-                                                text = formatStorageSize(segment.bytes),
-                                                fontSize = 13.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.onSurface,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                        }
+                                        Text(
+                                            text = formatStorageSize(bytes),
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
                                     }
                                 }
                             }
                         }
                     }
-                } else if (showSingleBar && totalBytes != null) {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    val targetFraction = (activeSummary.usedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
-                    val animatedFraction by animateFloatAsState(
-                        targetValue = if (appeared) targetFraction else 0f,
-                        animationSpec = tween(durationMillis = 600, easing = EmphasizedDecelerate),
-                        label = "single_storage_bar"
-                    )
-                    val trackColor = MaterialTheme.colorScheme.surfaceVariant
-                    val barColor = MaterialTheme.colorScheme.primary
-                    Canvas(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(10.dp)
-                            .clip(CircleShape)
-                            .background(trackColor)
-                            .testTag("storage_single_bar")
+                }
+
+                if (accounts.isNotEmpty() || (activeSummary.fileCount != null && activeSummary.fileCount > 0)) {
+                    Spacer(modifier = Modifier.height(18.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        val fillWidth = (animatedFraction * size.width).coerceIn(0f, size.width)
-                        if (fillWidth > 0f) {
-                            drawRect(
-                                color = barColor,
-                                topLeft = Offset.Zero,
-                                size = Size(fillWidth, size.height)
+                        Column {
+                            Text(
+                                text = "Total Files",
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "${activeSummary.fileCount ?: accounts.sumOf { it.fileCount ?: 0 }}",
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(
+                                text = "Linked Drives",
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "${accounts.size}",
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
                             )
                         }
                     }
@@ -993,7 +1034,7 @@ private fun StorageCardSkeleton(hasMultipleAccounts: Boolean) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(10.dp)
+                .height(12.dp)
                 .clip(CircleShape)
                 .background(placeholderColor)
         )
@@ -1011,8 +1052,8 @@ private fun StorageCardSkeleton(hasMultipleAccounts: Boolean) {
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .width(4.dp)
-                                    .height(26.dp)
+                                    .width(6.dp)
+                                    .height(28.dp)
                                     .clip(CircleShape)
                                     .background(placeholderColor)
                             )
@@ -1023,7 +1064,7 @@ private fun StorageCardSkeleton(hasMultipleAccounts: Boolean) {
                                         .width(48.dp)
                                         .height(10.dp)
                                         .clip(RoundedCornerShape(4.dp))
-                                        .background(placeholderColor)
+                                    .background(placeholderColor)
                                 )
                                 Box(
                                     modifier = Modifier
@@ -1042,12 +1083,12 @@ private fun StorageCardSkeleton(hasMultipleAccounts: Boolean) {
 }
 
 private fun categoryColor(category: StorageCategoryType): Color = when (category) {
-    StorageCategoryType.IMAGES -> FileImage
-    StorageCategoryType.DOCUMENTS -> FileDoc
-    StorageCategoryType.VIDEOS -> FileVideo
-    StorageCategoryType.ARCHIVES -> FileZip
-    StorageCategoryType.AUDIO -> FileAudio
-    StorageCategoryType.OTHER -> FileUnknown
+    StorageCategoryType.IMAGES -> CardImagesBlue
+    StorageCategoryType.DOCUMENTS -> CardDocsAmber
+    StorageCategoryType.VIDEOS -> CardMediaCoral
+    StorageCategoryType.OTHER -> CardOtherGreen
+    StorageCategoryType.ARCHIVES -> CardZippedPurple
+    StorageCategoryType.AUDIO -> CardUnknownSlate
 }
 
 @Composable
@@ -1075,25 +1116,25 @@ fun QuickActionButton(icon: ImageVector, label: String, onClick: () -> Unit) {
         modifier = Modifier.clickable(onClick = onClick)
     ) {
         Surface(
-            shape = RoundedCornerShape(18.dp),
+            shape = CircleShape,
             color = MaterialTheme.colorScheme.surfaceContainer,
-            shadowElevation = 6.dp,
-            modifier = Modifier.size(56.dp)
+            modifier = Modifier.size(60.dp)
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(
                     imageVector = icon,
                     contentDescription = label,
-                    tint = MaterialTheme.colorScheme.primary
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(26.dp)
                 )
             }
         }
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(10.dp))
         Text(
             text = label,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = MaterialTheme.colorScheme.onBackground,
             fontWeight = FontWeight.Medium,
-            fontSize = 12.sp
+            fontSize = 13.sp
         )
     }
 }
