@@ -5,15 +5,17 @@
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
-        -->
+        <exclude domain="sharedpref" path="cloudyte_secure_prefs.xml" />
+        <exclude domain="sharedpref" path="cloudyte_secure_fallback.xml" />
+        <exclude domain="sharedpref" path="cloudyte_prefs.xml" />
+        <exclude domain="database" path="cloud_app_database" />
+        <exclude domain="file" path="offline_vault" />
     </cloud-backup>
-    <!--
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <exclude domain="sharedpref" path="cloudyte_secure_prefs.xml" />
+        <exclude domain="sharedpref" path="cloudyte_secure_fallback.xml" />
+        <exclude domain="sharedpref" path="cloudyte_prefs.xml" />
+        <exclude domain="database" path="cloud_app_database" />
+        <exclude domain="file" path="offline_vault" />
     </device-transfer>
-    -->
 </data-extraction-rules>

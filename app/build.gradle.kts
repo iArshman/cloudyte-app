@@ -10,15 +10,15 @@ plugins {
 }
 
 android {
-  namespace = "com.example"
+  namespace = "com.cloudyte.app"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.aistudio.cloudyte.zxlqwe"
+    applicationId = "com.cloudyte.app"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = 2
+    versionName = "1.1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -97,6 +97,7 @@ dependencies {
   implementation(libs.androidx.core.ktx)
   implementation(libs.androidx.core.splashscreen)
   implementation(libs.androidx.datastore.preferences)
+  implementation("androidx.security:security-crypto:1.1.0-alpha06")
   implementation("androidx.documentfile:documentfile:1.0.1")
   implementation(libs.androidx.work.runtime.ktx)
   implementation(libs.androidx.lifecycle.runtime.compose)
