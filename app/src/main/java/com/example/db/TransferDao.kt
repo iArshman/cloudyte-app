@@ -34,9 +34,12 @@ interface TransferDao {
     @Query("DELETE FROM transfers WHERE status IN ('COMPLETED', 'CANCELLED', 'FAILED')")
     suspend fun deleteCompletedTransfers()
 
-    @Query("UPDATE transfers SET status = :status, bytesTransferred = :bytes, totalBytes = :total, updatedAt = :updatedAt WHERE id = :id")
+    @Query("UPDATE transfers SET status = :status, bytesTransferred = :bytes, totalBytes = :total, errorMessage = NULL, updatedAt = :updatedAt WHERE id = :id")
     suspend fun updateProgress(id: String, status: String, bytes: Long, total: Long, updatedAt: Long = System.currentTimeMillis())
 
     @Query("UPDATE transfers SET status = :status, errorMessage = :error, updatedAt = :updatedAt WHERE id = :id")
     suspend fun updateStatus(id: String, status: String, error: String? = null, updatedAt: Long = System.currentTimeMillis())
+
+    @Query("UPDATE transfers SET status = 'PENDING', errorMessage = :error, updatedAt = :updatedAt WHERE status = 'RUNNING' AND updatedAt < :staleBefore")
+    suspend fun recoverStaleRunning(staleBefore: Long, error: String = "Recovered after interrupted transfer", updatedAt: Long = System.currentTimeMillis()): Int
 }

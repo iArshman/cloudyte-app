@@ -9,6 +9,10 @@ import java.util.UUID
 
 class TransferRepository(private val transferDao: TransferDao) {
 
+    companion object {
+        const val STALE_TRANSFER_TIMEOUT_MS = 15 * 60 * 1000L
+    }
+
     fun observeAll(): Flow<List<LocalTransfer>> = transferDao.observeAllTransfers()
 
     fun observeActive(): Flow<List<LocalTransfer>> = transferDao.observeActiveTransfers()
@@ -78,6 +82,22 @@ class TransferRepository(private val transferDao: TransferDao) {
             bytes = bytesTransferred,
             total = totalBytes
         )
+    }
+
+    suspend fun markRunning(id: String, totalBytes: Long) {
+        transferDao.updateProgress(
+            id = id,
+            status = TransferStatus.RUNNING.name,
+            bytes = 0L,
+            total = totalBytes
+        )
+    }
+
+    suspend fun recoverStaleTransfers(now: Long = System.currentTimeMillis()): Int =
+        transferDao.recoverStaleRunning(now - STALE_TRANSFER_TIMEOUT_MS)
+
+    suspend fun markCancelled(id: String) {
+        transferDao.updateStatus(id, TransferStatus.CANCELLED.name, error = "Cancelled")
     }
 
     suspend fun markCompleted(id: String) {
