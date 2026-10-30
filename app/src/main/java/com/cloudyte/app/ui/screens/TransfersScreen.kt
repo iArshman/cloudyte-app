@@ -54,8 +54,8 @@ import com.cloudyte.app.CloudyteApplication
 import com.cloudyte.app.core.transfer.TransferCommand
 import com.cloudyte.app.data.TransferRepository
 import com.cloudyte.app.db.AppDatabase
-import com.cloudyte.app.db.LocalTransfer
 import com.cloudyte.app.db.TransferStatus
+import com.cloudyte.app.domain.model.Transfer
 import com.cloudyte.app.sync.AutoSyncManager
 import kotlinx.coroutines.launch
 
@@ -191,7 +191,7 @@ fun TransfersScreen(
 
 @Composable
 fun TransferItemCard(
-    transfer: LocalTransfer,
+    transfer: Transfer,
     onPause: () -> Unit,
     onResume: () -> Unit,
     onRetry: () -> Unit,
