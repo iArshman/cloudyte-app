@@ -4,6 +4,10 @@ import android.content.Context
 import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.core.common.DefaultDispatcherProvider
 import com.cloudyte.app.core.common.DispatcherProvider
+import com.cloudyte.app.core.transfer.FileChunkStore
+import com.cloudyte.app.core.transfer.ChunkStore
+import com.cloudyte.app.core.transfer.RetryPolicy
+import com.cloudyte.app.core.transfer.TransferCoordinator
 import com.cloudyte.app.data.CloudFileRepository
 import com.cloudyte.app.data.TransferRepository
 import com.cloudyte.app.data.repository.FileRepositoryImpl
@@ -23,6 +27,7 @@ import com.cloudyte.app.domain.usecase.RefreshFolder
 import com.cloudyte.app.domain.usecase.RenameFile
 import com.cloudyte.app.domain.usecase.ResumeTransfer
 import com.cloudyte.app.domain.usecase.RetryTransfer
+import com.cloudyte.app.sync.AutoSyncManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 
@@ -37,6 +42,8 @@ class AppContainer(context: Context) {
 
     val dispatchers: DispatcherProvider = DefaultDispatcherProvider
     val applicationScope: CoroutineScope = CoroutineScope(SupervisorJob() + dispatchers.default)
+    val retryPolicy: RetryPolicy = RetryPolicy()
+    val chunkStore: ChunkStore by lazy { FileChunkStore(appContext) }
 
     val database: AppDatabase by lazy {
         AppDatabase.getDatabase(appContext)
@@ -56,6 +63,12 @@ class AppContainer(context: Context) {
 
     val transferDomainRepository: DomainTransferRepository by lazy {
         TransferRepositoryImpl(transferRepository)
+    }
+
+    val transferCoordinator: TransferCoordinator by lazy {
+        TransferCoordinator(appContext, transferDomainRepository) { context ->
+            AutoSyncManager.triggerImmediateSync(context, isManual = true)
+        }
     }
 
     val accountDomainRepository: DomainAccountRepository by lazy {
