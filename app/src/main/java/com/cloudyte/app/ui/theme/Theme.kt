@@ -80,7 +80,7 @@ val LightColorScheme = lightColorScheme(
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-fun MyApplicationTheme(
+fun CloudyteTheme(
     themeMode: ThemeMode = ThemeMode.DARK,
     dynamicColor: Boolean = false,
     content: @Composable () -> Unit,
