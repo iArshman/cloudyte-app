@@ -3,7 +3,6 @@ package com.example.ui.theme
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.MaterialExpressiveTheme
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -74,6 +73,10 @@ val LightColorScheme = lightColorScheme(
     inverseOnSurface = DarkOnSurface
 )
 
+// Single theme entry-point: MaterialExpressiveTheme with expressive motion already includes
+// everything MaterialTheme provides. The previous double-wrapping (MaterialTheme + MaterialExpressiveTheme)
+// caused the inner theme to override the outer one partially, breaking tonal elevation on some
+// components. One wrapper is correct.
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun MyApplicationTheme(
@@ -87,20 +90,13 @@ fun MyApplicationTheme(
         ThemeMode.DARK -> true
     }
 
-    // Exact color scheme mapping without seed derivation or tonal tinting
     val colorScheme = if (useDarkTheme) DarkColorScheme else LightColorScheme
 
-    MaterialTheme(
+    MaterialExpressiveTheme(
         colorScheme = colorScheme,
         typography = Typography,
-        shapes = AppShapes
-    ) {
-        MaterialExpressiveTheme(
-            colorScheme = colorScheme,
-            typography = Typography,
-            shapes = AppShapes,
-            motionScheme = MotionScheme.expressive(),
-            content = content
-        )
-    }
+        shapes = AppShapes,
+        motionScheme = MotionScheme.expressive(),
+        content = content
+    )
 }
