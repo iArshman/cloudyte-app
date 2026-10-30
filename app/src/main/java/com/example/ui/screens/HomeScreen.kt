@@ -82,6 +82,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
@@ -195,10 +196,6 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         errorsMap[accountId]
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
-    init {
-        loadData()
-    }
-
     fun selectStorageAccount(accountId: String) {
         viewModelScope.launch {
             UserPreferences.setHomeStorageAccountId(getApplication(), accountId)
@@ -213,6 +210,15 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 val cachedAccounts = db.accountDao().getAllAccounts()
                 if (cachedAccounts.isNotEmpty()) {
                     _accounts.value = cachedAccounts.map { it.toAccount() }
+                }
+
+                val cachedDefault = _accounts.value.firstOrNull { it.isDefault == true } ?: _accounts.value.firstOrNull()
+                val cachedAccountId = cachedDefault?.effectiveId?.takeIf { it.isNotBlank() && it != "root" }
+                _currentAccountId.value = cachedAccountId
+                val cachedFiles = db.cloudFileDao().getFilesForFolder(cachedAccountId, "root")
+                if (cachedFiles.isNotEmpty()) {
+                    _recentFiles.value = cachedFiles.map { it.toCloudFile() }.take(8)
+                    FileRepository.cacheFiles(_recentFiles.value)
                 }
 
                 try {
@@ -241,11 +247,6 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     repository.refreshStorage(selectedStorageAccountId.value, force = true)
                 }
 
-                val cachedFiles = db.cloudFileDao().getFilesForFolder(accId, "root")
-                if (cachedFiles.isNotEmpty()) {
-                    _recentFiles.value = cachedFiles.map { it.toCloudFile() }.take(8)
-                }
-
                 repository.refresh(accId, "root", force = forceStorageRefresh)
                 val updatedFiles = db.cloudFileDao().getFilesForFolder(accId, "root").map { it.toCloudFile() }
                 if (updatedFiles.isNotEmpty()) {
@@ -269,9 +270,12 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 if (res.isSuccess) {
                     loadData(forceStorageRefresh = false)
                     onSuccess()
+                } else {
+                    _errorMessage.value = res.exceptionOrNull()?.message ?: "Failed to create folder"
                 }
             } catch (e: Exception) {
                 Log.e("HomeViewModel", "Create folder error", e)
+                _errorMessage.value = e.localizedMessage ?: "Failed to create folder"
             }
         }
     }
@@ -283,23 +287,27 @@ fun HomeScreen(
     rootNavController: NavController,
     viewModel: HomeViewModel = viewModel()
 ) {
-    val profile by viewModel.profile.collectAsState()
-    val accounts by viewModel.accounts.collectAsState()
-    val currentAccountId by viewModel.currentAccountId.collectAsState()
-    val recentFiles by viewModel.recentFiles.collectAsState()
-    val isLoading by viewModel.isLoading.collectAsState()
-    val errorMessage by viewModel.errorMessage.collectAsState()
+    val profile by viewModel.profile.collectAsStateWithLifecycle()
+    val accounts by viewModel.accounts.collectAsStateWithLifecycle()
+    val currentAccountId by viewModel.currentAccountId.collectAsStateWithLifecycle()
+    val recentFiles by viewModel.recentFiles.collectAsStateWithLifecycle()
+    val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
+    val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
 
-    val selectedStorageAccountId by viewModel.selectedStorageAccountId.collectAsState()
-    val storageSummary by viewModel.storageSummary.collectAsState()
-    val isStorageRefreshing by viewModel.isStorageRefreshing.collectAsState()
-    val storageRefreshError by viewModel.storageRefreshError.collectAsState()
+    val selectedStorageAccountId by viewModel.selectedStorageAccountId.collectAsStateWithLifecycle()
+    val storageSummary by viewModel.storageSummary.collectAsStateWithLifecycle()
+    val isStorageRefreshing by viewModel.isStorageRefreshing.collectAsStateWithLifecycle()
+    val storageRefreshError by viewModel.storageRefreshError.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     var isUploading by remember { mutableStateOf(false) }
     var showCreateFolderDialog by remember { mutableStateOf(false) }
     var folderNameInput by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        viewModel.loadData(forceStorageRefresh = false)
+    }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()

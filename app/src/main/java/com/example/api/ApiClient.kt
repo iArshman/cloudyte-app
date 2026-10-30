@@ -2,6 +2,9 @@ package com.example.api
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import com.example.BuildConfig
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
@@ -15,6 +18,8 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 
 object ApiClient {
+    private const val TOKEN_KEY = "auth_token"
+    private const val SECURE_PREFS_NAME = "cloudyte_secure_prefs"
     // Configurable API URL
     const val API_BASE_URL = "https://drive.arshman.me"
 
@@ -22,13 +27,13 @@ object ApiClient {
 
     fun saveToken(token: String?) {
         if (::sharedPreferences.isInitialized) {
-            sharedPreferences.edit().putString("auth_token", token).apply()
+            sharedPreferences.edit().putString(TOKEN_KEY, token).apply()
         }
     }
 
     fun getToken(): String? {
         return if (::sharedPreferences.isInitialized) {
-            sharedPreferences.getString("auth_token", null)
+            sharedPreferences.getString(TOKEN_KEY, null)
         } else {
             null
         }
@@ -114,7 +119,27 @@ object ApiClient {
         private set
 
     fun init(context: Context) {
-        sharedPreferences = context.getSharedPreferences("cloudyte_prefs", Context.MODE_PRIVATE)
+        sharedPreferences = try {
+            val masterKey = MasterKey.Builder(context)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
+            val secure = EncryptedSharedPreferences.create(
+                context,
+                SECURE_PREFS_NAME,
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
+            val legacy = context.getSharedPreferences("cloudyte_prefs", Context.MODE_PRIVATE)
+            if (secure.getString(TOKEN_KEY, null).isNullOrBlank()) {
+                legacy.getString(TOKEN_KEY, null)?.let { secure.edit().putString(TOKEN_KEY, it).apply() }
+            }
+            legacy.edit().remove(TOKEN_KEY).apply()
+            secure
+        } catch (e: Exception) {
+            Log.w("ApiClient", "Encrypted token storage unavailable; using app-private fallback", e)
+            context.getSharedPreferences("cloudyte_secure_fallback", Context.MODE_PRIVATE)
+        }
         val httpCache = Cache(File(context.cacheDir, "http"), 50L * 1024 * 1024)
         okHttpClient = createClient(httpCache)
         retrofit = Retrofit.Builder()

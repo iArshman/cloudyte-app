@@ -42,6 +42,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import coil.Coil
@@ -91,7 +92,7 @@ class MainActivity : ComponentActivity() {
 
         enableEdgeToEdge()
         setContent {
-            val prefs by UserPreferences.observe(this).collectAsState(initial = UserPreferencesState())
+            val prefs by UserPreferences.observe(this).collectAsStateWithLifecycle(initialValue = UserPreferencesState())
 
             LaunchedEffect(prefs.blockScreenshots) {
                 if (prefs.blockScreenshots) {
