@@ -53,7 +53,7 @@ import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.data.UserPreferences
 import com.cloudyte.app.data.UserPreferencesState
 import com.cloudyte.app.navigation.AppNavHost
-import com.cloudyte.app.ui.theme.MyApplicationTheme
+import com.cloudyte.app.ui.theme.CloudyteTheme
 import kotlinx.coroutines.launch
 
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
@@ -139,7 +139,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            MyApplicationTheme(
+            CloudyteTheme(
                 themeMode = prefs.themeMode,
                 dynamicColor = prefs.dynamicColor
             ) {
