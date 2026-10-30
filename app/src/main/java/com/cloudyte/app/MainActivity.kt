@@ -50,10 +50,8 @@ import coil.ImageLoader
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import com.cloudyte.app.api.ApiClient
-import com.cloudyte.app.api.OfflineFileManager
 import com.cloudyte.app.data.UserPreferences
 import com.cloudyte.app.data.UserPreferencesState
-import com.cloudyte.app.sync.AutoSyncManager
 import com.cloudyte.app.ui.AppNavigation
 import com.cloudyte.app.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.launch
@@ -64,13 +62,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
-        ApiClient.init(this)
-        OfflineFileManager.init(this)
         lifecycleScope.launch {
             UserPreferences.migrateIfNeeded(this@MainActivity)
         }
-        AutoSyncManager.init(this, lifecycleScope)
-
         // Configure Coil global ImageLoader with memory and disk cache for high-speed previews
         val imageLoader = ImageLoader.Builder(this)
             .okHttpClient(ApiClient.okHttpClient)
