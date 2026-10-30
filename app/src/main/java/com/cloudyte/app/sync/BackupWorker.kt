@@ -13,6 +13,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import com.cloudyte.app.api.ApiClient
+import com.cloudyte.app.core.transfer.ResumableTransfer
 import com.cloudyte.app.api.FolderRequest
 import com.cloudyte.app.data.UserPreferences
 import com.cloudyte.app.db.AppDatabase
@@ -366,6 +367,14 @@ class BackupWorker(
                                 )
                             )
                         }
+                        transferRepository.saveResumeMetadata(
+                            id = transferId,
+                            sessionId = null,
+                            chunkSize = ResumableTransfer.DEFAULT_CHUNK_SIZE,
+                            nextChunkIndex = 0,
+                            checksum = null,
+                            idempotencyKey = ResumableTransfer.newIdempotencyKey(transferId)
+                        )
                         transferRepository.markRunning(transferId, fileSize)
                         SyncLogger.log("↑ [$processedFilesCount/$totalFilesToProcess] Uploading '$fileName' ($sizeFormatted)...", SyncLogLevel.INFO)
                         SyncLogger.updateStatus(
@@ -383,11 +392,17 @@ class BackupWorker(
                             uri = file.uri,
                             explicitFileName = fileName,
                             explicitMimeType = file.type,
-                            explicitFileSize = fileSize
+                            explicitFileSize = fileSize,
+                            idempotencyKey = ResumableTransfer.newIdempotencyKey(transferId)
                         )
 
                         if (uploadResult.isSuccess) {
                             transferRepository.updateProgress(transferId, fileSize, fileSize)
+                            transferRepository.updateResumableProgress(
+                                transferId,
+                                fileSize,
+                                ((fileSize + ResumableTransfer.DEFAULT_CHUNK_SIZE - 1) / ResumableTransfer.DEFAULT_CHUNK_SIZE).toInt()
+                            )
                             transferRepository.markCompleted(transferId)
                             activeTransferId = null
                             uploadedFilesCount++

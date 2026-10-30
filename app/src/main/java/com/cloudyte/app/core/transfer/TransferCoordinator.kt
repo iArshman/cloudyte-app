@@ -15,7 +15,8 @@ import kotlinx.coroutines.flow.Flow
 class TransferCoordinator(
     context: Context,
     private val repository: TransferRepository,
-    private val scheduleBackgroundWork: (Context) -> Unit
+    private val scheduleBackgroundWork: (Context) -> Unit,
+    private val diagnostics: TransferDiagnostics = TransferDiagnostics()
 ) : TransferEngine {
     private val appContext = context.applicationContext
 
@@ -27,6 +28,7 @@ class TransferCoordinator(
     }
 
     override suspend fun execute(command: TransferCommand): TransferState {
+        diagnostics.record(command)
         when (command) {
             is TransferCommand.Start -> {
                 schedule()

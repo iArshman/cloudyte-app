@@ -63,7 +63,10 @@ object UploadHelper {
         uri: Uri,
         explicitFileName: String? = null,
         explicitMimeType: String? = null,
-        explicitFileSize: Long = -1L
+        explicitFileSize: Long = -1L,
+        idempotencyKey: String? = null,
+        checksum: String? = null,
+        uploadSession: String? = null
     ): UploadResult {
         return withContext(Dispatchers.IO) {
             var safeFileName = explicitFileName?.takeIf { it.isNotBlank() } ?: "file"
@@ -131,7 +134,10 @@ object UploadHelper {
                     folderIdQuery = if (!folderId.isNullOrBlank()) folderId else null,
                     file = filePart,
                     folderIdPart = folderIdPart,
-                    parentIdPart = folderIdPart
+                    parentIdPart = folderIdPart,
+                    idempotencyKey = idempotencyKey,
+                    checksum = checksum,
+                    uploadSession = uploadSession
                 )
 
                 if (response.isSuccessful) {
