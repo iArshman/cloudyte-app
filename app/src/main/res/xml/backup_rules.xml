@@ -6,8 +6,9 @@
    See https://developer.android.com/about/versions/12/backup-restore
 -->
 <full-backup-content>
-    <!--
-   <include domain="sharedpref" path="."/>
-   <exclude domain="sharedpref" path="device.xml"/>
--->
+    <exclude domain="sharedpref" path="cloudyte_secure_prefs.xml" />
+    <exclude domain="sharedpref" path="cloudyte_secure_fallback.xml" />
+    <exclude domain="sharedpref" path="cloudyte_prefs.xml" />
+    <exclude domain="database" path="cloud_app_database" />
+    <exclude domain="file" path="offline_vault" />
 </full-backup-content>

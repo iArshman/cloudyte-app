@@ -111,6 +111,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
@@ -328,59 +329,54 @@ class FilesViewModel(
         }
     }
 
-    fun deleteFile(fileId: String, onComplete: () -> Unit) {
+    fun deleteFile(fileId: String, onSuccess: () -> Unit = {}) {
         viewModelScope.launch {
             val accId = currentAccountId.value
                 ?: accounts.value.firstOrNull { it.isDefault == true }?.effectiveId
                 ?: accounts.value.firstOrNull()?.effectiveId
             try {
                 val res = repo.delete(fileId, accId)
-                if (res.isFailure) {
-                    _userEvents.emit(res.exceptionOrNull()?.message ?: "Failed to delete item")
-                }
+                if (res.isSuccess) onSuccess()
+                else _userEvents.emit(res.exceptionOrNull()?.message ?: "Failed to delete item")
             } catch (e: Exception) {
                 Log.e("FilesViewModel", "Delete failed", e)
-            } finally {
-                onComplete()
+                _userEvents.emit(e.message ?: "Failed to delete item")
             }
         }
     }
 
-    fun renameFile(fileId: String, newName: String, onComplete: () -> Unit) {
+    fun renameFile(fileId: String, newName: String, onSuccess: () -> Unit = {}) {
         viewModelScope.launch {
             val accId = currentAccountId.value
                 ?: accounts.value.firstOrNull { it.isDefault == true }?.effectiveId
                 ?: accounts.value.firstOrNull()?.effectiveId
             try {
                 val res = repo.rename(fileId, accId, newName)
-                if (res.isFailure) {
-                    _userEvents.emit(res.exceptionOrNull()?.message ?: "Failed to rename item")
-                }
+                if (res.isSuccess) onSuccess()
+                else _userEvents.emit(res.exceptionOrNull()?.message ?: "Failed to rename item")
             } catch (e: Exception) {
                 Log.e("FilesViewModel", "Rename failed", e)
-            } finally {
-                onComplete()
+                _userEvents.emit(e.message ?: "Failed to rename item")
             }
         }
     }
 
-    fun createFolder(name: String, onComplete: () -> Unit) {
+    fun createFolder(name: String, onSuccess: () -> Unit = {}) {
         viewModelScope.launch {
             val accId = currentAccountId.value
                 ?: accounts.value.firstOrNull { it.isDefault == true }?.effectiveId
                 ?: accounts.value.firstOrNull()?.effectiveId
             try {
                 val res = repo.createFolder(name, accId, currentFolderId.value)
-                if (res.isFailure) {
-                    _userEvents.emit(res.exceptionOrNull()?.message ?: "Failed to create folder")
-                }
+                if (res.isSuccess) onSuccess()
+                else _userEvents.emit(res.exceptionOrNull()?.message ?: "Failed to create folder")
             } catch (e: Exception) {
                 Log.e("FilesViewModel", "Create folder failed", e)
-            } finally {
-                onComplete()
+                _userEvents.emit(e.message ?: "Failed to create folder")
             }
         }
     }
+
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -393,16 +389,16 @@ fun FilesScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    val files by viewModel.files.collectAsState()
-    val accounts by viewModel.accounts.collectAsState()
-    val currentAccountId by viewModel.currentAccountId.collectAsState()
-    val currentFolderId by viewModel.currentFolderId.collectAsState()
-    val breadcrumbs by viewModel.breadcrumbs.collectAsState()
-    val isRefreshing by viewModel.isRefreshing.collectAsState()
-    val isUploading by viewModel.isUploading.collectAsState()
-    val isOffline by viewModel.isOffline.collectAsState()
+    val files by viewModel.files.collectAsStateWithLifecycle()
+    val accounts by viewModel.accounts.collectAsStateWithLifecycle()
+    val currentAccountId by viewModel.currentAccountId.collectAsStateWithLifecycle()
+    val currentFolderId by viewModel.currentFolderId.collectAsStateWithLifecycle()
+    val breadcrumbs by viewModel.breadcrumbs.collectAsStateWithLifecycle()
+    val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
+    val isUploading by viewModel.isUploading.collectAsStateWithLifecycle()
+    val isOffline by viewModel.isOffline.collectAsStateWithLifecycle()
 
-    val prefsState by UserPreferences.observe(context).collectAsState(initial = UserPreferencesState())
+    val prefsState by UserPreferences.observe(context).collectAsStateWithLifecycle(initialValue = UserPreferencesState())
     val isGridView = prefsState.viewMode == ViewMode.GRID
 
     // 2 columns by default matching the original screenshot, or user's gridColumns preference
@@ -480,6 +476,15 @@ fun FilesScreen(
             snackbarHostState.showSnackbar(msg)
             snackbarMessage = null
         }
+    }
+
+    LaunchedEffect(viewModel.userEvents) {
+        viewModel.userEvents.collect { message -> snackbarMessage = message }
+    }
+
+    LaunchedEffect(Unit) {
+        // Room renders immediately; revalidate the visible folder when this screen is entered.
+        viewModel.refresh(force = false)
     }
 
     var fileForRename by remember { mutableStateOf<CloudFile?>(null) }
