@@ -76,6 +76,12 @@ data class Transfer(
     val bytesTransferred: Long,
     val totalBytes: Long,
     val errorMessage: String?,
+    val providerSessionId: String?,
+    val chunkSize: Long,
+    val nextChunkIndex: Int,
+    val checksum: String?,
+    val idempotencyKey: String?,
+    val attemptCount: Int,
     val updatedAt: Long
 ) {
     companion object {
@@ -88,6 +94,12 @@ data class Transfer(
             bytesTransferred = value.bytesTransferred,
             totalBytes = value.totalBytes,
             errorMessage = value.errorMessage,
+            providerSessionId = value.providerSessionId,
+            chunkSize = value.chunkSize,
+            nextChunkIndex = value.nextChunkIndex,
+            checksum = value.checksum,
+            idempotencyKey = value.idempotencyKey,
+            attemptCount = value.attemptCount,
             updatedAt = value.updatedAt
         )
     }

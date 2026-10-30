@@ -74,7 +74,10 @@ interface CloudyteApi {
         @Query("folderId") folderIdQuery: String? = null,
         @Part file: MultipartBody.Part,
         @Part("folderId") folderIdPart: RequestBody? = null,
-        @Part("parentId") parentIdPart: RequestBody? = null
+        @Part("parentId") parentIdPart: RequestBody? = null,
+        @Header("Idempotency-Key") idempotencyKey: String? = null,
+        @Header("X-File-Checksum") checksum: String? = null,
+        @Header("X-Upload-Session") uploadSession: String? = null
     ): Response<ResponseBody>
 
     @Streaming

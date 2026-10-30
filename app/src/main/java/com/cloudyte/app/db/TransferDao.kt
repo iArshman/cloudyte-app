@@ -42,4 +42,26 @@ interface TransferDao {
 
     @Query("UPDATE transfers SET status = 'PENDING', errorMessage = :error, updatedAt = :updatedAt WHERE status = 'RUNNING' AND updatedAt < :staleBefore")
     suspend fun recoverStaleRunning(staleBefore: Long, error: String = "Recovered after interrupted transfer", updatedAt: Long = System.currentTimeMillis()): Int
+
+    @Query("UPDATE transfers SET providerSessionId = :sessionId, chunkSize = :chunkSize, nextChunkIndex = :nextChunkIndex, checksum = :checksum, idempotencyKey = :idempotencyKey, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun updateResumeMetadata(
+        id: String,
+        sessionId: String?,
+        chunkSize: Long,
+        nextChunkIndex: Int,
+        checksum: String?,
+        idempotencyKey: String?,
+        updatedAt: Long = System.currentTimeMillis()
+    )
+
+    @Query("UPDATE transfers SET bytesTransferred = :bytes, nextChunkIndex = :nextChunkIndex, errorMessage = NULL, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun updateResumableProgress(
+        id: String,
+        bytes: Long,
+        nextChunkIndex: Int,
+        updatedAt: Long = System.currentTimeMillis()
+    )
+
+    @Query("UPDATE transfers SET attemptCount = attemptCount + 1, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun incrementAttempt(id: String, updatedAt: Long = System.currentTimeMillis())
 }

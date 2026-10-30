@@ -39,6 +39,12 @@ data class LocalTransfer(
     val bytesTransferred: Long = 0L,
     val totalBytes: Long = 0L,
     val errorMessage: String? = null,
+    val providerSessionId: String? = null,
+    val chunkSize: Long = 0L,
+    val nextChunkIndex: Int = 0,
+    val checksum: String? = null,
+    val idempotencyKey: String? = null,
+    val attemptCount: Int = 0,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )

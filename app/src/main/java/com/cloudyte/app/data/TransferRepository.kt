@@ -64,6 +64,7 @@ class TransferRepository(private val transferDao: TransferDao) {
     suspend fun retryTransfer(id: String) {
         val transfer = transferDao.getById(id) ?: return
         transferDao.updateStatus(id, TransferStatus.PENDING.name, error = null)
+        transferDao.incrementAttempt(id)
     }
 
     suspend fun cancelTransfer(id: String) {
@@ -112,5 +113,27 @@ class TransferRepository(private val transferDao: TransferDao) {
 
     suspend fun markFailed(id: String, errorMessage: String?) {
         transferDao.updateStatus(id, TransferStatus.FAILED.name, error = errorMessage)
+    }
+
+    suspend fun saveResumeMetadata(
+        id: String,
+        sessionId: String?,
+        chunkSize: Long,
+        nextChunkIndex: Int,
+        checksum: String?,
+        idempotencyKey: String?
+    ) {
+        transferDao.updateResumeMetadata(
+            id = id,
+            sessionId = sessionId,
+            chunkSize = chunkSize,
+            nextChunkIndex = nextChunkIndex,
+            checksum = checksum,
+            idempotencyKey = idempotencyKey
+        )
+    }
+
+    suspend fun updateResumableProgress(id: String, bytesTransferred: Long, nextChunkIndex: Int) {
+        transferDao.updateResumableProgress(id, bytesTransferred, nextChunkIndex)
     }
 }
