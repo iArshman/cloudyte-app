@@ -52,7 +52,7 @@ import coil.memory.MemoryCache
 import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.data.UserPreferences
 import com.cloudyte.app.data.UserPreferencesState
-import com.cloudyte.app.ui.AppNavigation
+import com.cloudyte.app.navigation.AppNavHost
 import com.cloudyte.app.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.launch
 
@@ -164,7 +164,7 @@ class MainActivity : ComponentActivity() {
                             }
                         )
                     } else {
-                        AppNavigation()
+                        AppNavHost()
                     }
                 }
             }

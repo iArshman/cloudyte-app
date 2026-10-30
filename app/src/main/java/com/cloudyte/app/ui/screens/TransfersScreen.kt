@@ -50,6 +50,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cloudyte.app.R
+import com.cloudyte.app.CloudyteApplication
+import com.cloudyte.app.core.transfer.TransferCommand
 import com.cloudyte.app.data.TransferRepository
 import com.cloudyte.app.db.AppDatabase
 import com.cloudyte.app.db.LocalTransfer
@@ -66,6 +68,9 @@ fun TransfersScreen(
     val scope = rememberCoroutineScope()
     val db = remember { AppDatabase.getDatabase(context) }
     val repo = remember { TransferRepository(db.transferDao()) }
+    val coordinator = remember {
+        (context.applicationContext as CloudyteApplication).container.transferCoordinator
+    }
 
     var selectedTab by remember { mutableIntStateOf(0) }
     val tabs = listOf(
@@ -75,7 +80,7 @@ fun TransfersScreen(
         stringResource(R.string.transfers_tab_failed)
     )
 
-    val allTransfers by repo.observeAll().collectAsStateWithLifecycle(initialValue = emptyList())
+    val allTransfers by coordinator.observeTransfers().collectAsStateWithLifecycle(initialValue = emptyList())
 
     val filteredTransfers = when (selectedTab) {
         1 -> allTransfers.filter { it.status == TransferStatus.PENDING.name || it.status == TransferStatus.RUNNING.name || it.status == TransferStatus.PAUSED.name }
@@ -153,26 +158,20 @@ fun TransfersScreen(
                     items(filteredTransfers, key = { it.id }) { transfer ->
                         TransferItemCard(
                             transfer = transfer,
-                            onPause = { scope.launch { repo.pauseTransfer(transfer.id) } },
+                            onPause = { scope.launch { coordinator.dispatch(TransferCommand.Pause(transfer.id)) } },
                             onResume = {
                                 scope.launch {
-                                    repo.resumeTransfer(transfer.id)
-                                    if (transfer.direction == "BACKUP") {
-                                        AutoSyncManager.triggerImmediateSync(context, isManual = true)
-                                    }
+                                    coordinator.dispatch(TransferCommand.Resume(transfer.id))
                                 }
                             },
                             onRetry = {
                                 scope.launch {
-                                    repo.retryTransfer(transfer.id)
-                                    if (transfer.direction == "BACKUP") {
-                                        AutoSyncManager.triggerImmediateSync(context, isManual = true)
-                                    }
+                                    coordinator.dispatch(TransferCommand.Retry(transfer.id))
                                 }
                             },
                             onCancel = {
                                 scope.launch {
-                                    repo.cancelTransfer(transfer.id)
+                                    coordinator.dispatch(TransferCommand.Cancel(transfer.id))
                                     if (transfer.direction == "BACKUP") {
                                         androidx.work.WorkManager.getInstance(context)
                                             .cancelUniqueWork(AutoSyncManager.UNIQUE_MANUAL_WORK)

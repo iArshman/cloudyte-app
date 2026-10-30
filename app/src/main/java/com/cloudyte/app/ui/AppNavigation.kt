@@ -7,6 +7,11 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.cloudyte.app.api.CloudFile
 import com.cloudyte.app.api.FileRepository
+import com.cloudyte.app.features.player.AudioPlayerScreen as FeatureAudioPlayerScreen
+import com.cloudyte.app.features.player.ImageViewerScreen as FeatureImageViewerScreen
+import com.cloudyte.app.features.player.PdfViewerScreen as FeaturePdfViewerScreen
+import com.cloudyte.app.features.player.TextEditorScreen as FeatureTextEditorScreen
+import com.cloudyte.app.features.player.VideoPlayerScreen as FeatureVideoPlayerScreen
 import com.cloudyte.app.ui.navigation.NavigationTransitions
 import com.cloudyte.app.ui.navigation.navigateOnce
 import com.cloudyte.app.ui.screens.*
@@ -67,7 +72,7 @@ fun AppNavigation() {
         ) { backStackEntry ->
             val accountId = backStackEntry.arguments?.getString("accountId") ?: ""
             val fileId = backStackEntry.arguments?.getString("fileId") ?: ""
-            VideoPlayerScreen(navController, accountId, fileId)
+            FeatureVideoPlayerScreen(navController, accountId, fileId)
         }
         
         composable(
@@ -79,7 +84,7 @@ fun AppNavigation() {
         ) { backStackEntry ->
             val accountId = backStackEntry.arguments?.getString("accountId") ?: ""
             val fileId = backStackEntry.arguments?.getString("fileId") ?: ""
-            ImageViewerScreen(navController, accountId, fileId)
+            FeatureImageViewerScreen(navController, accountId, fileId)
         }
         
         composable(
@@ -91,7 +96,7 @@ fun AppNavigation() {
         ) { backStackEntry ->
             val accountId = backStackEntry.arguments?.getString("accountId") ?: ""
             val fileId = backStackEntry.arguments?.getString("fileId") ?: ""
-            AudioPlayerScreen(navController, accountId, fileId)
+            FeatureAudioPlayerScreen(navController, accountId, fileId)
         }
         
         composable(
@@ -103,7 +108,7 @@ fun AppNavigation() {
         ) { backStackEntry ->
             val accountId = backStackEntry.arguments?.getString("accountId") ?: ""
             val fileId = backStackEntry.arguments?.getString("fileId") ?: ""
-            TextEditorScreen(navController, accountId, fileId)
+            FeatureTextEditorScreen(navController, accountId, fileId)
         }
         
         composable(
@@ -115,7 +120,7 @@ fun AppNavigation() {
         ) { backStackEntry ->
             val accountId = backStackEntry.arguments?.getString("accountId") ?: ""
             val fileId = backStackEntry.arguments?.getString("fileId") ?: ""
-            PdfViewerScreen(navController, accountId, fileId)
+            FeaturePdfViewerScreen(navController, accountId, fileId)
         }
     }
 }

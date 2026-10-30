@@ -23,6 +23,11 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.cloudyte.app.data.UserPreferences
 import com.cloudyte.app.data.UserPreferencesState
+import com.cloudyte.app.features.accounts.AccountsScreen as FeatureAccountsScreen
+import com.cloudyte.app.features.files.FilesScreen as FeatureFilesScreen
+import com.cloudyte.app.features.home.HomeScreen as FeatureHomeScreen
+import com.cloudyte.app.features.settings.SettingsScreen as FeatureSettingsScreen
+import com.cloudyte.app.features.transfers.TransfersScreen as FeatureTransfersScreen
 import com.cloudyte.app.ui.components.FloatingNavigationBar
 import com.cloudyte.app.ui.components.LocalBottomBarInset
 import com.cloudyte.app.ui.navigation.NavigationTransitions
@@ -82,11 +87,11 @@ fun MainScreen(rootNavController: NavController) {
                         NavigationTransitions.tabExit(toIndex >= fromIndex)
                     }
                 ) {
-                    composable("home") { HomeScreen(bottomNavController, rootNavController) }
-                    composable("files") { FilesScreen(bottomNavController, rootNavController, filesViewModel) }
-                    composable("transfers") { TransfersScreen(onBack = { bottomNavController.navigateSingleTopRestore("home") }) }
-                    composable("accounts") { AccountsScreen(bottomNavController, rootNavController) }
-                    composable("settings") { SettingsScreen(bottomNavController, rootNavController) }
+                    composable("home") { FeatureHomeScreen(bottomNavController, rootNavController) }
+                    composable("files") { FeatureFilesScreen(bottomNavController, rootNavController, filesViewModel) }
+                    composable("transfers") { FeatureTransfersScreen(onBack = { bottomNavController.navigateSingleTopRestore("home") }) }
+                    composable("accounts") { FeatureAccountsScreen(bottomNavController, rootNavController) }
+                    composable("settings") { FeatureSettingsScreen(bottomNavController, rootNavController) }
                 }
             }
         }
