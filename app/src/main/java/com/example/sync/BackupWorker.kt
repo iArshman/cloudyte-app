@@ -12,9 +12,14 @@ import com.example.data.UserPreferences
 import com.example.db.AppDatabase
 import com.example.db.LocalCloudFile
 import com.example.db.LocalUploadRecord
+import com.example.db.LocalTransfer
+import com.example.db.TransferDirection
+import com.example.data.TransferRepository
 import com.example.ui.screens.UploadHelper
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import retrofit2.HttpException
 import java.io.IOException
 import java.util.Locale
@@ -33,6 +38,8 @@ class BackupWorker(
     private var maxUploadBytes = 500L * 1024L * 1024L
     private var sawRetryableError = false
     private var sawFatalClientError = false
+    private var activeTransferId: String? = null
+    private lateinit var transferRepository: TransferRepository
 
     override suspend fun doWork(): Result {
         val context = applicationContext
@@ -99,6 +106,11 @@ class BackupWorker(
             )
 
             val db = AppDatabase.getDatabase(context)
+            transferRepository = TransferRepository(db.transferDao())
+            val recovered = transferRepository.recoverStaleTransfers()
+            if (recovered > 0) {
+                SyncLogger.log("Recovered $recovered interrupted transfer(s).", SyncLogLevel.WARNING)
+            }
 
             syncDirectory(context, db, accountId, null, rootDoc, "")
 
@@ -130,6 +142,12 @@ class BackupWorker(
                 else -> Result.success()
             }
         } catch (e: CancellationException) {
+            activeTransferId?.let { id ->
+                withContext(NonCancellable) {
+                    if (::transferRepository.isInitialized) transferRepository.markCancelled(id)
+                }
+            }
+            activeTransferId = null
             throw e
         } catch (e: IOException) {
             Log.e("BackupWorker", "Backup failed with IOException", e)
@@ -280,6 +298,29 @@ class BackupWorker(
                             totalCount = totalFilesToProcess
                         )
                     } else {
+                        val transferId = "backup:${accountId}:${safeFolderId}:${file.uri}"
+                        activeTransferId = transferId
+                        val existingTransfer = db.transferDao().getById(transferId)
+                        if (existingTransfer?.status == com.example.db.TransferStatus.PAUSED.name ||
+                            existingTransfer?.status == com.example.db.TransferStatus.CANCELLED.name
+                        ) {
+                            activeTransferId = null
+                            continue
+                        }
+                        if (existingTransfer == null) {
+                            db.transferDao().insert(
+                                LocalTransfer(
+                                    id = transferId,
+                                    accountId = accountId,
+                                    fileName = fileName,
+                                    localPath = file.uri.toString(),
+                                    remotePath = currentCloudFolderId,
+                                    direction = TransferDirection.BACKUP.name,
+                                    totalBytes = fileSize
+                                )
+                            )
+                        }
+                        transferRepository.markRunning(transferId, fileSize)
                         SyncLogger.log("↑ [$processedFilesCount/$totalFilesToProcess] Uploading '$fileName' ($sizeFormatted)...", SyncLogLevel.INFO)
                         SyncLogger.updateStatus(
                             SyncState.SYNCING,
@@ -300,6 +341,9 @@ class BackupWorker(
                         )
 
                         if (uploadResult.isSuccess) {
+                            transferRepository.updateProgress(transferId, fileSize, fileSize)
+                            transferRepository.markCompleted(transferId)
+                            activeTransferId = null
                             uploadedFilesCount++
                             SyncLogger.log("✓ Uploaded '$fileName' successfully", SyncLogLevel.SUCCESS)
 
@@ -316,6 +360,8 @@ class BackupWorker(
                                 )
                             )
                         } else {
+                            transferRepository.markFailed(transferId, uploadResult.errorMessage ?: "Upload failed")
+                            activeTransferId = null
                             failedFilesCount++
                             if (uploadResult.isRetryable) {
                                 sawRetryableError = true
@@ -348,10 +394,14 @@ class BackupWorker(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: IOException) {
+                    activeTransferId?.let { transferRepository.markFailed(it, e.message ?: "I/O error") }
+                    activeTransferId = null
                     failedFilesCount++
                     sawRetryableError = true
                     SyncLogger.log("✗ I/O error uploading '$fileName': ${e.message}", SyncLogLevel.ERROR)
                 } catch (e: HttpException) {
+                    activeTransferId?.let { transferRepository.markFailed(it, "HTTP ${e.code()}") }
+                    activeTransferId = null
                     failedFilesCount++
                     val code = e.code()
                     if (code == 429 || code in 500..599) {
@@ -361,6 +411,8 @@ class BackupWorker(
                     }
                     SyncLogger.log("✗ HTTP $code uploading '$fileName': ${e.message()}", SyncLogLevel.ERROR)
                 } catch (e: Exception) {
+                    activeTransferId?.let { transferRepository.markFailed(it, e.message ?: "Upload failed") }
+                    activeTransferId = null
                     failedFilesCount++
                     if (e.cause is IOException) {
                         sawRetryableError = true

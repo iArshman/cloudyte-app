@@ -48,11 +48,13 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.data.TransferRepository
 import com.example.db.AppDatabase
 import com.example.db.LocalTransfer
 import com.example.db.TransferStatus
+import com.example.sync.AutoSyncManager
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -73,7 +75,7 @@ fun TransfersScreen(
         stringResource(R.string.transfers_tab_failed)
     )
 
-    val allTransfers by repo.observeAll().collectAsState(initial = emptyList())
+    val allTransfers by repo.observeAll().collectAsStateWithLifecycle(initialValue = emptyList())
 
     val filteredTransfers = when (selectedTab) {
         1 -> allTransfers.filter { it.status == TransferStatus.PENDING.name || it.status == TransferStatus.RUNNING.name || it.status == TransferStatus.PAUSED.name }
@@ -152,9 +154,33 @@ fun TransfersScreen(
                         TransferItemCard(
                             transfer = transfer,
                             onPause = { scope.launch { repo.pauseTransfer(transfer.id) } },
-                            onResume = { scope.launch { repo.resumeTransfer(transfer.id) } },
-                            onRetry = { scope.launch { repo.retryTransfer(transfer.id) } },
-                            onCancel = { scope.launch { repo.cancelTransfer(transfer.id) } }
+                            onResume = {
+                                scope.launch {
+                                    repo.resumeTransfer(transfer.id)
+                                    if (transfer.direction == "BACKUP") {
+                                        AutoSyncManager.triggerImmediateSync(context, isManual = true)
+                                    }
+                                }
+                            },
+                            onRetry = {
+                                scope.launch {
+                                    repo.retryTransfer(transfer.id)
+                                    if (transfer.direction == "BACKUP") {
+                                        AutoSyncManager.triggerImmediateSync(context, isManual = true)
+                                    }
+                                }
+                            },
+                            onCancel = {
+                                scope.launch {
+                                    repo.cancelTransfer(transfer.id)
+                                    if (transfer.direction == "BACKUP") {
+                                        androidx.work.WorkManager.getInstance(context)
+                                            .cancelUniqueWork(AutoSyncManager.UNIQUE_MANUAL_WORK)
+                                        androidx.work.WorkManager.getInstance(context)
+                                            .cancelUniqueWork(AutoSyncManager.UNIQUE_IMMEDIATE_WORK)
+                                    }
+                                }
+                            }
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                     }

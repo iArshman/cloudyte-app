@@ -114,7 +114,7 @@ object AutoSyncManager {
             val workName = if (isManual) UNIQUE_MANUAL_WORK else UNIQUE_IMMEDIATE_WORK
             WorkManager.getInstance(context).enqueueUniqueWork(
                 workName,
-                ExistingWorkPolicy.REPLACE,
+                if (isManual) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP,
                 workRequest
             )
         }
