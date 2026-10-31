@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import com.cloudyte.app.R
 import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.api.OfflineFileManager
+import com.cloudyte.app.data.ColorTheme
 import com.cloudyte.app.data.ThemeMode
 import com.cloudyte.app.data.UserPreferences
 import com.cloudyte.app.data.ViewMode
@@ -474,6 +475,18 @@ fun SettingsSectionScreen(
                                 onClick = { activeDialogType = "THEME" }
                             )
                         },
+                        GroupedListItem(key = "color_theme") {
+                            val colorThemes = stringArrayResource(R.array.color_theme_options)
+                            SettingsClickRow(
+                                title = stringResource(R.string.settings_color_theme),
+                                subtitle = when {
+                                    prefsState.dynamicColor -> stringResource(R.string.settings_color_theme_dynamic_note)
+                                    prefsState.colorTheme == ColorTheme.NOIR -> colorThemes[1]
+                                    else -> colorThemes[0]
+                                },
+                                onClick = { activeDialogType = "COLOR_THEME" }
+                            )
+                        },
                         GroupedListItem(key = "dynamic_color") {
                             SettingsSwitchRow(
                                 title = stringResource(R.string.settings_dynamic_color),
@@ -780,6 +793,19 @@ fun SettingsSectionScreen(
                         else -> ThemeMode.DARK
                     }
                     scope.launch { UserPreferences.setThemeMode(context, mode) }
+                },
+                onDismiss = { activeDialogType = null }
+            )
+        }
+        "COLOR_THEME" -> {
+            val colorThemes = stringArrayResource(R.array.color_theme_options)
+            ChoiceDialog(
+                title = stringResource(R.string.settings_color_theme),
+                options = colorThemes.toList(),
+                selectedIndex = if (prefsState.colorTheme == ColorTheme.NOIR) 1 else 0,
+                onSelect = { idx ->
+                    val theme = if (idx == 1) ColorTheme.NOIR else ColorTheme.DEFAULT
+                    scope.launch { UserPreferences.setColorTheme(context, theme) }
                 },
                 onDismiss = { activeDialogType = null }
             )

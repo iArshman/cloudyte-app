@@ -23,6 +23,7 @@ import com.cloudyte.app.api.UserProfile
 import com.cloudyte.app.api.UserSettingsRequest
 import com.cloudyte.app.db.AppDatabase
 import com.cloudyte.app.db.LocalCloudFile
+import com.cloudyte.app.db.LocalFileMutation
 import com.cloudyte.app.db.LocalStorageSummary
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -361,85 +362,83 @@ class CloudFileRepositoryTest {
     }
 
     @Test
-    fun optimisticRename_succeedsAndKeepsNewNameInRoom() = runTest {
+    fun rename_isOptimisticAndPersistedInOutboxWithoutNetwork() = runTest {
         val original = CloudFile(id = "file_1", name = "OriginalReport.pdf", type = "pdf")
         db.cloudFileDao().insertFiles(listOf(LocalCloudFile.fromCloudFile(original, "acc1", "root")))
-
-        var nameObservedDuringApiCall: String? = null
-        fakeApi.renameHandler = { fileId, _, _ ->
-            // Verify Room was ALREADY updated optimistically before the network call finishes
-            nameObservedDuringApiCall = db.cloudFileDao().getFileById(fileId)?.name
-            Response.success(Unit)
-        }
 
         val result = repository.rename("file_1", "acc1", "RenamedReport.pdf")
 
         assertTrue(result.isSuccess)
-        assertEquals("RenamedReport.pdf", nameObservedDuringApiCall)
         assertEquals("RenamedReport.pdf", db.cloudFileDao().getFileById("file_1")?.name)
+        val queued = db.fileMutationDao().pending().single()
+        assertEquals(LocalFileMutation.RENAME, queued.operation)
+        assertEquals("file_1", queued.fileId)
+        assertEquals("RenamedReport.pdf", queued.name)
     }
 
     @Test
-    fun optimisticRename_rollsBackToOriginalNameOnFailure() = runTest {
+    fun queuedRenameSurvivesRepositoryRecreation() = runTest {
         val original = CloudFile(id = "file_2", name = "Budget2026.xlsx", type = "file")
         db.cloudFileDao().insertFiles(listOf(LocalCloudFile.fromCloudFile(original, "acc1", "root")))
 
-        var optimisticNameDuringCall: String? = null
-        fakeApi.renameHandler = { fileId, _, _ ->
-            optimisticNameDuringCall = db.cloudFileDao().getFileById(fileId)?.name
-            Response.error(
-                500,
-                """{"error":"Server rename failure"}""".toResponseBody("application/json".toMediaType())
-            )
-        }
-
         val result = repository.rename("file_2", "acc1", "CorruptedName.xlsx")
 
-        assertTrue(result.isFailure)
-        // Optimistic update happened first...
-        assertEquals("CorruptedName.xlsx", optimisticNameDuringCall)
-        // ...and was rolled back to the original name when the API failed
-        assertEquals("Budget2026.xlsx", db.cloudFileDao().getFileById("file_2")?.name)
+        assertTrue(result.isSuccess)
+        val reopenedRepository = CloudFileRepository(db, fakeApi, clock = { currentClockMs })
+        assertEquals("CorruptedName.xlsx", reopenedRepository.getFileById("file_2")?.effectiveName)
+        assertEquals(1, db.fileMutationDao().pending().size)
     }
 
     @Test
-    fun optimisticDelete_removesImmediatelyAndRollsBackOnFailure() = runTest {
+    fun delete_removesImmediatelyAndPersistsOutboxEntry() = runTest {
         val original = CloudFile(id = "del_1", name = "Important.docx", type = "file")
         db.cloudFileDao().insertFiles(listOf(LocalCloudFile.fromCloudFile(original, "acc1", "root")))
 
-        var existsDuringApiCall = true
-        fakeApi.deleteHandler = { fileId, _ ->
-            existsDuringApiCall = db.cloudFileDao().getFileById(fileId) != null
-            Response.error(500, """{"error":"Delete failed"}""".toResponseBody("application/json".toMediaType()))
-        }
-
         val result = repository.delete("del_1", "acc1")
-        assertTrue(result.isFailure)
-        assertFalse("File should be optimistically removed during API call", existsDuringApiCall)
-        assertEquals("Important.docx", db.cloudFileDao().getFileById("del_1")?.name)
+        assertTrue(result.isSuccess)
+        assertEquals(null, db.cloudFileDao().getFileById("del_1"))
+        assertEquals(LocalFileMutation.DELETE, db.fileMutationDao().pending().single().operation)
     }
 
     @Test
-    fun createFolder_insertsOptimisticallyAndReplacesWithCanonicalFolderOnSuccess() = runTest {
-        var folderCountDuringCreate = 0
-        fakeApi.createFolderHandler = { _, _ ->
-            folderCountDuringCreate = db.cloudFileDao().getFilesForFolder("acc1", "root").size
-            Response.success(Unit)
-        }
+    fun createFolder_insertsOptimisticallyAndQueuesForReplay() = runTest {
+        val result = repository.createFolder("Projects", "acc1", "root")
+        assertTrue(result.isSuccess)
+        val folders = db.cloudFileDao().getFilesForFolder("acc1", "root")
+        assertEquals(1, folders.size)
+        assertEquals("Projects", folders.first().name)
+        assertTrue(folders.first().id.startsWith("temp_"))
+        val queued = db.fileMutationDao().pending().single()
+        assertEquals(LocalFileMutation.CREATE_FOLDER, queued.operation)
+        assertEquals(folders.first().id, queued.optimisticFileId)
+    }
+
+    @Test
+    fun refresh_preservesQueuedRenameDeleteAndCreateFolderOverServerSnapshot() = runTest {
+        db.cloudFileDao().insertFiles(
+            listOf(
+                LocalCloudFile.fromCloudFile(CloudFile(id = "keep", name = "Before.txt", type = "file"), "acc1", "root"),
+                LocalCloudFile.fromCloudFile(CloudFile(id = "remove", name = "Remove.txt", type = "file"), "acc1", "root")
+            )
+        )
+        assertTrue(repository.rename("keep", "acc1", "After.txt").isSuccess)
+        assertTrue(repository.delete("remove", "acc1").isSuccess)
+        assertTrue(repository.createFolder("Queued folder", "acc1", "root").isSuccess)
         fakeApi.getFilesHandler = { _, _, _, _, _, _ ->
             Response.success(
-                listOf(CloudFile(id = "server_folder_1", name = "Projects", type = "folder", isFolder = true))
+                listOf(
+                    CloudFile(id = "keep", name = "Before.txt", type = "file"),
+                    CloudFile(id = "remove", name = "Remove.txt", type = "file")
+                )
             )
         }
 
-        val result = repository.createFolder("Projects", "acc1", "root")
-        assertTrue(result.isSuccess)
-        assertEquals("Temp folder must be present in Room during createFolder API call", 1, folderCountDuringCreate)
+        assertTrue(repository.refresh("acc1", "root", force = true).isSuccess)
 
-        val finalFolders = db.cloudFileDao().getFilesForFolder("acc1", "root")
-        assertEquals(1, finalFolders.size)
-        assertEquals("server_folder_1", finalFolders.first().id)
-        assertEquals("Projects", finalFolders.first().name)
+        val rows = db.cloudFileDao().getFilesForFolder("acc1", "root")
+        assertEquals(setOf("keep", "Queued folder"), rows.map { it.name }.toSet())
+        assertEquals("After.txt", rows.single { it.id == "keep" }.name)
+        assertTrue(rows.single { it.name == "Queued folder" }.id.startsWith("temp_"))
     }
 
     @Test

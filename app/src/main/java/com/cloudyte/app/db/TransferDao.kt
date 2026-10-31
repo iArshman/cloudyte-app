@@ -37,6 +37,9 @@ interface TransferDao {
     @Query("UPDATE transfers SET status = :status, bytesTransferred = :bytes, totalBytes = :total, errorMessage = NULL, updatedAt = :updatedAt WHERE id = :id")
     suspend fun updateProgress(id: String, status: String, bytes: Long, total: Long, updatedAt: Long = System.currentTimeMillis())
 
+    @Query("UPDATE transfers SET status = 'RUNNING', totalBytes = :total, errorMessage = NULL, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun markRunning(id: String, total: Long, updatedAt: Long = System.currentTimeMillis())
+
     @Query("UPDATE transfers SET status = :status, errorMessage = :error, updatedAt = :updatedAt WHERE id = :id")
     suspend fun updateStatus(id: String, status: String, error: String? = null, updatedAt: Long = System.currentTimeMillis())
 

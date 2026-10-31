@@ -141,7 +141,8 @@ class MainActivity : ComponentActivity() {
 
             CloudyteTheme(
                 themeMode = prefs.themeMode,
-                dynamicColor = prefs.dynamicColor
+                dynamicColor = prefs.dynamicColor,
+                colorTheme = prefs.colorTheme
             ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),

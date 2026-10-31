@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.cloudyte.app.db.AppDatabase
+import com.cloudyte.app.db.TransferDirection
 import com.cloudyte.app.db.TransferStatus
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -96,5 +97,24 @@ class TransferRepositoryTest {
         transfers = repo.observeAll().first()
         assertEquals(TransferStatus.PENDING.name, transfers[0].status)
         assertEquals(null, transfers[0].errorMessage)
+    }
+
+    @Test
+    fun markRunningPreservesAcknowledgedBytesForResume() = runBlocking {
+        val id = repo.enqueueTransfer(
+            accountId = "acc_123",
+            fileName = "large-video.mp4",
+            direction = TransferDirection.BACKUP,
+            totalBytes = 10_000L
+        )
+        repo.updateResumableProgress(id, 4_096L, 1)
+
+        repo.markRunning(id, 10_000L)
+
+        val transfer = repo.observeAll().first().single()
+        assertEquals(TransferStatus.RUNNING.name, transfer.status)
+        assertEquals(4_096L, transfer.bytesTransferred)
+        assertEquals(10_000L, transfer.totalBytes)
+        assertEquals(1, transfer.nextChunkIndex)
     }
 }

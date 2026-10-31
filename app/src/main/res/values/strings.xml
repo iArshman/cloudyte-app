@@ -187,6 +187,8 @@
 
     <!-- Appearance Section -->
     <string name="settings_theme_mode">Theme Mode</string>
+    <string name="settings_color_theme">Color Theme</string>
+    <string name="settings_color_theme_dynamic_note">Using Dynamic Color</string>
     <string name="settings_dynamic_color">Dynamic Color</string>
     <string name="settings_view_mode">View Mode</string>
     <string name="settings_grid_columns">Grid Column Count</string>

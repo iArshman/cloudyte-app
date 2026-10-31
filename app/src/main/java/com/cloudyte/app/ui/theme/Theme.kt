@@ -12,6 +12,7 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
+import com.cloudyte.app.data.ColorTheme
 import com.cloudyte.app.data.ThemeMode
 
 val DarkColorScheme = darkColorScheme(
@@ -83,6 +84,7 @@ val LightColorScheme = lightColorScheme(
 fun CloudyteTheme(
     themeMode: ThemeMode = ThemeMode.DARK,
     dynamicColor: Boolean = false,
+    colorTheme: ColorTheme = ColorTheme.DEFAULT,
     content: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
@@ -96,6 +98,8 @@ fun CloudyteTheme(
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             if (useDarkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
+        colorTheme == ColorTheme.NOIR && useDarkTheme -> NoirDarkColorScheme
+        colorTheme == ColorTheme.NOIR -> NoirLightColorScheme
         useDarkTheme -> DarkColorScheme
         else -> LightColorScheme
     }

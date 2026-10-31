@@ -17,6 +17,11 @@ object FileRepository {
         }
     }
 
+    fun removeCachedFile(id: String) {
+        filesCache.remove(id)
+        activeList = activeList.filterNot { it.effectiveId == id }
+    }
+
     fun setActiveList(files: List<CloudFile>, accountId: String? = null) {
         activeList = files.filter { it.isFolder != true }
         if (accountId != null) {

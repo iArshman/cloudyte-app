@@ -4,6 +4,7 @@ import android.app.Application
 import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.api.OfflineFileManager
 import com.cloudyte.app.sync.AutoSyncManager
+import com.cloudyte.app.sync.FileMutationWorker
 
 class CloudyteApplication : Application() {
     lateinit var container: AppContainer
@@ -14,6 +15,8 @@ class CloudyteApplication : Application() {
         ApiClient.init(this)
         OfflineFileManager.init(this)
         container = AppContainer(this)
+        FileMutationWorker.initialize(this)
+        FileMutationWorker.enqueue()
         AutoSyncManager.init(this, container.applicationScope)
     }
 }

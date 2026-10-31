@@ -2,6 +2,7 @@ package com.cloudyte.app.api
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.net.Uri
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
@@ -151,17 +152,21 @@ object ApiClient {
     }
 
     fun getThumbUrl(accountId: String, fileId: String, size: Int = 256): String {
-        return getFileUrl(accountId = accountId, fileId = fileId, preview = true)
+        val account = Uri.encode(accountId)
+        val file = Uri.encode(fileId)
+        val token = getToken()
+        val base = "$API_BASE_URL/api/thumb/$account/$file?s=${size.coerceIn(64, 512)}"
+        return if (!token.isNullOrBlank()) "$base&token=${Uri.encode(token)}" else base
     }
 
     fun getCleanDownloadUrl(accountId: String, fileId: String, preview: Boolean = false): String {
-        val base = "$API_BASE_URL/api/download/$accountId/$fileId"
+        val base = "$API_BASE_URL/api/download/${Uri.encode(accountId)}/${Uri.encode(fileId)}"
         return if (preview) "$base?preview=1" else base
     }
 
     fun getFileUrl(accountId: String, fileId: String, preview: Boolean = false): String {
         val token = getToken()
-        val base = "$API_BASE_URL/api/download/$accountId/$fileId"
+        val base = "$API_BASE_URL/api/download/${Uri.encode(accountId)}/${Uri.encode(fileId)}"
         return when {
             preview && !token.isNullOrEmpty() -> "$base?preview=1&token=$token"
             preview -> "$base?preview=1"
