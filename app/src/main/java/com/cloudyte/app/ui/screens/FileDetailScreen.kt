@@ -235,6 +235,7 @@ fun FileDetailScreen(
                         if (newFileName.isNotBlank()) {
                             viewModel.renameFile(accountId, nonNullFileForDialog.effectiveId, newFileName) {
                                 showRenameDialog = false
+                                actionFeedbackMessage = "Rename saved locally; syncing when online"
                             }
                         }
                     }) {

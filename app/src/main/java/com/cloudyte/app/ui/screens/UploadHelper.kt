@@ -196,22 +196,27 @@ object UploadHelper {
         explicitMimeType: String,
         explicitFileSize: Long,
         idempotencyKey: String,
-        provider: CloudProvider = CloudyteProvider(ApiClient.apiService)
+        provider: CloudProvider = CloudyteProvider(ApiClient.apiService),
+        knownChecksum: String? = null,
+        onSessionReady: suspend (String, Long, String, Long, Int) -> Unit = { _, _, _, _, _ -> },
+        onProgress: suspend (Long, Int) -> Unit = { _, _ -> }
     ): UploadResult = withContext(Dispatchers.IO) {
         try {
             val resolver = context.contentResolver
             val totalBytes = explicitFileSize
             if (totalBytes < 0L) throw IOException("File size is required for resumable upload")
-            val digest = MessageDigest.getInstance("SHA-256")
-            resolver.openInputStream(uri)?.use { input ->
-                val buffer = ByteArray(1024 * 1024)
-                while (true) {
-                    val read = input.read(buffer)
-                    if (read <= 0) break
-                    digest.update(buffer, 0, read)
-                }
-            } ?: throw IOException("Cannot open local file stream")
-            val checksum = digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+            val checksum = knownChecksum ?: run {
+                val digest = MessageDigest.getInstance("SHA-256")
+                resolver.openInputStream(uri)?.use { input ->
+                    val buffer = ByteArray(1024 * 1024)
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read <= 0) break
+                        digest.update(buffer, 0, read)
+                    }
+                } ?: throw IOException("Cannot open local file stream")
+                digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+            }
             val sessionResponse = provider.createUploadSession(
                 accountId,
                 UploadSessionRequest(
@@ -227,8 +232,10 @@ object UploadHelper {
                 return@withContext UploadResult(false, sessionResponse.code(), "Could not create upload session", explicitFileName)
             }
             val session = sessionResponse.body()!!
-            var offset = session.receivedBytes
+            var offset = session.receivedBytes.coerceIn(0L, totalBytes)
             val chunkSize = session.chunkSize.coerceAtLeast(64L * 1024L).coerceAtMost(16L * 1024L * 1024L)
+            var nextChunkIndex = ((offset + chunkSize - 1L) / chunkSize).toInt()
+            onSessionReady(session.sessionId, chunkSize, checksum, offset, nextChunkIndex)
             resolver.openInputStream(uri)?.use { input ->
                 var skipped = 0L
                 while (skipped < offset) {
@@ -255,7 +262,11 @@ object UploadHelper {
                     if (!response.isSuccessful || response.body() == null) {
                         return@withContext UploadResult(false, response.code(), "Chunk upload failed at offset $offset", explicitFileName)
                     }
-                    offset = response.body()!!.nextOffset
+                    val nextOffset = response.body()!!.nextOffset.coerceIn(0L, totalBytes)
+                    if (nextOffset <= offset) throw IOException("Provider did not advance the upload offset")
+                    offset = nextOffset
+                    nextChunkIndex++
+                    onProgress(offset, nextChunkIndex)
                 }
             } ?: throw IOException("Cannot open local file stream")
             val complete = provider.completeUploadSession(session.sessionId)

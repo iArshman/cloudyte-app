@@ -15,9 +15,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         LocalExclusion::class,
         LocalTransfer::class,
         LocalStorageSummary::class,
-        LocalFolderSyncMeta::class
+        LocalFolderSyncMeta::class,
+        LocalFileMutation::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -28,6 +29,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun transferDao(): TransferDao
     abstract fun storageSummaryDao(): StorageSummaryDao
     abstract fun folderSyncMetaDao(): FolderSyncMetaDao
+    abstract fun fileMutationDao(): FileMutationDao
 
     companion object {
         @Volatile
@@ -122,6 +124,29 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS file_mutations (
+                        operationId TEXT NOT NULL PRIMARY KEY,
+                        accountId TEXT,
+                        operation TEXT NOT NULL,
+                        fileId TEXT,
+                        name TEXT,
+                        parentFolderId TEXT NOT NULL DEFAULT 'root',
+                        optimisticFileId TEXT,
+                        status TEXT NOT NULL DEFAULT 'PENDING',
+                        retryCount INTEGER NOT NULL DEFAULT 0,
+                        lastError TEXT,
+                        createdAt INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_file_mutations_status_createdAt ON file_mutations(status, createdAt)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_file_mutations_accountId_parentFolderId ON file_mutations(accountId, parentFolderId)")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -129,7 +154,15 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "cloud_app_database"
                 )
-                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+                    .addMigrations(
+                        MIGRATION_2_3,
+                        MIGRATION_3_4,
+                        MIGRATION_4_5,
+                        MIGRATION_5_6,
+                        MIGRATION_6_7,
+                        MIGRATION_7_8,
+                        MIGRATION_8_9
+                    )
                     .build()
                 INSTANCE = instance
                 instance

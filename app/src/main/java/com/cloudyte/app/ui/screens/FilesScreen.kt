@@ -153,6 +153,25 @@ import kotlinx.coroutines.launch
 
 data class BreadcrumbItem(val id: String?, val name: String)
 
+private data class FolderFilesSnapshot(
+    val folderKey: Pair<String?, String?>,
+    val files: List<CloudFile>
+)
+
+/**
+ * Everything one folder screen needs to draw itself. AnimatedContent keeps the outgoing
+ * pane's last value, so the old folder stays visually frozen while it slides out.
+ */
+private data class FolderPane(
+    val folderId: String?,
+    val folders: List<CloudFile>,
+    val regularFiles: List<CloudFile>,
+    val hasFiles: Boolean,
+    val loaded: Boolean,
+    val busy: Boolean,
+    val breadcrumbs: List<BreadcrumbItem>
+)
+
 private val CloudFile.formattedDate: String
     get() {
         val t = time ?: updatedAt
@@ -202,22 +221,48 @@ class FilesViewModel(
         .map { list -> list.map { it.toAccount() } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val files: StateFlow<List<CloudFile>> = combine(
+    private val selectedFolder: StateFlow<Pair<String?, String?>> = combine(
         currentAccountId,
         accounts,
         currentFolderId
     ) { accId, accs, folderId ->
         val effectiveAccId = accId ?: accs.firstOrNull { it.isDefault == true }?.effectiveId ?: accs.firstOrNull()?.effectiveId
         effectiveAccId to folderId
-    }.flatMapLatest { (accId, folderId) ->
-        repo.observeFolder(accId, folderId)
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5000),
+        currentAccountId.value to currentFolderId.value
+    )
+
+    // Every emission is tagged with the folder it belongs to, so a stale list from the
+    // previous folder is never shown under the newly selected one.
+    private val folderSnapshot: StateFlow<FolderFilesSnapshot?> = selectedFolder
+        .flatMapLatest { folderKey ->
+            repo.observeFolder(folderKey.first, folderKey.second).map { rows ->
+                FolderFilesSnapshot(folderKey, rows)
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    val files: StateFlow<List<CloudFile>> = combine(selectedFolder, folderSnapshot) { folderKey, snapshot ->
+        if (snapshot?.folderKey == folderKey) snapshot.files else emptyList()
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** True once the database has answered for the currently selected folder. */
+    val isFolderDataLoaded: StateFlow<Boolean> = combine(selectedFolder, folderSnapshot) { folderKey, snapshot ->
+        snapshot?.folderKey == folderKey
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     private val _breadcrumbs = MutableStateFlow<List<BreadcrumbItem>>(listOf(BreadcrumbItem(null, "Files")))
     val breadcrumbs: StateFlow<List<BreadcrumbItem>> = _breadcrumbs.asStateFlow()
 
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
+
+    // True from the moment a folder is opened until we know whether it needs a network sync.
+    // Keeps the "empty folder" state from flashing during that short gap.
+    private val _isResolving = MutableStateFlow(false)
+    val isResolving: StateFlow<Boolean> = _isResolving.asStateFlow()
 
     private val _isUploading = MutableStateFlow(false)
     val isUploading: StateFlow<Boolean> = _isUploading.asStateFlow()
@@ -233,6 +278,9 @@ class FilesViewModel(
 
     var refreshJob: Job? = null
         private set
+    private var refreshTarget: Pair<String?, String?>? = null
+    private var refreshWasForced = false
+    private var refreshRequestId = 0L
 
     init {
         viewModelScope.launch {
@@ -306,24 +354,45 @@ class FilesViewModel(
             ?: accounts.value.firstOrNull { it.isDefault == true }?.effectiveId
             ?: accounts.value.firstOrNull()?.effectiveId
         val folderId = currentFolderId.value
-        refreshJob?.cancel()
+        val target = accId to folderId
+        val activeJob = refreshJob
+
+        // Screen entry and ViewModel init can request the same refresh back to back.
+        // Coalesce them instead of cancelling and restarting the request.
+        if (activeJob?.isActive == true && refreshTarget == target && (!force || refreshWasForced)) {
+            return
+        }
+
+        val requestId = ++refreshRequestId
+        activeJob?.cancel()
+        refreshTarget = target
+        refreshWasForced = force
+        _isRefreshing.value = false
+        _isResolving.value = true
+
         refreshJob = viewModelScope.launch {
-            if (!force && repo.isFolderFresh(accId, folderId)) {
-                _isOffline.value = false
-                _isRefreshing.value = false
-                return@launch
-            }
-            _isRefreshing.value = true
             try {
+                if (!force && repo.isFolderFresh(accId, folderId)) {
+                    if (requestId == refreshRequestId) _isOffline.value = false
+                    return@launch
+                }
+                if (requestId == refreshRequestId) {
+                    _isResolving.value = false
+                    _isRefreshing.value = true
+                }
                 val res = repo.refresh(accId, folderId, force = force)
-                _isOffline.value = res.isFailure
+                if (requestId == refreshRequestId) _isOffline.value = res.isFailure
             } catch (e: Exception) {
-                if (e !is kotlinx.coroutines.CancellationException) {
+                if (e !is kotlinx.coroutines.CancellationException && requestId == refreshRequestId) {
                     Log.w("FilesViewModel", "Sync failed: ${e.message}")
                     _isOffline.value = true
                 }
             } finally {
-                _isRefreshing.value = false
+                // A cancelled older request must not hide the active request's state.
+                if (requestId == refreshRequestId) {
+                    _isRefreshing.value = false
+                    _isResolving.value = false
+                }
             }
         }
     }
@@ -389,6 +458,8 @@ fun FilesScreen(
     val coroutineScope = rememberCoroutineScope()
 
     val files by viewModel.files.collectAsStateWithLifecycle()
+    val isFolderDataLoaded by viewModel.isFolderDataLoaded.collectAsStateWithLifecycle()
+    val isResolving by viewModel.isResolving.collectAsStateWithLifecycle()
     val accounts by viewModel.accounts.collectAsStateWithLifecycle()
     val currentAccountId by viewModel.currentAccountId.collectAsStateWithLifecycle()
     val currentFolderId by viewModel.currentFolderId.collectAsStateWithLifecycle()
@@ -503,8 +574,6 @@ fun FilesScreen(
         uri?.let { snackbarMessage = "Uploading folder..." }
     }
 
-    val listState = rememberLazyListState()
-    val gridState = rememberLazyGridState()
 
     // Rename Dialog
     if (fileForRename != null) {
@@ -537,7 +606,7 @@ fun FilesScreen(
                             val newName = renameInput.trim()
                             fileForRename = null
                             viewModel.renameFile(target.effectiveId, newName) {
-                                snackbarMessage = "Renamed successfully"
+                                snackbarMessage = "Rename saved locally; syncing when online"
                             }
                         }
                     },
@@ -573,7 +642,7 @@ fun FilesScreen(
                         val target = fileForDelete ?: return@Button
                         fileForDelete = null
                         viewModel.deleteFile(target.effectiveId) {
-                            snackbarMessage = "Item deleted"
+                            snackbarMessage = "Delete queued; it will sync when online"
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
@@ -620,7 +689,7 @@ fun FilesScreen(
                             showCreateFolderDialog = false
                             newFolderName = ""
                             viewModel.createFolder(nameToCreate) {
-                                snackbarMessage = "Folder created"
+                                snackbarMessage = "Folder saved locally; syncing when online"
                             }
                         }
                     },
@@ -691,7 +760,7 @@ fun FilesScreen(
                                 toDelete.forEach { f ->
                                     viewModel.deleteFile(f.effectiveId) {}
                                 }
-                                snackbarMessage = "${toDelete.size} items deleted"
+                                snackbarMessage = "${toDelete.size} deletes queued for sync"
                             }
                         }) {
                             Icon(
@@ -803,19 +872,39 @@ fun FilesScreen(
             onRefresh = { viewModel.refresh(force = true) },
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
+                .padding(innerPadding),
+            indicator = {}
         ) {
+            val currentPane = FolderPane(
+                folderId = currentFolderId,
+                folders = folders,
+                regularFiles = regularFiles,
+                hasFiles = files.isNotEmpty(),
+                loaded = isFolderDataLoaded,
+                busy = isRefreshing || isResolving,
+                breadcrumbs = breadcrumbs
+            )
             AnimatedContent(
-                targetState = currentFolderId,
+                targetState = currentPane,
+                // Same folder => update in place with no transition; new folder => slide.
+                contentKey = { it.folderId },
                 transitionSpec = {
-                    NavigationTransitions.sharedAxisEnter(forward = navDirection == FilesNavDirection.FORWARD) togetherWith
-                    NavigationTransitions.sharedAxisExit(forward = navDirection == FilesNavDirection.FORWARD)
+                    NavigationTransitions.folderEnter(forward = navDirection == FilesNavDirection.FORWARD) togetherWith
+                    NavigationTransitions.folderExit(forward = navDirection == FilesNavDirection.FORWARD)
                 },
                 label = "FolderNavigationTransition",
                 modifier = Modifier.fillMaxSize()
-            ) { _ ->
-                if (isRefreshing && files.isEmpty()) {
-                    // Material Loader when opening an uncached folder or loading initial files
+            ) { pane ->
+                // Each pane owns its scroll position, so folders never inherit each other's offset.
+                val listState = rememberLazyListState()
+                val gridState = rememberLazyGridState()
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.background)
+                ) {
+                if (!pane.loaded || (!pane.hasFiles && pane.busy)) {
+                    // Header-only pane until the database answers; the loader shows only for a real wait.
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -823,7 +912,7 @@ fun FilesScreen(
                     ) {
                         DriveAndBreadcrumbRow(
                             driveName = activeAccount?.effectiveName ?: "TG Drive",
-                            breadcrumbs = breadcrumbs,
+                            breadcrumbs = pane.breadcrumbs,
                             onBackClick = {
                                 navDirection = FilesNavDirection.BACKWARD
                                 viewModel.navigateBack()
@@ -839,10 +928,12 @@ fun FilesScreen(
                                 .weight(1f),
                             contentAlignment = Alignment.Center
                         ) {
-                            AppLoadingIndicator(
-                                color = MaterialTheme.colorScheme.primary,
-                                size = 48.dp
-                            )
+                            if (pane.loaded) {
+                                AppLoadingIndicator(
+                                    color = MaterialTheme.colorScheme.primary,
+                                    size = 48.dp
+                                )
+                            }
                         }
                     }
                 } else if (isGridView) {
@@ -864,7 +955,7 @@ fun FilesScreen(
                         item(span = { GridItemSpan(maxLineSpan) }, key = "drive_breadcrumb_header") {
                             DriveAndBreadcrumbRow(
                                 driveName = activeAccount?.effectiveName ?: "TG Drive",
-                                breadcrumbs = breadcrumbs,
+                                breadcrumbs = pane.breadcrumbs,
                                 onBackClick = {
                                     navDirection = FilesNavDirection.BACKWARD
                                     viewModel.navigateBack()
@@ -877,16 +968,16 @@ fun FilesScreen(
                         }
 
                         // Offline Indicator Banner
-                        if (isOffline && files.isNotEmpty()) {
+                        if (isOffline && pane.hasFiles) {
                             item(span = { GridItemSpan(maxLineSpan) }, key = "offline_banner") {
                                 OfflineBanner()
                             }
                         }
 
                         // Folders are rendered inline with the drive contents.
-                        if (folders.isNotEmpty()) {
+                        if (pane.folders.isNotEmpty()) {
                             items(
-                                items = folders,
+                                items = pane.folders,
                                 key = { it.effectiveId.ifEmpty { "folder_${it.effectiveName}" } }
                             ) { folder ->
                                 FolderGridItem(
@@ -911,9 +1002,9 @@ fun FilesScreen(
                         }
 
                         // Files continue directly after folders with no section divider.
-                        if (regularFiles.isNotEmpty()) {
+                        if (pane.regularFiles.isNotEmpty()) {
                             items(
-                                items = regularFiles,
+                                items = pane.regularFiles,
                                 key = { it.effectiveId.ifEmpty { "file_${it.effectiveName}" } }
                             ) { file ->
                                 FileGridItem(
@@ -923,7 +1014,7 @@ fun FilesScreen(
                                     isSelected = selectedFileIds.contains(file.effectiveId),
                                     isSelectionMode = isSelectionMode,
                                     onToggleSelect = { toggleSelection(file.effectiveId) },
-                                    onClick = { openFileInViewer(file, effectiveAccountId, rootNavController, regularFiles) },
+                                    onClick = { openFileInViewer(file, effectiveAccountId, rootNavController, pane.regularFiles) },
                                     onRenameClick = {
                                         fileForRename = file
                                         renameInput = file.effectiveName
@@ -934,9 +1025,9 @@ fun FilesScreen(
                             }
                         }
 
-                        if (folders.isEmpty() && regularFiles.isEmpty() && !isRefreshing) {
+                        if (pane.folders.isEmpty() && pane.regularFiles.isEmpty() && !pane.busy) {
                             item(span = { GridItemSpan(maxLineSpan) }, key = "empty_state") {
-                                if (isOffline && files.isEmpty()) {
+                                if (isOffline && !pane.hasFiles) {
                                     FilesOfflineEmptyState(
                                         onRetry = { viewModel.refresh(force = true) }
                                     )
@@ -966,7 +1057,7 @@ fun FilesScreen(
                         item(key = "drive_breadcrumb_header") {
                             DriveAndBreadcrumbRow(
                                 driveName = activeAccount?.effectiveName ?: "TG Drive",
-                                breadcrumbs = breadcrumbs,
+                                breadcrumbs = pane.breadcrumbs,
                                 onBackClick = {
                                     navDirection = FilesNavDirection.BACKWARD
                                     viewModel.navigateBack()
@@ -978,13 +1069,13 @@ fun FilesScreen(
                             )
                         }
 
-                        if (isOffline && files.isNotEmpty()) {
+                        if (isOffline && pane.hasFiles) {
                             item(key = "offline_banner") {
                                 OfflineBanner()
                             }
                         }
 
-                        if (folders.isNotEmpty()) {
+                        if (pane.folders.isNotEmpty()) {
                             item(key = "folders_header") {
                                 Text(
                                     text = "Folders",
@@ -995,7 +1086,7 @@ fun FilesScreen(
                                 )
                             }
                             items(
-                                items = folders,
+                                items = pane.folders,
                                 key = { it.effectiveId.ifEmpty { "folder_${it.effectiveName}" } }
                             ) { folder ->
                                 FileRow(
@@ -1019,7 +1110,7 @@ fun FilesScreen(
                             }
                         }
 
-                        if (regularFiles.isNotEmpty()) {
+                        if (pane.regularFiles.isNotEmpty()) {
                             item(key = "files_header") {
                                 Text(
                                     text = "Files",
@@ -1030,7 +1121,7 @@ fun FilesScreen(
                                 )
                             }
                             items(
-                                items = regularFiles,
+                                items = pane.regularFiles,
                                 key = { it.effectiveId.ifEmpty { "file_${it.effectiveName}" } }
                             ) { file ->
                                 FileRow(
@@ -1040,7 +1131,7 @@ fun FilesScreen(
                                     isSelected = selectedFileIds.contains(file.effectiveId),
                                     isSelectionMode = isSelectionMode,
                                     onToggleSelect = { toggleSelection(file.effectiveId) },
-                                    onClick = { openFileInViewer(file, effectiveAccountId, rootNavController, regularFiles) },
+                                    onClick = { openFileInViewer(file, effectiveAccountId, rootNavController, pane.regularFiles) },
                                     onRenameClick = {
                                         fileForRename = file
                                         renameInput = file.effectiveName
@@ -1051,9 +1142,9 @@ fun FilesScreen(
                             }
                         }
 
-                        if (folders.isEmpty() && regularFiles.isEmpty() && !isRefreshing) {
+                        if (pane.folders.isEmpty() && pane.regularFiles.isEmpty() && !pane.busy) {
                             item(key = "empty_state") {
-                                if (isOffline && files.isEmpty()) {
+                                if (isOffline && !pane.hasFiles) {
                                     FilesOfflineEmptyState(
                                         onRetry = { viewModel.refresh(force = true) }
                                     )
@@ -1067,6 +1158,7 @@ fun FilesScreen(
                             }
                         }
                     }
+                }
                 }
             }
         }

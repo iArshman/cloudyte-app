@@ -22,6 +22,12 @@ enum class ThemeMode {
     DARK
 }
 
+/** Colour palette used when Dynamic Color is off. DEFAULT is the original blue palette. */
+enum class ColorTheme {
+    DEFAULT,
+    NOIR
+}
+
 enum class ViewMode {
     GRID,
     LIST,
@@ -42,6 +48,7 @@ enum class SortDirection {
 data class UserPreferencesState(
     val themeMode: ThemeMode = ThemeMode.DARK,
     val dynamicColor: Boolean = false,
+    val colorTheme: ColorTheme = ColorTheme.DEFAULT,
     val viewMode: ViewMode = ViewMode.GRID,
     val gridColumns: Int = 2,
     val layoutDensity: String = "COMFORTABLE",
@@ -90,6 +97,7 @@ object UserPreferences {
     private val KEY_MIGRATED = booleanPreferencesKey("migrated_v1")
     private val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
     private val KEY_DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
+    private val KEY_COLOR_THEME = stringPreferencesKey("color_theme")
     private val KEY_VIEW_MODE = stringPreferencesKey("view_mode")
     private val KEY_GRID_COLUMNS = intPreferencesKey("grid_columns")
     private val KEY_LAYOUT_DENSITY = stringPreferencesKey("layout_density")
@@ -186,6 +194,9 @@ object UserPreferences {
                     runCatching { ThemeMode.valueOf(it) }.getOrNull()
                 } ?: ThemeMode.DARK,
                 dynamicColor = prefs[KEY_DYNAMIC_COLOR] ?: false,
+                colorTheme = prefs[KEY_COLOR_THEME]?.let {
+                    runCatching { ColorTheme.valueOf(it) }.getOrNull()
+                } ?: ColorTheme.DEFAULT,
                 viewMode = prefs[KEY_VIEW_MODE]?.let {
                     runCatching { ViewMode.valueOf(it) }.getOrNull()
                 } ?: ViewMode.GRID,
@@ -244,6 +255,10 @@ object UserPreferences {
 
     suspend fun setThemeMode(context: Context, mode: ThemeMode) {
         context.userPreferencesDataStore.edit { it[KEY_THEME_MODE] = mode.name }
+    }
+
+    suspend fun setColorTheme(context: Context, theme: ColorTheme) {
+        context.userPreferencesDataStore.edit { it[KEY_COLOR_THEME] = theme.name }
     }
 
     suspend fun setDynamicColor(context: Context, enabled: Boolean) {

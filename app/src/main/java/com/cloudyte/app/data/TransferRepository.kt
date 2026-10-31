@@ -86,12 +86,7 @@ class TransferRepository(private val transferDao: TransferDao) {
     }
 
     suspend fun markRunning(id: String, totalBytes: Long) {
-        transferDao.updateProgress(
-            id = id,
-            status = TransferStatus.RUNNING.name,
-            bytes = 0L,
-            total = totalBytes
-        )
+        transferDao.markRunning(id, totalBytes)
     }
 
     suspend fun recoverStaleTransfers(now: Long = System.currentTimeMillis()): Int =

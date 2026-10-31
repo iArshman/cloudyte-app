@@ -1,16 +1,17 @@
 package com.cloudyte.app.data
 
+import androidx.room.withTransaction
 import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.api.CloudFile
 import com.cloudyte.app.api.CloudyteApi
 import com.cloudyte.app.api.FileRepository
-import com.cloudyte.app.api.FolderRequest
-import com.cloudyte.app.api.RenameRequest
 import com.cloudyte.app.api.StorageSummary
 import com.cloudyte.app.db.AppDatabase
 import com.cloudyte.app.db.LocalCloudFile
+import com.cloudyte.app.db.LocalFileMutation
 import com.cloudyte.app.db.LocalFolderSyncMeta
 import com.cloudyte.app.db.LocalStorageSummary
+import com.cloudyte.app.sync.FileMutationWorker
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.currentCoroutineContext
@@ -249,10 +250,39 @@ class CloudFileRepository @JvmOverloads constructor(
             }
 
             val now = nowMillis()
-            // Atomically replace the folder with the full paginated set only after all pages succeed
-            val allLocal = allFiles.map {
-                LocalCloudFile.fromCloudFile(it, normalizedAccount, safeFolder).copy(cachedAt = now)
-            }
+            val pending = db.fileMutationDao().pendingForFolder(normalizedAccount, safeFolder)
+            val pendingDeletes = pending
+                .filter { it.operation == LocalFileMutation.DELETE }
+                .mapNotNull { it.fileId }
+                .toSet()
+            val pendingRenames = pending
+                .filter { it.operation == LocalFileMutation.RENAME }
+                .mapNotNull { mutation -> mutation.fileId?.let { it to mutation.name } }
+                .toMap()
+            val serverRows = allFiles
+                .filterNot { it.effectiveId in pendingDeletes }
+                .map { file ->
+                    val local = LocalCloudFile.fromCloudFile(file, normalizedAccount, safeFolder)
+                    local.copy(name = pendingRenames[file.effectiveId] ?: local.name, cachedAt = now)
+                }
+            val optimisticFolders = pending
+                .filter { it.operation == LocalFileMutation.CREATE_FOLDER }
+                .mapNotNull { mutation ->
+                    val id = mutation.optimisticFileId ?: return@mapNotNull null
+                    LocalCloudFile(
+                        id = id,
+                        name = mutation.name.orEmpty(),
+                        type = "folder",
+                        size = "0 B",
+                        time = mutation.createdAt,
+                        isFolder = true,
+                        folderId = safeFolder,
+                        accountId = normalizedAccount,
+                        cachedAt = now
+                    )
+                }
+            val allLocal = (serverRows + optimisticFolders).distinctBy { it.id }
+            // Atomically replace the folder only after all pages succeed, while retaining queued edits.
             db.cloudFileDao().replaceFolder(normalizedAccount, safeFolder, allLocal)
 
             // Persist folder sync metadata (ETag + lastSyncedAt)
@@ -266,7 +296,7 @@ class CloudFileRepository @JvmOverloads constructor(
             )
 
             // Cache files in memory so detail viewers continue working seamlessly
-            FileRepository.cacheFiles(allFiles)
+            FileRepository.cacheFiles(allLocal.map { it.toCloudFile() })
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
@@ -278,73 +308,46 @@ class CloudFileRepository @JvmOverloads constructor(
     suspend fun rename(fileId: String, accountId: String?, newName: String): Result<Unit> {
         val existing = db.cloudFileDao().getFileById(fileId)
             ?: return Result.failure(Exception("File not found"))
-        val oldName = existing.name
-
-        // Optimistically update Room
-        db.cloudFileDao().updateName(fileId, newName)
-
-        return try {
-            val response = api.renameFile(fileId, accountId, RenameRequest(newName))
-            if (response.isSuccessful) {
-                val updated = existing.copy(name = newName)
-                FileRepository.cacheFiles(listOf(updated.toCloudFile()))
-                val accKey = accountMetaKey(existing.accountId ?: accountId)
-                val key = folderKey(existing.accountId ?: accountId, existing.folderId)
-                etagMap.remove(key)
-                db.folderSyncMetaDao().clearEtag(accKey, existing.folderId)
-                Result.success(Unit)
-            } else {
-                // Revert Room change
-                db.cloudFileDao().updateName(fileId, oldName)
-                val err = ApiClient.parseError(response.errorBody()?.string(), response.code())
-                Result.failure(Exception(err))
-            }
-        } catch (e: CancellationException) {
-            db.cloudFileDao().updateName(fileId, oldName)
-            throw e
-        } catch (e: Exception) {
-            // Revert Room change
-            db.cloudFileDao().updateName(fileId, oldName)
-            Result.failure(Exception(e.message ?: "Failed to rename file"))
+        val normalizedAccount = existing.accountId ?: accountId?.takeUnless { it == "root" }
+        val operation = LocalFileMutation(
+            operationId = UUID.randomUUID().toString(),
+            accountId = normalizedAccount,
+            operation = LocalFileMutation.RENAME,
+            fileId = fileId,
+            name = newName,
+            parentFolderId = existing.folderId
+        )
+        db.withTransaction {
+            db.cloudFileDao().updateName(fileId, newName)
+            db.fileMutationDao().insert(operation)
+            db.folderSyncMetaDao().deleteForFolder(accountMetaKey(normalizedAccount), existing.folderId)
         }
+        etagMap.remove(folderKey(normalizedAccount, existing.folderId))
+        FileRepository.cacheFiles(listOf(existing.copy(name = newName).toCloudFile()))
+        FileMutationWorker.enqueue()
+        return Result.success(Unit)
     }
 
     suspend fun delete(fileId: String, accountId: String?): Result<Unit> {
         val existing = db.cloudFileDao().getFileById(fileId)
-
-        // Optimistically delete from Room
-        db.cloudFileDao().deleteById(fileId)
-
-        return try {
-            val response = api.deleteFile(fileId, accountId)
-            if (response.isSuccessful) {
-                if (existing != null) {
-                    val accKey = accountMetaKey(existing.accountId ?: accountId)
-                    val key = folderKey(existing.accountId ?: accountId, existing.folderId)
-                    etagMap.remove(key)
-                    db.folderSyncMetaDao().clearEtag(accKey, existing.folderId)
-                }
-                Result.success(Unit)
-            } else {
-                // Revert Room change
-                if (existing != null) {
-                    db.cloudFileDao().insertFiles(listOf(existing))
-                }
-                val err = ApiClient.parseError(response.errorBody()?.string(), response.code())
-                Result.failure(Exception(err))
-            }
-        } catch (e: CancellationException) {
-            if (existing != null) {
-                db.cloudFileDao().insertFiles(listOf(existing))
-            }
-            throw e
-        } catch (e: Exception) {
-            // Revert Room change
-            if (existing != null) {
-                db.cloudFileDao().insertFiles(listOf(existing))
-            }
-            Result.failure(Exception(e.message ?: "Failed to delete file"))
+        val normalizedAccount = existing?.accountId ?: accountId?.takeUnless { it == "root" }
+        val parentFolderId = existing?.folderId ?: "root"
+        val operation = LocalFileMutation(
+            operationId = UUID.randomUUID().toString(),
+            accountId = normalizedAccount,
+            operation = LocalFileMutation.DELETE,
+            fileId = fileId,
+            parentFolderId = parentFolderId
+        )
+        db.withTransaction {
+            db.cloudFileDao().deleteById(fileId)
+            db.fileMutationDao().insert(operation)
+            db.folderSyncMetaDao().deleteForFolder(accountMetaKey(normalizedAccount), parentFolderId)
         }
+        etagMap.remove(folderKey(normalizedAccount, parentFolderId))
+        FileRepository.removeCachedFile(fileId)
+        FileMutationWorker.enqueue()
+        return Result.success(Unit)
     }
 
     suspend fun createFolder(name: String, accountId: String?, parentFolderId: String?): Result<Unit> {
@@ -366,34 +369,24 @@ class CloudFileRepository @JvmOverloads constructor(
             cachedAt = now
         )
 
-        // Optimistically insert into Room
-        db.cloudFileDao().insertFiles(listOf(tempFolder))
-
-        return try {
-            val apiParentId = if (safeParentId == "root") null else safeParentId
-            val response = api.createFolder(normalizedAccount, FolderRequest(name, apiParentId))
-            // Remove optimistic temp row
-            db.cloudFileDao().deleteById(tempId)
-
-            if (response.isSuccessful) {
-                val accKey = accountMetaKey(normalizedAccount)
-                val key = folderKey(normalizedAccount, safeParentId)
-                etagMap.remove(key)
-                db.folderSyncMetaDao().clearEtag(accKey, safeParentId)
-                // Force refresh folder to pull canonical server folder record
-                refresh(normalizedAccount, safeParentId, force = true)
-                Result.success(Unit)
-            } else {
-                val err = ApiClient.parseError(response.errorBody()?.string(), response.code())
-                Result.failure(Exception(err))
-            }
-        } catch (e: CancellationException) {
-            db.cloudFileDao().deleteById(tempId)
-            throw e
-        } catch (e: Exception) {
-            db.cloudFileDao().deleteById(tempId)
-            Result.failure(Exception(e.message ?: "Failed to create folder"))
+        val operation = LocalFileMutation(
+            operationId = UUID.randomUUID().toString(),
+            accountId = normalizedAccount,
+            operation = LocalFileMutation.CREATE_FOLDER,
+            name = name,
+            parentFolderId = safeParentId,
+            optimisticFileId = tempId,
+            createdAt = now,
+            updatedAt = now
+        )
+        db.withTransaction {
+            db.cloudFileDao().insertFiles(listOf(tempFolder))
+            db.fileMutationDao().insert(operation)
+            db.folderSyncMetaDao().deleteForFolder(accountMetaKey(normalizedAccount), safeParentId)
         }
+        etagMap.remove(folderKey(normalizedAccount, safeParentId))
+        FileMutationWorker.enqueue()
+        return Result.success(Unit)
     }
 
     suspend fun searchFiles(accountId: String?, query: String): List<CloudFile> {

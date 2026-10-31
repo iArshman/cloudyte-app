@@ -13,7 +13,7 @@ class RetryPolicy(
     fun delayForAttempt(attempt: Int): Duration {
         if (attempt <= 0) return Duration.ZERO
         val multiplier = 1 shl min(attempt - 1, 10)
-        return min(initialDelay * multiplier, maxDelay)
+        return minOf(initialDelay * multiplier, maxDelay)
     }
 
     fun canRetry(attempt: Int): Boolean = attempt < maxAttempts

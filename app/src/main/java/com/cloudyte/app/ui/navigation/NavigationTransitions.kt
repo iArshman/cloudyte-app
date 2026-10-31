@@ -31,6 +31,21 @@ object NavigationTransitions {
         } + fadeOut(tween(EXIT_MS / 2))
     }
 
+    // Folder switching inside the Files screen. The incoming pane has an opaque background and
+    // fades in over the outgoing pane, which stays opaque until it is removed, so the content
+    // cross-fades old -> new without ever dipping toward the background colour.
+    fun folderEnter(forward: Boolean): EnterTransition {
+        return slideInHorizontally(tween(300, easing = EmphasizedDecelerate)) { w ->
+            if (forward) w / 6 else -w / 6
+        } + fadeIn(tween(160))
+    }
+
+    fun folderExit(forward: Boolean): ExitTransition {
+        return slideOutHorizontally(tween(200, easing = EmphasizedAccelerate)) { w ->
+            if (forward) -w / 6 else w / 6
+        }
+    }
+
     fun fadeThroughEnter(): EnterTransition {
         return fadeIn(tween(ENTER_MS, delayMillis = ENTER_MS / 4)) + scaleIn(tween(ENTER_MS, easing = EmphasizedDecelerate), initialScale = 0.92f)
     }

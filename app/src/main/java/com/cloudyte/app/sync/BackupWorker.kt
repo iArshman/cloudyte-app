@@ -12,6 +12,7 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
+import com.cloudyte.app.AppContainer
 import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.core.transfer.ResumableTransfer
 import com.cloudyte.app.api.FolderRequest
@@ -367,20 +368,25 @@ class BackupWorker(
                                 )
                             )
                         }
+                        val idempotencyKey = ResumableTransfer.newIdempotencyKey(
+                            "$transferId:$lastModified:$fileSize"
+                        )
+                        val existingTransferMatchesContent =
+                            existingTransfer?.idempotencyKey == idempotencyKey
                         // Keep the durable idempotency/session record when WorkManager
                         // re-runs a failed file. The server uses this key to recover the
                         // existing provider upload session and return its current offset.
                         // Resetting it here would turn a resumable retry into a restart.
-                        if (existingTransfer == null || existingTransfer.idempotencyKey.isNullOrBlank()) {
+                        if (!existingTransferMatchesContent) {
                             transferRepository.saveResumeMetadata(
                                 id = transferId,
-                                sessionId = existingTransfer?.providerSessionId,
-                                chunkSize = existingTransfer?.chunkSize?.takeIf { it > 0L }
-                                    ?: ResumableTransfer.DEFAULT_CHUNK_SIZE,
-                                nextChunkIndex = existingTransfer?.nextChunkIndex ?: 0,
-                                checksum = existingTransfer?.checksum,
-                                idempotencyKey = ResumableTransfer.newIdempotencyKey(transferId)
+                                sessionId = null,
+                                chunkSize = ResumableTransfer.DEFAULT_CHUNK_SIZE,
+                                nextChunkIndex = 0,
+                                checksum = null,
+                                idempotencyKey = idempotencyKey
                             )
+                            transferRepository.updateProgress(transferId, 0L, fileSize)
                         }
                         transferRepository.markRunning(transferId, fileSize)
                         SyncLogger.log("↑ [$processedFilesCount/$totalFilesToProcess] Uploading '$fileName' ($sizeFormatted)...", SyncLogLevel.INFO)
@@ -399,9 +405,36 @@ class BackupWorker(
                                 folderId = currentCloudFolderId,
                                 uri = file.uri,
                                 explicitFileName = fileName,
-                                explicitMimeType = file.type,
+                                explicitMimeType = file.type ?: "application/octet-stream",
                                 explicitFileSize = fileSize,
-                                idempotencyKey = ResumableTransfer.newIdempotencyKey(transferId)
+                                idempotencyKey = idempotencyKey,
+                                provider = AppContainer(context).providerRegistry.forAccountType(
+                                    db.accountDao().getAccountById(accountId)?.accountType
+                                ),
+                                knownChecksum = existingTransfer?.checksum
+                                    ?.takeIf { existingTransferMatchesContent },
+                                onSessionReady = { sessionId, chunkSize, checksum, bytesTransferred, nextChunkIndex ->
+                                    transferRepository.saveResumeMetadata(
+                                        id = transferId,
+                                        sessionId = sessionId,
+                                        chunkSize = chunkSize,
+                                        nextChunkIndex = nextChunkIndex,
+                                        checksum = checksum,
+                                        idempotencyKey = idempotencyKey
+                                    )
+                                    transferRepository.updateResumableProgress(
+                                        transferId,
+                                        bytesTransferred,
+                                        nextChunkIndex
+                                    )
+                                },
+                                onProgress = { bytesTransferred, nextChunkIndex ->
+                                    transferRepository.updateResumableProgress(
+                                        transferId,
+                                        bytesTransferred,
+                                        nextChunkIndex
+                                    )
+                                }
                             )
                         } else {
                             UploadHelper.uploadFile(
@@ -412,7 +445,7 @@ class BackupWorker(
                                 explicitFileName = fileName,
                                 explicitMimeType = file.type,
                                 explicitFileSize = fileSize,
-                                idempotencyKey = ResumableTransfer.newIdempotencyKey(transferId)
+                                idempotencyKey = idempotencyKey
                             )
                         }
 

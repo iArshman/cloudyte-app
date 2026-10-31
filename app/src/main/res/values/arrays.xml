@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string-array name="color_theme_options">
+        <item>Default</item>
+        <item>Noir (Black &amp; White)</item>
+    </string-array>
+
     <string-array name="theme_options">
         <item>System Default</item>
         <item>Light</item>

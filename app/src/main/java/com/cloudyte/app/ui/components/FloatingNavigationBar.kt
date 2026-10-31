@@ -42,7 +42,6 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -157,14 +156,14 @@ fun FloatingNavigationBar(
                                     Icon(
                                         imageVector = item.icon,
                                         contentDescription = item.label,
-                                        tint = Color.White,
+                                        tint = MaterialTheme.colorScheme.onPrimary,
                                         modifier = Modifier.size(20.dp)
                                     )
                                     if (showNavText) {
                                         Spacer(modifier = Modifier.height(1.dp))
                                         Text(
                                             text = item.label,
-                                            color = Color.White,
+                                            color = MaterialTheme.colorScheme.onPrimary,
                                             fontSize = 10.5.sp,
                                             fontWeight = FontWeight.SemiBold,
                                             maxLines = 1

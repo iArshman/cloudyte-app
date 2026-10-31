@@ -71,9 +71,13 @@ class AppContainer(context: Context) {
     }
 
     val transferCoordinator: TransferCoordinator by lazy {
-        TransferCoordinator(appContext, transferDomainRepository) { context ->
-            AutoSyncManager.triggerImmediateSync(context, isManual = true)
-        }
+        TransferCoordinator(
+            context = appContext,
+            repository = transferDomainRepository,
+            scheduleBackgroundWork = { context ->
+                AutoSyncManager.triggerImmediateSync(context, isManual = true)
+            }
+        )
     }
 
     val accountDomainRepository: DomainAccountRepository by lazy {

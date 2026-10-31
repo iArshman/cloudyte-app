@@ -1,19 +1,21 @@
 package com.cloudyte.app.ui.screens
 
+import android.app.Application
 import android.util.Log
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.cloudyte.app.CloudyteApplication
 import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.api.CloudFile
 import com.cloudyte.app.api.FileRepository
 import com.cloudyte.app.api.ShareRequest
-import com.cloudyte.app.api.RenameRequest
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-class FileDetailViewModel : ViewModel() {
+class FileDetailViewModel(application: Application) : AndroidViewModel(application) {
+    private val cloudFileRepository = (application as CloudyteApplication).container.cloudFileRepository
     private val _file = MutableStateFlow<CloudFile?>(null)
     val file: StateFlow<CloudFile?> = _file.asStateFlow()
 
@@ -24,15 +26,16 @@ class FileDetailViewModel : ViewModel() {
     val isDeleting: StateFlow<Boolean> = _isDeleting.asStateFlow()
 
     fun loadFile(fileId: String) {
-        val cached = FileRepository.getFile(fileId)
-        _file.value = cached
+        _file.value = FileRepository.getFile(fileId)
     }
 
     fun shareFile(accountId: String, fileId: String) {
         viewModelScope.launch {
             try {
                 val response = ApiClient.apiService.shareFile(ShareRequest(accountId, fileId))
-                _shareUrl.value = response.effectiveUrl.ifEmpty { "${ApiClient.API_BASE_URL}/api/download/$accountId/$fileId" }
+                _shareUrl.value = response.effectiveUrl.ifEmpty {
+                    "${ApiClient.API_BASE_URL}/api/download/$accountId/$fileId"
+                }
             } catch (e: Exception) {
                 Log.e("FileDetailViewModel", "Share error", e)
                 _shareUrl.value = "${ApiClient.API_BASE_URL}/api/download/$accountId/$fileId"
@@ -42,18 +45,12 @@ class FileDetailViewModel : ViewModel() {
 
     fun renameFile(accountId: String, fileId: String, newName: String, onSuccess: () -> Unit) {
         viewModelScope.launch {
-            try {
-                val res = ApiClient.apiService.renameFile(fileId, accountId, RenameRequest(newName))
-                if (res.isSuccessful) {
-                    val updated = _file.value?.copy(name = newName)
-                    _file.value = updated
-                    if (updated != null) {
-                        FileRepository.cacheFiles(listOf(updated))
-                    }
-                    onSuccess()
-                }
-            } catch (e: Exception) {
-                Log.e("FileDetailViewModel", "Rename error", e)
+            val result = cloudFileRepository.rename(fileId, accountId, newName)
+            if (result.isSuccess) {
+                _file.value = cloudFileRepository.getFileById(fileId)
+                onSuccess()
+            } else {
+                Log.e("FileDetailViewModel", "Rename could not be queued", result.exceptionOrNull())
             }
         }
     }
@@ -62,12 +59,9 @@ class FileDetailViewModel : ViewModel() {
         viewModelScope.launch {
             _isDeleting.value = true
             try {
-                val res = ApiClient.apiService.deleteFile(fileId, accountId)
-                if (res.isSuccessful) {
-                    onSuccess()
-                }
-            } catch (e: Exception) {
-                Log.e("FileDetailViewModel", "Delete error", e)
+                val result = cloudFileRepository.delete(fileId, accountId)
+                if (result.isSuccess) onSuccess()
+                else Log.e("FileDetailViewModel", "Delete could not be queued", result.exceptionOrNull())
             } finally {
                 _isDeleting.value = false
             }

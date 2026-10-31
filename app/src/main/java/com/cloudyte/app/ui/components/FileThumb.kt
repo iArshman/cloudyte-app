@@ -69,9 +69,19 @@ fun FileThumb(
         }
     }
 
-    val primaryThumbUrl = remember(file.effectiveId, file.thumbUrl, fallbackPreviewUrl, isPreviewable) {
+    val generatedThumbUrl = remember(file.effectiveId, accountId, file.isImage, file.isVideo, validAccount) {
+        if (validAccount && file.effectiveId.isNotBlank() && (file.isImage || file.isVideo)) {
+            ApiClient.getThumbUrl(accountId, file.effectiveId)
+        } else {
+            null
+        }
+    }
+
+    val primaryThumbUrl = remember(file.effectiveId, file.thumbUrl, generatedThumbUrl, fallbackPreviewUrl, isPreviewable) {
         if (!isPreviewable) {
             null
+        } else if (generatedThumbUrl != null) {
+            generatedThumbUrl
         } else {
             val raw = file.thumbUrl
             if (!raw.isNullOrBlank()) {
@@ -94,7 +104,7 @@ fun FileThumb(
         }
     }
 
-    var useFallbackUrl by remember(primaryThumbUrl) { mutableStateOf(false) }
+    var useFallbackUrl by remember(primaryThumbUrl, generatedThumbUrl) { mutableStateOf(false) }
     val activeUrl = if (useFallbackUrl && fallbackPreviewUrl != null && fallbackPreviewUrl != primaryThumbUrl) {
         fallbackPreviewUrl
     } else {
