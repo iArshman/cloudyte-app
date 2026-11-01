@@ -48,6 +48,13 @@ Target: `itxrex07/cd`, branch `main`
 - Added rolling-window transfer speed and ETA calculation with minimum sample duration and outlier suppression, and routed upload/download progress through it.
 - Added the diagnostics entry point and preserved stable back navigation for the Settings UI.
 
+## Phase 8 — Production hardening
+
+- Added a persisted, fail-safe `TransferRolloutGate` kill switch. Disabling rollout stops new queue drains without deleting durable transfer rows, allowing rollback and later resume.
+- Wired rollout-disabled events into structured diagnostics with the gate reason and worker run ID.
+- Redacted upload and offline-download logs so release logging does not emit raw response bodies, exception payloads, file names, or file contents.
+- Expanded the release checklist with process-death, security, staged-rollout, rollback, and accessibility validation requirements.
+
 ## Verification
 
 - Server syntax, lint, and protocol tests pass for the existing provider contract.

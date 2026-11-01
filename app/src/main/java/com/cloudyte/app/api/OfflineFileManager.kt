@@ -116,7 +116,7 @@ object OfflineFileManager {
             try {
                 downloadFile(context, accountId, file)
             } catch (e: Exception) {
-                Log.w(TAG, "Auto cache on view failed for ${file.effectiveName}: ${e.message}")
+                Log.w(TAG, "Auto cache on view failed: ${e::class.simpleName}")
             }
         }
     }
@@ -189,7 +189,7 @@ object OfflineFileManager {
             }
             throw IOException("Queued download completed without a local file")
         } catch (e: Exception) {
-            Log.e(TAG, "Download failed for $fileName", e)
+            Log.e(TAG, "Download failed: ${e::class.simpleName}")
             if (tempFile.exists()) tempFile.delete()
             _activeDownloads.value = _activeDownloads.value - fid
             downloadingSet.remove(fid)
