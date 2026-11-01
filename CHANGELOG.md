@@ -36,6 +36,19 @@ This change implements the blueprint's **Phase 1 — Contracts and state correct
 - **Phases 5–8:** mutation reconciliation/outbox completeness, thumbnail/cache subsystem, remaining UI/diagnostics/accessibility work, and production/security/performance/staged-rollout validation are not completed by this change.
 - Run the complete Android unit-test suite and an Android debug build, then perform device-level process-death, provider-auth, cancellation-race, and migration checks before treating this as release-ready.
 
+## Phase 4: network policy and lifecycle recovery
+
+- Added a centralized connectivity monitor that distinguishes unavailable, captive/unvalidated, validated metered, and validated unmetered networks, including roaming, charging, battery-saver, and low-battery signals.
+- Added a provider-neutral transfer network gate. Durable queue execution now moves policy-blocked rows to `WAITING_FOR_NETWORK` or `WAITING_FOR_AUTH` instead of starting work that violates metered, roaming, charging, or battery rules.
+- Wired connectivity restoration to coalesced queue recovery and added delayed boot recovery plus periodic lifecycle maintenance through WorkManager.
+- Added a persisted roaming preference and registered boot/locked-boot recovery in the Android manifest. Cached browsing remains independent of transfer connectivity.
+- The Cloudyte server repository required no Phase 4 changes; its Phase 3 resumable-provider contract remains compatible.
+
+## Phase 4 verification
+
+- Server `npm test` and `npm run lint` pass.
+- Android tests could not execute in this sandbox because the Android SDK is not installed (`SDK location not found`); device matrix validation remains required.
+
 ## Original blueprint
 
 `CloudyteProductionImplementationBlueprint.md` is included alongside this file as an unchanged copy of the original recovered blueprint (SHA-256: `bfb47fad8fce2f46e5e3c1bd6178254db086c31cb336bc5b6c80d3c5acd5fa27`).
