@@ -4,10 +4,14 @@ import com.cloudyte.app.db.LocalTransfer
 import com.cloudyte.app.db.TransferDao
 import com.cloudyte.app.db.TransferDirection
 import com.cloudyte.app.db.TransferStatus
+import com.cloudyte.app.data.providers.ProviderRegistry
 import kotlinx.coroutines.flow.Flow
 import java.util.UUID
 
-class TransferRepository(private val transferDao: TransferDao) {
+class TransferRepository(
+    private val transferDao: TransferDao,
+    private val providers: ProviderRegistry? = null
+) {
 
     companion object {
         const val STALE_TRANSFER_TIMEOUT_MS = 15 * 60 * 1000L
@@ -100,9 +104,21 @@ class TransferRepository(private val transferDao: TransferDao) {
 
     suspend fun cancelTransfer(id: String) {
         val transfer = transferDao.getById(id) ?: return
-        if (transfer.state !in setOf("COMPLETED", "CANCELLED", "EXPIRED", "FAILED_PERMANENT")) {
-            transferDao.updateStatus(id, TransferStatus.CANCELLED.name)
+        if (transfer.state in setOf("COMPLETED", "CANCELLED", "EXPIRED", "FAILED_PERMANENT")) return
+        val sessionId = transfer.providerSessionId
+        val providerRegistry = providers
+        if (!sessionId.isNullOrBlank() && providerRegistry != null && transfer.direction != TransferDirection.DOWNLOAD.name) {
+            try {
+                val provider = providerRegistry.forAccountType(transfer.providerType)
+                val response = provider.cancelUploadSession(sessionId)
+                // Do not claim cancellation is terminal when the provider/server could not
+                // confirm that its session stopped; leave the row visible for retry/recovery.
+                if (!response.isSuccessful) return
+            } catch (_: Exception) {
+                return
+            }
         }
+        transferDao.updateStatus(id, TransferStatus.CANCELLED.name, error = "Cancelled")
     }
 
     suspend fun clearCompleted() {

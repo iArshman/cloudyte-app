@@ -43,13 +43,13 @@ class TelegramProvider(api: CloudyteApi) : ApiCloudProvider(api) {
 }
 class GoogleDriveProvider(api: CloudyteApi) : ApiCloudProvider(api) {
     override val type = "google_drive"
-    override val capabilities = ProviderCapabilities(supportsResumableDownload = false)
+    override val capabilities = ProviderCapabilities(supportsProviderNativeResumability = true)
 }
 class OneDriveProvider(api: CloudyteApi) : ApiCloudProvider(api) {
     override val type = "onedrive"
-    override val capabilities = ProviderCapabilities(supportsResumableDownload = false)
+    override val capabilities = ProviderCapabilities(supportsProviderNativeResumability = true, supportsProviderSessionCancellation = true)
 }
 class CloudyteProvider(api: CloudyteApi) : ApiCloudProvider(api) {
     override val type = "cloudyte"
-    override val capabilities = ProviderCapabilities(supportsResumableDownload = false)
+    override val capabilities = ProviderCapabilities(supportsResumableUpload = false)
 }
