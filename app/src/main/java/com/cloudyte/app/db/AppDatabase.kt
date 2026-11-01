@@ -16,9 +16,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         LocalTransfer::class,
         LocalStorageSummary::class,
         LocalFolderSyncMeta::class,
-        LocalFileMutation::class
+        LocalFileMutation::class,
+        LocalFileTombstone::class
     ],
-    version = 10,
+    version = 12,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -30,6 +31,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun storageSummaryDao(): StorageSummaryDao
     abstract fun folderSyncMetaDao(): FolderSyncMetaDao
     abstract fun fileMutationDao(): FileMutationDao
+    abstract fun fileTombstoneDao(): FileTombstoneDao
     abstract fun transferQueueDao(): TransferQueueDao
 
     companion object {
@@ -187,6 +189,42 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE file_mutations ADD COLUMN providerType TEXT")
+                db.execSQL("ALTER TABLE file_mutations ADD COLUMN remoteFileId TEXT")
+                db.execSQL("ALTER TABLE file_mutations ADD COLUMN payloadJson TEXT")
+                db.execSQL("ALTER TABLE file_mutations ADD COLUMN attemptCount INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE file_mutations ADD COLUMN nextAttemptAt INTEGER")
+                db.execSQL("ALTER TABLE file_mutations ADD COLUMN lastErrorCode TEXT")
+                db.execSQL("ALTER TABLE file_mutations ADD COLUMN lastErrorMessage TEXT")
+                db.execSQL("ALTER TABLE file_mutations ADD COLUMN correlationId TEXT")
+                db.execSQL("UPDATE file_mutations SET remoteFileId = fileId WHERE remoteFileId IS NULL")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_file_mutations_status_nextAttemptAt_createdAt ON file_mutations(status, nextAttemptAt, createdAt)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_file_mutations_accountId_remoteFileId_status ON file_mutations(accountId, remoteFileId, status)")
+            }
+        }
+
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE folder_sync_meta ADD COLUMN providerType TEXT NOT NULL DEFAULT 'unknown'")
+                db.execSQL("ALTER TABLE folder_sync_meta ADD COLUMN syncState TEXT NOT NULL DEFAULT 'IDLE'")
+                db.execSQL("ALTER TABLE folder_sync_meta ADD COLUMN lastRequestedAt INTEGER")
+                db.execSQL("ALTER TABLE folder_sync_meta ADD COLUMN lastSuccessfulAt INTEGER")
+                db.execSQL("ALTER TABLE folder_sync_meta ADD COLUMN lastAttemptAt INTEGER")
+                db.execSQL("ALTER TABLE folder_sync_meta ADD COLUMN nextAttemptAt INTEGER")
+                db.execSQL("ALTER TABLE folder_sync_meta ADD COLUMN isCompleteSnapshot INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE folder_sync_meta ADD COLUMN continuationToken TEXT")
+                db.execSQL("ALTER TABLE folder_sync_meta ADD COLUMN remoteRevision TEXT")
+                db.execSQL("ALTER TABLE folder_sync_meta ADD COLUMN lastErrorCode TEXT")
+                db.execSQL("ALTER TABLE folder_sync_meta ADD COLUMN lastErrorMessage TEXT")
+                db.execSQL("UPDATE folder_sync_meta SET lastSuccessfulAt = lastSyncedAt WHERE lastSuccessfulAt IS NULL")
+                db.execSQL("CREATE TABLE IF NOT EXISTS file_tombstones (tombstoneId TEXT NOT NULL PRIMARY KEY, accountId TEXT NOT NULL, providerType TEXT NOT NULL, remoteId TEXT NOT NULL, folderId TEXT, deletedAt INTEGER NOT NULL, sourceRevision TEXT)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_file_tombstones_accountId_providerType_folderId ON file_tombstones(accountId, providerType, folderId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_file_tombstones_remoteId ON file_tombstones(remoteId)")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -202,7 +240,9 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_6_7,
                         MIGRATION_7_8,
                         MIGRATION_8_9,
-                        MIGRATION_9_10
+                        MIGRATION_9_10,
+                        MIGRATION_10_11,
+                        MIGRATION_11_12
                     )
                     .build()
                 INSTANCE = instance

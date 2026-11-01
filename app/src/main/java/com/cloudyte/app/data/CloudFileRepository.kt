@@ -9,6 +9,7 @@ import com.cloudyte.app.api.StorageSummary
 import com.cloudyte.app.db.AppDatabase
 import com.cloudyte.app.db.LocalCloudFile
 import com.cloudyte.app.db.LocalFileMutation
+import com.cloudyte.app.db.LocalFileTombstone
 import com.cloudyte.app.db.LocalFolderSyncMeta
 import com.cloudyte.app.db.LocalStorageSummary
 import com.cloudyte.app.sync.FileMutationWorker
@@ -76,6 +77,7 @@ class CloudFileRepository @JvmOverloads constructor(
         val accKey = accountMetaKey(accountId)
         val safeFolder = safeFolderId(folderId)
         val meta = db.folderSyncMetaDao().getMeta(accKey, safeFolder) ?: return false
+        if (!meta.isCompleteSnapshot || meta.syncState == "FAILED") return false
         val now = nowMillis()
         val elapsed = now - meta.lastSyncedAt
         return elapsed in 0 until cacheTtlMs
@@ -98,7 +100,10 @@ class CloudFileRepository @JvmOverloads constructor(
                 accountKey = accKey,
                 folderId = safeFolder,
                 etag = effectiveEtag,
-                lastSyncedAt = nowMillis()
+                lastSyncedAt = nowMillis(),
+                syncState = "SUCCESS",
+                lastSuccessfulAt = nowMillis(),
+                isCompleteSnapshot = true
             )
         )
     }
@@ -183,6 +188,23 @@ class CloudFileRepository @JvmOverloads constructor(
         return try {
             val persistedMeta = db.folderSyncMetaDao().getMeta(accKey, safeFolder)
             val storedEtag = persistedMeta?.etag ?: etagMap[key]
+            val attemptAt = nowMillis()
+            db.folderSyncMetaDao().upsert(
+                LocalFolderSyncMeta(
+                    accountKey = accKey,
+                    folderId = safeFolder,
+                    etag = storedEtag,
+                    lastSyncedAt = persistedMeta?.lastSyncedAt ?: 0L,
+                    providerType = persistedMeta?.providerType ?: "unknown",
+                    syncState = "RUNNING",
+                    lastRequestedAt = attemptAt,
+                    lastSuccessfulAt = persistedMeta?.lastSuccessfulAt,
+                    lastAttemptAt = attemptAt,
+                    isCompleteSnapshot = false,
+                    continuationToken = null,
+                    remoteRevision = persistedMeta?.remoteRevision
+                )
+            )
             if (!storedEtag.isNullOrBlank()) {
                 etagMap[key] = storedEtag
             }
@@ -216,7 +238,12 @@ class CloudFileRepository @JvmOverloads constructor(
                             accountKey = accKey,
                             folderId = safeFolder,
                             etag = responseEtag,
-                            lastSyncedAt = nowMillis()
+                            lastSyncedAt = nowMillis(),
+                            providerType = db.accountDao().getAccountById(normalizedAccount ?: "")?.accountType ?: "unknown",
+                            syncState = "SUCCESS",
+                            lastSuccessfulAt = nowMillis(),
+                            isCompleteSnapshot = true,
+                            remoteRevision = responseEtag
                         )
                     )
                     return Result.success(Unit)
@@ -282,8 +309,33 @@ class CloudFileRepository @JvmOverloads constructor(
                     )
                 }
             val allLocal = (serverRows + optimisticFolders).distinctBy { it.id }
-            // Atomically replace the folder only after all pages succeed, while retaining queued edits.
-            db.cloudFileDao().replaceFolder(normalizedAccount, safeFolder, allLocal)
+            // Only a fully consumed listing is allowed to remove absent rows. Record tombstones
+            // in the same transaction so UI history and the file index cannot diverge.
+            val providerType = db.accountDao().getAccountById(normalizedAccount ?: "")?.accountType ?: "unknown"
+            db.withTransaction {
+                val existingIds = db.cloudFileDao().getFileIdsForFolder(normalizedAccount, safeFolder)
+                val validIds = allLocal.map { it.id }.toSet()
+                val staleIds = existingIds.filterNot(validIds::contains)
+                if (staleIds.isNotEmpty()) {
+                    db.fileTombstoneDao().insertAll(staleIds.map { remoteId ->
+                        LocalFileTombstone(
+                            tombstoneId = "$accKey:$safeFolder:$remoteId",
+                            accountId = accKey,
+                            providerType = providerType,
+                            remoteId = remoteId,
+                            folderId = safeFolder,
+                            deletedAt = now,
+                            sourceRevision = latestEtag
+                        )
+                    })
+                    db.cloudFileDao().deleteByIds(staleIds)
+                }
+                val currentIds = allLocal.map { it.id }
+                if (currentIds.isNotEmpty()) {
+                    db.fileTombstoneDao().removeForRemoteIds(accKey, safeFolder, currentIds)
+                }
+                db.cloudFileDao().insertFiles(allLocal)
+            }
 
             // Persist folder sync metadata (ETag + lastSyncedAt)
             db.folderSyncMetaDao().upsert(
@@ -291,7 +343,13 @@ class CloudFileRepository @JvmOverloads constructor(
                     accountKey = accKey,
                     folderId = safeFolder,
                     etag = latestEtag,
-                    lastSyncedAt = now
+                    lastSyncedAt = now,
+                    providerType = providerType,
+                    syncState = "SUCCESS",
+                    lastSuccessfulAt = now,
+                    isCompleteSnapshot = true,
+                    continuationToken = null,
+                    remoteRevision = latestEtag
                 )
             )
 
@@ -301,6 +359,22 @@ class CloudFileRepository @JvmOverloads constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            val previous = db.folderSyncMetaDao().getMeta(accKey, safeFolder)
+            db.folderSyncMetaDao().upsert(
+                LocalFolderSyncMeta(
+                    accountKey = accKey,
+                    folderId = safeFolder,
+                    etag = previous?.etag,
+                    lastSyncedAt = previous?.lastSyncedAt ?: 0L,
+                    providerType = previous?.providerType ?: "unknown",
+                    syncState = "FAILED",
+                    lastSuccessfulAt = previous?.lastSuccessfulAt,
+                    lastAttemptAt = nowMillis(),
+                    isCompleteSnapshot = false,
+                    lastErrorCode = "REFRESH_FAILED",
+                    lastErrorMessage = e.message
+                )
+            )
             Result.failure(e)
         }
     }
@@ -315,7 +389,11 @@ class CloudFileRepository @JvmOverloads constructor(
             operation = LocalFileMutation.RENAME,
             fileId = fileId,
             name = newName,
-            parentFolderId = existing.folderId
+            parentFolderId = existing.folderId,
+            providerType = db.accountDao().getAccountById(normalizedAccount ?: "")?.accountType,
+            remoteFileId = fileId,
+            payloadJson = "{\"name\":\"${newName.replace("\\", "\\\\").replace("\"", "\\\"")}\"}",
+            correlationId = UUID.randomUUID().toString()
         )
         db.withTransaction {
             db.cloudFileDao().updateName(fileId, newName)
@@ -337,7 +415,11 @@ class CloudFileRepository @JvmOverloads constructor(
             accountId = normalizedAccount,
             operation = LocalFileMutation.DELETE,
             fileId = fileId,
-            parentFolderId = parentFolderId
+            parentFolderId = parentFolderId,
+            providerType = db.accountDao().getAccountById(normalizedAccount ?: "")?.accountType,
+            remoteFileId = fileId,
+            payloadJson = "{}",
+            correlationId = UUID.randomUUID().toString()
         )
         db.withTransaction {
             db.cloudFileDao().deleteById(fileId)
@@ -376,6 +458,9 @@ class CloudFileRepository @JvmOverloads constructor(
             name = name,
             parentFolderId = safeParentId,
             optimisticFileId = tempId,
+            providerType = db.accountDao().getAccountById(normalizedAccount ?: "")?.accountType,
+            payloadJson = "{\"name\":\"${name.replace("\\", "\\\\").replace("\"", "\\\"")}\",\"parentFolderId\":\"$safeParentId\"}",
+            correlationId = UUID.randomUUID().toString(),
             createdAt = now,
             updatedAt = now
         )
