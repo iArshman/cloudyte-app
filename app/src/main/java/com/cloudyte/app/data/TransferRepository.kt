@@ -4,10 +4,14 @@ import com.cloudyte.app.db.LocalTransfer
 import com.cloudyte.app.db.TransferDao
 import com.cloudyte.app.db.TransferDirection
 import com.cloudyte.app.db.TransferStatus
+import com.cloudyte.app.data.providers.ProviderRegistry
 import kotlinx.coroutines.flow.Flow
 import java.util.UUID
 
-class TransferRepository(private val transferDao: TransferDao) {
+class TransferRepository(
+    private val transferDao: TransferDao,
+    private val providers: ProviderRegistry? = null
+) {
 
     companion object {
         const val STALE_TRANSFER_TIMEOUT_MS = 15 * 60 * 1000L
@@ -37,6 +41,10 @@ class TransferRepository(private val transferDao: TransferDao) {
             localPath = localPath,
             remotePath = remotePath,
             direction = direction.name,
+            operationType = if (direction == TransferDirection.BACKUP) "BACKUP" else direction.name,
+            localUri = localPath,
+            parentFolderId = remotePath,
+            remoteId = fileId,
             status = TransferStatus.PENDING.name,
             bytesTransferred = 0L,
             totalBytes = totalBytes,
@@ -44,6 +52,31 @@ class TransferRepository(private val transferDao: TransferDao) {
             updatedAt = System.currentTimeMillis()
         )
         transferDao.insert(transfer)
+        return id
+    }
+
+    suspend fun queueTransfer(id: String, direction: TransferDirection, localUri: String, parentFolderId: String?, providerType: String?, totalBytes: Long): Boolean =
+        transferDao.queueTransfer(id, direction.name, if (direction == TransferDirection.BACKUP) "BACKUP" else direction.name, localUri, parentFolderId, providerType, totalBytes) == 1
+
+    suspend fun enqueueOrGetOfflineDownload(accountId: String, fileId: String, fileName: String, destinationPath: String, totalBytes: Long): String {
+        val stableId = "offline:$accountId:$fileId"
+        val existing = transferDao.getById(stableId)
+        if (existing != null && existing.state !in setOf("COMPLETED", "CANCELLED", "EXPIRED", "FAILED_PERMANENT")) return stableId
+        val id = if (existing == null) stableId else "$stableId:${UUID.randomUUID()}"
+        transferDao.insertIfAbsent(
+            LocalTransfer(
+                id = id,
+                accountId = accountId,
+                fileId = fileId,
+                remoteId = fileId,
+                fileName = fileName,
+                localPath = destinationPath,
+                localUri = destinationPath,
+                direction = TransferDirection.DOWNLOAD.name,
+                operationType = "DOWNLOAD",
+                totalBytes = totalBytes
+            )
+        )
         return id
     }
 
@@ -63,13 +96,29 @@ class TransferRepository(private val transferDao: TransferDao) {
 
     suspend fun retryTransfer(id: String) {
         val transfer = transferDao.getById(id) ?: return
-        transferDao.updateStatus(id, TransferStatus.PENDING.name, error = null)
-        transferDao.incrementAttempt(id)
+        if (transfer.state in setOf("FAILED_RETRYABLE", "WAITING_FOR_AUTH", "WAITING_FOR_NETWORK")) {
+            transferDao.updateStatus(id, TransferStatus.PENDING.name, error = null)
+            transferDao.incrementAttempt(id)
+        }
     }
 
     suspend fun cancelTransfer(id: String) {
         val transfer = transferDao.getById(id) ?: return
-        transferDao.updateStatus(id, TransferStatus.CANCELLED.name)
+        if (transfer.state in setOf("COMPLETED", "CANCELLED", "EXPIRED", "FAILED_PERMANENT")) return
+        val sessionId = transfer.providerSessionId
+        val providerRegistry = providers
+        if (!sessionId.isNullOrBlank() && providerRegistry != null && transfer.direction != TransferDirection.DOWNLOAD.name) {
+            try {
+                val provider = providerRegistry.forAccountType(transfer.providerType)
+                val response = provider.cancelUploadSession(sessionId)
+                // Do not claim cancellation is terminal when the provider/server could not
+                // confirm that its session stopped; leave the row visible for retry/recovery.
+                if (!response.isSuccessful) return
+            } catch (_: Exception) {
+                return
+            }
+        }
+        transferDao.updateStatus(id, TransferStatus.CANCELLED.name, error = "Cancelled")
     }
 
     suspend fun clearCompleted() {
@@ -128,7 +177,28 @@ class TransferRepository(private val transferDao: TransferDao) {
         )
     }
 
+    suspend fun saveResumeMetadataOwned(
+        id: String,
+        leaseOwner: String,
+        sessionId: String?,
+        chunkSize: Long,
+        nextChunkIndex: Int,
+        checksum: String?,
+        idempotencyKey: String?
+    ): Boolean = transferDao.updateResumeMetadataOwned(
+        id, leaseOwner, sessionId, chunkSize, nextChunkIndex, checksum, idempotencyKey
+    ) == 1
+
     suspend fun updateResumableProgress(id: String, bytesTransferred: Long, nextChunkIndex: Int) {
         transferDao.updateResumableProgress(id, bytesTransferred, nextChunkIndex)
     }
+
+    suspend fun updateResumableProgressOwned(
+        id: String,
+        leaseOwner: String,
+        bytesTransferred: Long,
+        nextChunkIndex: Int
+    ): Boolean = transferDao.updateResumableProgressOwned(
+        id, leaseOwner, bytesTransferred, nextChunkIndex
+    ) == 1
 }

@@ -7,6 +7,7 @@ import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.cloudyte.app.BuildConfig
+import com.cloudyte.app.core.network.RequestCorrelationInterceptor
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import okhttp3.Cache
@@ -95,6 +96,7 @@ object ApiClient {
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
+            .addInterceptor(RequestCorrelationInterceptor())
             .addInterceptor(authInterceptor)
             .addInterceptor(loggingInterceptor)
         if (cache != null) {

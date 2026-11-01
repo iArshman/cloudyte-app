@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -16,6 +18,8 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -78,6 +82,11 @@ fun SettingsScreen(
         return
     }
 
+    if (currentSubScreen == "DIAGNOSTICS") {
+        DiagnosticsScreen(onBack = { currentSubScreen = null })
+        return
+    }
+
     selectedSection?.let { section ->
         SettingsSectionScreen(
             section = section,
@@ -101,6 +110,11 @@ fun SettingsScreen(
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.settings_title), fontWeight = FontWeight.Bold) },
+                actions = {
+                    IconButton(onClick = { currentSubScreen = "DIAGNOSTICS" }) {
+                        Icon(Icons.Default.BugReport, contentDescription = "Open diagnostics")
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = topBarContainerColor
                 )

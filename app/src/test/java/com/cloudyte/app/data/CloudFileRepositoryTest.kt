@@ -19,6 +19,10 @@ import com.cloudyte.app.api.ShareResponse
 import com.cloudyte.app.api.StorageCategories
 import com.cloudyte.app.api.StorageSummary
 import com.cloudyte.app.api.TgDriveRegisterRequest
+import com.cloudyte.app.api.UploadChunkResponse
+import com.cloudyte.app.api.UploadCompleteResponse
+import com.cloudyte.app.api.UploadSessionRequest
+import com.cloudyte.app.api.UploadSessionResponse
 import com.cloudyte.app.api.UserProfile
 import com.cloudyte.app.api.UserSettingsRequest
 import com.cloudyte.app.db.AppDatabase
@@ -126,8 +130,30 @@ class FakeCloudyteApi : CloudyteApi {
         folderIdQuery: String?,
         file: MultipartBody.Part,
         folderIdPart: RequestBody?,
-        parentIdPart: RequestBody?
+        parentIdPart: RequestBody?,
+        idempotencyKey: String?,
+        checksum: String?,
+        uploadSession: String?
     ): Response<ResponseBody> = Response.success("{}".toResponseBody("application/json".toMediaType()))
+
+    override suspend fun createUploadSession(
+        accountId: String,
+        request: UploadSessionRequest
+    ): Response<UploadSessionResponse> = Response.success(
+        UploadSessionResponse(sessionId = "test-session", status = "active", totalBytes = request.size)
+    )
+
+    override suspend fun uploadChunk(
+        sessionId: String,
+        contentRange: String,
+        chunk: MultipartBody.Part
+    ): Response<UploadChunkResponse> = Response.success(
+        UploadChunkResponse(sessionId = sessionId, receivedBytes = 0L, totalBytes = 0L, nextOffset = 0L)
+    )
+
+    override suspend fun completeUploadSession(sessionId: String): Response<UploadCompleteResponse> = Response.success(
+        UploadCompleteResponse(success = true, sessionId = sessionId)
+    )
 
     override suspend fun downloadFile(accountId: String, fileId: String, preview: Int?): ResponseBody =
         "".toResponseBody("application/octet-stream".toMediaType())
@@ -436,7 +462,7 @@ class CloudFileRepositoryTest {
         assertTrue(repository.refresh("acc1", "root", force = true).isSuccess)
 
         val rows = db.cloudFileDao().getFilesForFolder("acc1", "root")
-        assertEquals(setOf("keep", "Queued folder"), rows.map { it.name }.toSet())
+        assertEquals(setOf("After.txt", "Queued folder"), rows.map { it.name }.toSet())
         assertEquals("After.txt", rows.single { it.id == "keep" }.name)
         assertTrue(rows.single { it.name == "Queued folder" }.id.startsWith("temp_"))
     }

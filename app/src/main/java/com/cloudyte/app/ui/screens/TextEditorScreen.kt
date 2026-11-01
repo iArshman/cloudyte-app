@@ -106,20 +106,26 @@ fun TextEditorScreen(
         if (isSaving) return
         isSaving = true
         coroutineScope.launch {
-            val success = UploadHelper.uploadTextContent(
-                context = context,
-                accountId = accountId,
-                folderId = null,
-                fileName = fileName,
-                content = textContent
-            )
-            isSaving = false
-            if (success) {
+            try {
+                val queueDirectory = java.io.File(context.filesDir, "queued-text").apply { mkdirs() }
+                val stagedFile = java.io.File.createTempFile("cloudyte-queued-text-", ".txt", queueDirectory)
+                stagedFile.writeText(textContent)
+                val app = context.applicationContext as com.cloudyte.app.CloudyteApplication
+                val transferId = app.container.transferRepository.enqueueTransfer(
+                    accountId = accountId,
+                    fileName = fileName,
+                    localPath = Uri.fromFile(stagedFile).toString(),
+                    direction = com.cloudyte.app.db.TransferDirection.UPLOAD,
+                    totalBytes = stagedFile.length()
+                )
+                app.container.transferCoordinator.dispatch(com.cloudyte.app.core.transfer.TransferCommand.Start(transferId))
                 originalContent = textContent
                 isEditMode = false
-                Toast.makeText(context, "File saved successfully!", Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(context, "Failed to save file. Please check connection.", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "Save queued for upload", Toast.LENGTH_SHORT).show()
+            } catch (error: Exception) {
+                Toast.makeText(context, error.message ?: "Failed to queue save", Toast.LENGTH_LONG).show()
+            } finally {
+                isSaving = false
             }
         }
     }

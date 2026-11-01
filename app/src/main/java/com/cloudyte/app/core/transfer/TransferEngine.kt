@@ -1,5 +1,5 @@
 package com.cloudyte.app.core.transfer
 
 interface TransferEngine {
-    suspend fun execute(command: TransferCommand): TransferState
+    suspend fun execute(command: TransferCommand): TransferExecutionState
 }

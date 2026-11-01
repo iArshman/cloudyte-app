@@ -16,9 +16,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         LocalTransfer::class,
         LocalStorageSummary::class,
         LocalFolderSyncMeta::class,
-        LocalFileMutation::class
+        LocalFileMutation::class,
+        LocalFileTombstone::class,
+        ThumbnailEntity::class
     ],
-    version = 9,
+    version = 13,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -30,6 +32,9 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun storageSummaryDao(): StorageSummaryDao
     abstract fun folderSyncMetaDao(): FolderSyncMetaDao
     abstract fun fileMutationDao(): FileMutationDao
+    abstract fun fileTombstoneDao(): FileTombstoneDao
+    abstract fun thumbnailDao(): ThumbnailDao
+    abstract fun transferQueueDao(): TransferQueueDao
 
     companion object {
         @Volatile
@@ -147,6 +152,108 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE transfers ADD COLUMN state TEXT NOT NULL DEFAULT 'QUEUED'")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN priority INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN operationType TEXT NOT NULL DEFAULT 'UPLOAD'")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN providerType TEXT")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN remoteId TEXT")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN parentFolderId TEXT")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN localUri TEXT")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN bytesPerSecond INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN etaSeconds INTEGER")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN lastProgressAt INTEGER")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN lastAttemptAt INTEGER")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN nextAttemptAt INTEGER")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN leaseOwner TEXT")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN leaseExpiresAt INTEGER")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN lastErrorCode TEXT")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN lastErrorMessage TEXT")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN lastHttpStatus INTEGER")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN correlationId TEXT")
+                db.execSQL("""UPDATE transfers SET state = CASE status
+                    WHEN 'RUNNING' THEN 'QUEUED'
+                    WHEN 'PAUSED' THEN 'PAUSED'
+                    WHEN 'COMPLETED' THEN 'COMPLETED'
+                    WHEN 'CANCELLED' THEN 'CANCELLED'
+                    WHEN 'FAILED' THEN 'FAILED_RETRYABLE'
+                    ELSE 'QUEUED' END""")
+                db.execSQL("UPDATE transfers SET status='PENDING', errorMessage='Recovered after app update', lastErrorCode='WORKER_INTERRUPTED', lastErrorMessage='Recovered after app update' WHERE status='RUNNING'")
+                db.execSQL("UPDATE transfers SET operationType = direction WHERE direction IS NOT NULL")
+                db.execSQL("UPDATE transfers SET remoteId = fileId WHERE remoteId IS NULL AND fileId IS NOT NULL")
+                db.execSQL("UPDATE transfers SET localUri = localPath WHERE localUri IS NULL AND localPath IS NOT NULL")
+                db.execSQL("UPDATE transfers SET parentFolderId = remotePath WHERE parentFolderId IS NULL AND remotePath IS NOT NULL")
+                db.execSQL("UPDATE transfers SET providerType = (SELECT accountType FROM local_accounts WHERE local_accounts.id = transfers.accountId) WHERE providerType IS NULL")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_transfers_state_priority_createdAt ON transfers(state, priority, createdAt)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_transfers_leaseExpiresAt ON transfers(leaseExpiresAt)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_transfers_providerType_remoteId ON transfers(providerType, remoteId)")
+            }
+        }
+
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE file_mutations ADD COLUMN providerType TEXT")
+                db.execSQL("ALTER TABLE file_mutations ADD COLUMN remoteFileId TEXT")
+                db.execSQL("ALTER TABLE file_mutations ADD COLUMN payloadJson TEXT")
+                db.execSQL("ALTER TABLE file_mutations ADD COLUMN attemptCount INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE file_mutations ADD COLUMN nextAttemptAt INTEGER")
+                db.execSQL("ALTER TABLE file_mutations ADD COLUMN lastErrorCode TEXT")
+                db.execSQL("ALTER TABLE file_mutations ADD COLUMN lastErrorMessage TEXT")
+                db.execSQL("ALTER TABLE file_mutations ADD COLUMN correlationId TEXT")
+                db.execSQL("UPDATE file_mutations SET remoteFileId = fileId WHERE remoteFileId IS NULL")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_file_mutations_status_nextAttemptAt_createdAt ON file_mutations(status, nextAttemptAt, createdAt)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_file_mutations_accountId_remoteFileId_status ON file_mutations(accountId, remoteFileId, status)")
+            }
+        }
+
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE folder_sync_meta ADD COLUMN providerType TEXT NOT NULL DEFAULT 'unknown'")
+                db.execSQL("ALTER TABLE folder_sync_meta ADD COLUMN syncState TEXT NOT NULL DEFAULT 'IDLE'")
+                db.execSQL("ALTER TABLE folder_sync_meta ADD COLUMN lastRequestedAt INTEGER")
+                db.execSQL("ALTER TABLE folder_sync_meta ADD COLUMN lastSuccessfulAt INTEGER")
+                db.execSQL("ALTER TABLE folder_sync_meta ADD COLUMN lastAttemptAt INTEGER")
+                db.execSQL("ALTER TABLE folder_sync_meta ADD COLUMN nextAttemptAt INTEGER")
+                db.execSQL("ALTER TABLE folder_sync_meta ADD COLUMN isCompleteSnapshot INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE folder_sync_meta ADD COLUMN continuationToken TEXT")
+                db.execSQL("ALTER TABLE folder_sync_meta ADD COLUMN remoteRevision TEXT")
+                db.execSQL("ALTER TABLE folder_sync_meta ADD COLUMN lastErrorCode TEXT")
+                db.execSQL("ALTER TABLE folder_sync_meta ADD COLUMN lastErrorMessage TEXT")
+                db.execSQL("UPDATE folder_sync_meta SET lastSuccessfulAt = lastSyncedAt WHERE lastSuccessfulAt IS NULL")
+                db.execSQL("CREATE TABLE IF NOT EXISTS file_tombstones (tombstoneId TEXT NOT NULL PRIMARY KEY, accountId TEXT NOT NULL, providerType TEXT NOT NULL, remoteId TEXT NOT NULL, folderId TEXT, deletedAt INTEGER NOT NULL, sourceRevision TEXT)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_file_tombstones_accountId_providerType_folderId ON file_tombstones(accountId, providerType, folderId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_file_tombstones_remoteId ON file_tombstones(remoteId)")
+            }
+        }
+
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS thumbnail_cache (
+                        cacheKey TEXT NOT NULL PRIMARY KEY,
+                        accountId TEXT NOT NULL,
+                        providerType TEXT NOT NULL,
+                        remoteId TEXT NOT NULL,
+                        sourceRevision TEXT,
+                        path TEXT NOT NULL,
+                        mimeType TEXT NOT NULL,
+                        width INTEGER,
+                        height INTEGER,
+                        sizeBytes INTEGER NOT NULL,
+                        isEncrypted INTEGER NOT NULL DEFAULT 0,
+                        generatedAt INTEGER NOT NULL,
+                        lastAccessAt INTEGER NOT NULL,
+                        failureCount INTEGER NOT NULL DEFAULT 0,
+                        nextRetryAt INTEGER
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_thumbnail_cache_accountId_lastAccessAt ON thumbnail_cache(accountId, lastAccessAt)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_thumbnail_cache_providerType_remoteId ON thumbnail_cache(providerType, remoteId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_thumbnail_cache_lastAccessAt ON thumbnail_cache(lastAccessAt)")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -161,7 +268,11 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_5_6,
                         MIGRATION_6_7,
                         MIGRATION_7_8,
-                        MIGRATION_8_9
+                        MIGRATION_8_9,
+                        MIGRATION_9_10,
+                        MIGRATION_10_11,
+                        MIGRATION_11_12,
+                        MIGRATION_12_13
                     )
                     .build()
                 INSTANCE = instance
