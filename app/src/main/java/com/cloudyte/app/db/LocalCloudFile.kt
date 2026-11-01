@@ -40,7 +40,8 @@ data class LocalCloudFile(
             path = this.path,
             mimeType = this.mimeType,
             updatedAt = this.updatedAt,
-            thumbUrl = this.thumbUrl
+            thumbUrl = this.thumbUrl,
+            accountId = this.accountId
         )
     }
 

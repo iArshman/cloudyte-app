@@ -17,8 +17,8 @@ Target: `itxrex07/cd`, branch `main`
 ## Phase 3 — Provider execution
 
 - Made provider selection account-driven and fail explicitly for unsupported or mismatched providers.
-- Added provider-specific resumable execution and offset reconciliation for Google Drive and OneDrive.
-- Preserved Telegram staging resumability while explicitly reporting that native Telegram resumability and cancellation are unsupported.
+- Implemented `GoogleDriveProvider`, `OneDriveProvider`, `TelegramProvider`, and `CloudyteProvider` as server-backed capability adapters over `CloudyteApi` (`/upload/session`, `/upload/session/{id}/chunk`, `/upload/session/{id}/complete`, and ranged `/files/{id}/download`).
+- Separated server-staged resumability (`supportsResumableUpload = true`) from upstream provider-native resumability (`supportsProviderNativeResumability`), enabling chunked resumable uploads for `CloudyteProvider` and `TelegramProvider` while accurately reporting that only `GoogleDriveProvider` and `OneDriveProvider` expose upstream provider-native resumability and session cancellation.
 - Added durable session cancellation fencing, checksum validation, idempotent completion, and provider capability signals.
 
 ## Phase 4 — Network policy and lifecycle recovery
@@ -31,13 +31,13 @@ Target: `itxrex07/cd`, branch `main`
 
 - Advanced Room through schema version 12 with durable mutation payloads, provider and remote identifiers, retry/backoff state, conflict and permanent-failure states, correlation IDs, and account-specific authentication pauses.
 - Added ordered mutation replay with claim fencing, idempotent delete handling, explicit conflict handling, and optimistic projection support.
-- Added complete-snapshot folder reconciliation, tombstones, continuation/revision metadata, and a constrained folder sync worker. Partial listings never delete absent cached files.
+- Added complete-snapshot folder reconciliation, tombstones, continuation/revision metadata, and a provider-scoped constrained folder sync worker (`cloudyte_folder_sync_{accountId}_{providerType}_{folderId}`). Partial or failed listings persist `continuationToken` across runs and never delete absent cached files unless `isCompleteSnapshot == true`.
 
 ## Phase 6 — Thumbnail and cache subsystem
 
 - Added durable Room `thumbnail_cache` records and migration `12 -> 13`, with account/provider/revision-aware keys, access timestamps, dimensions, failure backoff, and file metadata.
-- Added `ThumbnailStore` as the single UI/cache policy boundary. It checks durable records first, atomically stores provider thumbnails, can generate thumbnails from local files, falls back to preview URLs, and serializes concurrent requests to avoid composition request storms.
-- Added bounded thumbnail and preview stores, quota-aware LRU cleanup, stale failure cleanup, account-scoped cache deletion, and the unique WorkManager job `cloudyte_cache_cleanup`.
+- Added `ThumbnailStore` as the single UI/cache policy boundary with bounded concurrency (`Semaphore(4)`) and per-key in-flight `Deferred` deduplication, offline/local file thumbnail generation wired through `FileThumb`, and preview URL fallback.
+- Added bounded thumbnail and preview stores, true LRU access-time tracking in `PreviewStore.get()`, quota-aware LRU cleanup, stale failure cleanup, account-scoped cache deletion, and the unique WorkManager job `cloudyte_cache_cleanup`.
 - Routed `FileThumb` through `ThumbnailStore`; UI no longer builds provider URLs or appends authentication tokens directly.
 - Added cache-key isolation and migration tests.
 
@@ -48,15 +48,11 @@ Target: `itxrex07/cd`, branch `main`
 - Added rolling-window transfer speed and ETA calculation with minimum sample duration and outlier suppression, and routed upload/download progress through it.
 - Added the diagnostics entry point and preserved stable back navigation for the Settings UI.
 
-## Phase 8 — Production hardening
+## Phase 8 — Production hardening & audit fixes
 
 - Added a persisted, fail-safe `TransferRolloutGate` kill switch. Disabling rollout stops new queue drains without deleting durable transfer rows, allowing rollback and later resume.
-- Wired rollout-disabled events into structured diagnostics with the gate reason and worker run ID.
+- Changed unexpected/transient transfer error mapping to default to `TransferOutcome.Retryable`, reserving `TransferOutcome.Permanent` for explicitly unrecoverable errors (e.g., HTTP 403/404, missing local source file, quota exceeded, unsupported provider operation).
+- Implemented true resumable downloads via `ProviderRegistry` using `.part` temporary files, persisted byte checkpoints, `Range: bytes=<offset>-` request headers, HTTP `206 Partial Content` vs `200 OK` handling, and atomic rename on completion.
+- Wired active transfer pause and cancellation (`TransferScheduler.cancelQueuedTransfer`, `ActiveTransferSignalRegistry`) to immediately interrupt in-flight chunk loops, transition Room states deterministically, and invoke `provider.cancelUploadSession`.
+- Exported Room schemas `11.json`, `12.json`, and `13.json` matching `AppDatabase` version 13.
 - Redacted upload and offline-download logs so release logging does not emit raw response bodies, exception payloads, file names, or file contents.
-- Expanded the release checklist with process-death, security, staged-rollout, rollback, and accessibility validation requirements.
-
-## Verification
-
-- Server syntax, lint, and protocol tests pass for the existing provider contract.
-- Client whitespace and static checks pass.
-- Android compilation, Room schema generation, and device-level migration/cache tests require an Android SDK-enabled environment; the current sandbox does not provide an Android SDK.

@@ -10,7 +10,8 @@ class TransferCoordinator(
     context: Context,
     private val repository: TransferRepository,
     private val scheduleBackgroundWork: (Context) -> Unit,
-    val diagnostics: TransferDiagnostics = TransferDiagnostics()
+    val diagnostics: TransferDiagnostics = TransferDiagnostics(),
+    private val scheduler: TransferSchedulerContract? = null
 ) : TransferEngine {
     private val appContext = context.applicationContext
 
@@ -25,24 +26,31 @@ class TransferCoordinator(
         diagnostics.record(command)
         return when (command) {
             is TransferCommand.Start -> {
+                ActiveTransferSignalRegistry.clear(command.transferId)
                 schedule()
                 TransferExecutionState.Pending
             }
             is TransferCommand.Retry -> {
+                ActiveTransferSignalRegistry.clear(command.transferId)
                 repository.retry(command.transferId)
                 schedule()
                 TransferExecutionState.Pending
             }
             is TransferCommand.Pause -> {
+                ActiveTransferSignalRegistry.signalPause(command.transferId)
+                scheduler?.pauseActiveTransfer(command.transferId)
                 repository.pause(command.transferId)
                 TransferExecutionState.Paused
             }
             is TransferCommand.Resume -> {
+                ActiveTransferSignalRegistry.clear(command.transferId)
                 repository.resume(command.transferId)
                 schedule()
                 TransferExecutionState.Pending
             }
             is TransferCommand.Cancel -> {
+                ActiveTransferSignalRegistry.signalCancel(command.transferId)
+                scheduler?.cancelQueuedTransfer(command.transferId)
                 repository.cancel(command.transferId)
                 TransferExecutionState.Cancelled
             }
@@ -51,3 +59,4 @@ class TransferCoordinator(
 
     private fun schedule() = scheduleBackgroundWork(appContext)
 }
+

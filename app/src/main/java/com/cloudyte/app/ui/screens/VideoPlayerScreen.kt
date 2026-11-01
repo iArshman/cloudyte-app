@@ -58,18 +58,34 @@ fun VideoPlayerScreen(
     val context = LocalContext.current
     var currentActiveFileId by remember { mutableStateOf(fileId) }
 
-    val videoList = remember {
+    var dbVideo by remember(currentActiveFileId) { mutableStateOf<CloudFile?>(null) }
+    LaunchedEffect(currentActiveFileId) {
+        val app = context.applicationContext as? com.cloudyte.app.CloudyteApplication
+        if (app != null) {
+            val local = app.container.database.cloudFileDao().getFileById(currentActiveFileId)?.toCloudFile()
+            if (local != null) {
+                FileRepository.cacheFiles(listOf(local))
+                dbVideo = local
+            }
+        }
+    }
+
+    val videoList = remember(dbVideo) {
         val list = FileRepository.getActiveList().filter { it.isVideo }
-        if (list.any { it.effectiveId == fileId }) {
-            list
-        } else {
-            val f = FileRepository.getFile(fileId)
-            if (f != null) listOf(f) else emptyList()
+        when {
+            list.any { it.effectiveId == fileId } -> list
+            dbVideo != null -> listOf(dbVideo!!)
+            else -> {
+                val f = FileRepository.getFile(fileId)
+                if (f != null) listOf(f) else emptyList()
+            }
         }
     }
 
     val currentVideoIndex = videoList.indexOfFirst { it.effectiveId == currentActiveFileId }.coerceAtLeast(0)
-    val file = videoList.getOrNull(currentVideoIndex) ?: remember(currentActiveFileId) { FileRepository.getFile(currentActiveFileId) }
+    val file = videoList.getOrNull(currentVideoIndex)
+        ?: remember(currentActiveFileId) { FileRepository.getFile(currentActiveFileId) }
+        ?: dbVideo
     val fileName = file?.effectiveName ?: "Video Player"
 
     var isPlaying by remember { mutableStateOf(true) }

@@ -123,7 +123,9 @@ class CloudFileRepository @JvmOverloads constructor(
     suspend fun refresh(
         accountId: String?,
         folderId: String?,
-        force: Boolean = false
+        force: Boolean = false,
+        providerTypeHint: String? = null,
+        maxPages: Int = Int.MAX_VALUE
     ): Result<Unit> {
         val safeFolder = safeFolderId(folderId)
         val normalizedAccount = if (accountId.isNullOrBlank() || accountId == "root") null else accountId
@@ -144,7 +146,7 @@ class CloudFileRepository @JvmOverloads constructor(
             val prev = inFlightRefreshes.putIfAbsent(key, created)
             if (prev == null) {
                 return try {
-                    val result = executeRefresh(normalizedAccount, accKey, safeFolder, key)
+                    val result = executeRefresh(normalizedAccount, accKey, safeFolder, key, providerTypeHint, maxPages)
                     created.complete(result)
                     result
                 } catch (e: CancellationException) {
@@ -164,7 +166,7 @@ class CloudFileRepository @JvmOverloads constructor(
         val deferred = CompletableDeferred<Result<Unit>>()
         inFlightRefreshes[key] = deferred
         return try {
-            val result = executeRefresh(normalizedAccount, accKey, safeFolder, key)
+            val result = executeRefresh(normalizedAccount, accKey, safeFolder, key, providerTypeHint, maxPages)
             deferred.complete(result)
             result
         } catch (e: CancellationException) {
@@ -183,10 +185,22 @@ class CloudFileRepository @JvmOverloads constructor(
         normalizedAccount: String?,
         accKey: String,
         safeFolder: String,
-        key: String
+        key: String,
+        providerTypeHint: String? = null,
+        maxPages: Int = Int.MAX_VALUE
     ): Result<Unit> {
+        val persistedMeta = db.folderSyncMetaDao().getMeta(accKey, safeFolder)
+        val resolvedProviderType = db.accountDao().getAccountById(normalizedAccount ?: "")?.accountType
+            ?.takeIf { it.isNotBlank() }
+            ?: providerTypeHint?.takeIf { it.isNotBlank() && it != "unknown" }
+            ?: persistedMeta?.providerType?.takeIf { it.isNotBlank() }
+            ?: "unknown"
+        val resumeCursor = persistedMeta?.continuationToken?.takeIf {
+            it.isNotBlank() && !persistedMeta.isCompleteSnapshot && persistedMeta.syncState == "PARTIAL"
+        }
+        var currentContinuationToken: String? = resumeCursor
+
         return try {
-            val persistedMeta = db.folderSyncMetaDao().getMeta(accKey, safeFolder)
             val storedEtag = persistedMeta?.etag ?: etagMap[key]
             val attemptAt = nowMillis()
             db.folderSyncMetaDao().upsert(
@@ -195,13 +209,13 @@ class CloudFileRepository @JvmOverloads constructor(
                     folderId = safeFolder,
                     etag = storedEtag,
                     lastSyncedAt = persistedMeta?.lastSyncedAt ?: 0L,
-                    providerType = persistedMeta?.providerType ?: "unknown",
+                    providerType = resolvedProviderType,
                     syncState = "RUNNING",
                     lastRequestedAt = attemptAt,
                     lastSuccessfulAt = persistedMeta?.lastSuccessfulAt,
                     lastAttemptAt = attemptAt,
                     isCompleteSnapshot = false,
-                    continuationToken = null,
+                    continuationToken = currentContinuationToken,
                     remoteRevision = persistedMeta?.remoteRevision
                 )
             )
@@ -213,11 +227,14 @@ class CloudFileRepository @JvmOverloads constructor(
             val apiAccountId = normalizedAccount
 
             val allFiles = mutableListOf<CloudFile>()
-            var cursor: String? = null
-            var isFirstPage = true
+            var cursor: String? = resumeCursor
+            var isFirstPage = resumeCursor == null
+            val startedFromContinuation = resumeCursor != null
             var latestEtag: String? = storedEtag
+            var pagesFetched = 0
+            val pageBudget = maxPages.coerceAtLeast(1)
 
-            while (true) {
+            while (pagesFetched < pageBudget) {
                 val response = api.getFiles(
                     accountId = apiAccountId,
                     folderId = apiFolderId,
@@ -233,16 +250,20 @@ class CloudFileRepository @JvmOverloads constructor(
                     if (!responseEtag.isNullOrBlank()) {
                         etagMap[key] = responseEtag
                     }
+                    val syncTime = nowMillis()
                     db.folderSyncMetaDao().upsert(
                         LocalFolderSyncMeta(
                             accountKey = accKey,
                             folderId = safeFolder,
                             etag = responseEtag,
-                            lastSyncedAt = nowMillis(),
-                            providerType = db.accountDao().getAccountById(normalizedAccount ?: "")?.accountType ?: "unknown",
+                            lastSyncedAt = syncTime,
+                            providerType = resolvedProviderType,
                             syncState = "SUCCESS",
-                            lastSuccessfulAt = nowMillis(),
+                            lastRequestedAt = attemptAt,
+                            lastSuccessfulAt = syncTime,
+                            lastAttemptAt = attemptAt,
                             isCompleteSnapshot = true,
+                            continuationToken = null,
                             remoteRevision = responseEtag
                         )
                     )
@@ -267,9 +288,29 @@ class CloudFileRepository @JvmOverloads constructor(
 
                 val pageFiles = response.body().orEmpty()
                 allFiles.addAll(pageFiles)
+                pagesFetched++
 
-                val nextCursor = response.headers()["X-Next-Cursor"]
-                if (nextCursor.isNullOrBlank() || nextCursor == cursor) {
+                val nextCursor = response.headers()["X-Next-Cursor"]?.takeIf { it.isNotBlank() && it != cursor }
+                currentContinuationToken = nextCursor
+                if (nextCursor != null) {
+                    db.folderSyncMetaDao().upsert(
+                        LocalFolderSyncMeta(
+                            accountKey = accKey,
+                            folderId = safeFolder,
+                            etag = latestEtag,
+                            lastSyncedAt = persistedMeta?.lastSyncedAt ?: 0L,
+                            providerType = resolvedProviderType,
+                            syncState = "RUNNING",
+                            lastRequestedAt = attemptAt,
+                            lastSuccessfulAt = persistedMeta?.lastSuccessfulAt,
+                            lastAttemptAt = attemptAt,
+                            isCompleteSnapshot = false,
+                            continuationToken = nextCursor,
+                            remoteRevision = latestEtag
+                        )
+                    )
+                }
+                if (nextCursor == null) {
                     break
                 }
                 cursor = nextCursor
@@ -309,26 +350,31 @@ class CloudFileRepository @JvmOverloads constructor(
                     )
                 }
             val allLocal = (serverRows + optimisticFolders).distinctBy { it.id }
-            // Only a fully consumed listing is allowed to remove absent rows. Record tombstones
-            // in the same transaction so UI history and the file index cannot diverge.
-            val providerType = db.accountDao().getAccountById(normalizedAccount ?: "")?.accountType ?: "unknown"
+            val isCompleteListing = currentContinuationToken == null && !startedFromContinuation
+            val snapshot = com.cloudyte.app.core.sync.ReconciliationPolicy.Snapshot(
+                files = allLocal,
+                isComplete = isCompleteListing,
+                continuationToken = currentContinuationToken,
+                remoteRevision = latestEtag
+            )
+
+            // Only a complete snapshot is allowed to generate tombstones or remove missing local rows.
             db.withTransaction {
-                val existingIds = db.cloudFileDao().getFileIdsForFolder(normalizedAccount, safeFolder)
-                val validIds = allLocal.map { it.id }.toSet()
-                val staleIds = existingIds.filterNot(validIds::contains)
-                if (staleIds.isNotEmpty()) {
-                    db.fileTombstoneDao().insertAll(staleIds.map { remoteId ->
-                        LocalFileTombstone(
-                            tombstoneId = "$accKey:$safeFolder:$remoteId",
-                            accountId = accKey,
-                            providerType = providerType,
-                            remoteId = remoteId,
+                if (snapshot.isCompleteSnapshot) {
+                    val existingIds = db.cloudFileDao().getFileIdsForFolder(normalizedAccount, safeFolder)
+                    val staleIds = com.cloudyte.app.core.sync.ReconciliationPolicy.staleIds(existingIds, snapshot)
+                    if (staleIds.isNotEmpty()) {
+                        val tombstones = com.cloudyte.app.core.sync.ReconciliationPolicy.tombstonesFor(
+                            existingIds = existingIds,
+                            snapshot = snapshot,
+                            accountKey = accKey,
+                            providerType = resolvedProviderType,
                             folderId = safeFolder,
-                            deletedAt = now,
-                            sourceRevision = latestEtag
+                            deletedAt = now
                         )
-                    })
-                    db.cloudFileDao().deleteByIds(staleIds)
+                        db.fileTombstoneDao().insertAll(tombstones)
+                        db.cloudFileDao().deleteByIds(staleIds)
+                    }
                 }
                 val currentIds = allLocal.map { it.id }
                 if (currentIds.isNotEmpty()) {
@@ -337,18 +383,20 @@ class CloudFileRepository @JvmOverloads constructor(
                 db.cloudFileDao().insertFiles(allLocal)
             }
 
-            // Persist folder sync metadata (ETag + lastSyncedAt)
+            val isFullySynced = currentContinuationToken == null
             db.folderSyncMetaDao().upsert(
                 LocalFolderSyncMeta(
                     accountKey = accKey,
                     folderId = safeFolder,
                     etag = latestEtag,
-                    lastSyncedAt = now,
-                    providerType = providerType,
-                    syncState = "SUCCESS",
-                    lastSuccessfulAt = now,
-                    isCompleteSnapshot = true,
-                    continuationToken = null,
+                    lastSyncedAt = if (isFullySynced) now else (persistedMeta?.lastSyncedAt ?: 0L),
+                    providerType = resolvedProviderType,
+                    syncState = if (isFullySynced) "SUCCESS" else "PARTIAL",
+                    lastRequestedAt = attemptAt,
+                    lastSuccessfulAt = if (isFullySynced) now else persistedMeta?.lastSuccessfulAt,
+                    lastAttemptAt = attemptAt,
+                    isCompleteSnapshot = isFullySynced,
+                    continuationToken = currentContinuationToken,
                     remoteRevision = latestEtag
                 )
             )
@@ -359,18 +407,21 @@ class CloudFileRepository @JvmOverloads constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            val previous = db.folderSyncMetaDao().getMeta(accKey, safeFolder)
+            val previous = db.folderSyncMetaDao().getMeta(accKey, safeFolder) ?: persistedMeta
             db.folderSyncMetaDao().upsert(
                 LocalFolderSyncMeta(
                     accountKey = accKey,
                     folderId = safeFolder,
                     etag = previous?.etag,
                     lastSyncedAt = previous?.lastSyncedAt ?: 0L,
-                    providerType = previous?.providerType ?: "unknown",
+                    providerType = resolvedProviderType,
                     syncState = "FAILED",
+                    lastRequestedAt = previous?.lastRequestedAt,
                     lastSuccessfulAt = previous?.lastSuccessfulAt,
                     lastAttemptAt = nowMillis(),
                     isCompleteSnapshot = false,
+                    continuationToken = currentContinuationToken ?: previous?.continuationToken,
+                    remoteRevision = previous?.remoteRevision,
                     lastErrorCode = "REFRESH_FAILED",
                     lastErrorMessage = e.message
                 )

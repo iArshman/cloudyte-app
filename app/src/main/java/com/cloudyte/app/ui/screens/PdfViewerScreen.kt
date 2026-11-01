@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.cloudyte.app.api.ApiClient
+import com.cloudyte.app.api.CloudFile
 import com.cloudyte.app.api.FileRepository
 import com.cloudyte.app.api.OfflineFileManager
 import com.cloudyte.app.ui.theme.AccentBlue
@@ -53,11 +54,22 @@ fun PdfViewerScreen(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val file = remember(fileId) { FileRepository.getFile(fileId) }
+    var dbFile by remember(fileId) { mutableStateOf<CloudFile?>(null) }
+    LaunchedEffect(fileId) {
+        val app = context.applicationContext as? com.cloudyte.app.CloudyteApplication
+        if (app != null) {
+            val local = app.container.database.cloudFileDao().getFileById(fileId)?.toCloudFile()
+            if (local != null) {
+                FileRepository.cacheFiles(listOf(local))
+                dbFile = local
+            }
+        }
+    }
+    val file = remember(fileId, dbFile) { FileRepository.getFile(fileId) ?: dbFile }
     val fileName = file?.effectiveName ?: "Document.pdf"
 
     val pdfUrl = remember(accountId, fileId) {
-        ApiClient.getFileUrl(accountId, fileId, preview = false)
+        ApiClient.getFileUrl(accountId, fileId, preview = true)
     }
 
     var isLoading by remember { mutableStateOf(true) }
@@ -120,7 +132,7 @@ fun PdfViewerScreen(
                         val token = ApiClient.getToken()
                         val requestBuilder = Request.Builder().url(pdfUrl)
                         if (!token.isNullOrEmpty()) {
-                            requestBuilder.addHeader("Authorization", "Bearer $token")
+                            requestBuilder.header("Authorization", "Bearer $token")
                         }
                         val response = ApiClient.okHttpClient.newCall(requestBuilder.build()).execute()
                         if (!response.isSuccessful) {

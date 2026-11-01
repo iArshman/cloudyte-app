@@ -32,13 +32,18 @@ data class UploadResult(
     val statusCode: Int = 0,
     val errorMessage: String? = null,
     val fileName: String = "",
-    val isIoError: Boolean = false
+    val isIoError: Boolean = false,
+    val isPermanentFailure: Boolean = false
 ) {
-    val isRetryable: Boolean
-        get() = isIoError || statusCode == 429 || statusCode in 500..599
-
     val isFatalClientError: Boolean
-        get() = !isIoError && statusCode in 400..499 && statusCode != 429
+        get() = isPermanentFailure || (!isIoError && statusCode in PERMANENT_HTTP_CODES)
+
+    val isRetryable: Boolean
+        get() = !isSuccess && !isFatalClientError && statusCode != 401
+
+    companion object {
+        val PERMANENT_HTTP_CODES = setOf(400, 403, 404, 405, 409, 410, 413, 414, 415, 422, 507)
+    }
 }
 
 private class ContentUriStreamRequestBody(

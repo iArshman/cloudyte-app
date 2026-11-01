@@ -78,7 +78,7 @@ fun TextEditorScreen(
                     val token = ApiClient.getToken()
                     val requestBuilder = Request.Builder().url(fileUrl)
                     if (!token.isNullOrEmpty()) {
-                        requestBuilder.addHeader("Authorization", "Bearer $token")
+                        requestBuilder.header("Authorization", "Bearer $token")
                     }
                     val response = ApiClient.okHttpClient.newCall(requestBuilder.build()).execute()
                     if (response.isSuccessful) {

@@ -82,14 +82,22 @@ class TransferRepository(
 
     suspend fun pauseTransfer(id: String) {
         val transfer = transferDao.getById(id) ?: return
-        if (transfer.status == TransferStatus.RUNNING.name || transfer.status == TransferStatus.PENDING.name) {
+        if (transfer.status == TransferStatus.RUNNING.name ||
+            transfer.status == TransferStatus.PENDING.name ||
+            transfer.state in setOf("QUEUED", "RUNNING", "WAITING_FOR_NETWORK", "WAITING_FOR_AUTH")
+        ) {
+            com.cloudyte.app.core.transfer.ActiveTransferSignalRegistry.signalPause(id)
             transferDao.updateStatus(id, TransferStatus.PAUSED.name)
         }
     }
 
     suspend fun resumeTransfer(id: String) {
         val transfer = transferDao.getById(id) ?: return
-        if (transfer.status == TransferStatus.PAUSED.name || transfer.status == TransferStatus.FAILED.name) {
+        if (transfer.status == TransferStatus.PAUSED.name ||
+            transfer.status == TransferStatus.FAILED.name ||
+            transfer.state in setOf("PAUSED", "PAUSING", "FAILED_RETRYABLE")
+        ) {
+            com.cloudyte.app.core.transfer.ActiveTransferSignalRegistry.clear(id)
             transferDao.updateStatus(id, TransferStatus.PENDING.name)
         }
     }
@@ -97,6 +105,7 @@ class TransferRepository(
     suspend fun retryTransfer(id: String) {
         val transfer = transferDao.getById(id) ?: return
         if (transfer.state in setOf("FAILED_RETRYABLE", "WAITING_FOR_AUTH", "WAITING_FOR_NETWORK")) {
+            com.cloudyte.app.core.transfer.ActiveTransferSignalRegistry.clear(id)
             transferDao.updateStatus(id, TransferStatus.PENDING.name, error = null)
             transferDao.incrementAttempt(id)
         }
@@ -105,15 +114,19 @@ class TransferRepository(
     suspend fun cancelTransfer(id: String) {
         val transfer = transferDao.getById(id) ?: return
         if (transfer.state in setOf("COMPLETED", "CANCELLED", "EXPIRED", "FAILED_PERMANENT")) return
+        com.cloudyte.app.core.transfer.ActiveTransferSignalRegistry.signalCancel(id)
         val sessionId = transfer.providerSessionId
         val providerRegistry = providers
         if (!sessionId.isNullOrBlank() && providerRegistry != null && transfer.direction != TransferDirection.DOWNLOAD.name) {
             try {
-                val provider = providerRegistry.forAccountType(transfer.providerType)
+                val effectiveProviderType = transfer.providerType?.takeIf { it.isNotBlank() } ?: "cloudyte"
+                val provider = providerRegistry.forAccountType(effectiveProviderType)
                 val response = provider.cancelUploadSession(sessionId)
                 // Do not claim cancellation is terminal when the provider/server could not
                 // confirm that its session stopped; leave the row visible for retry/recovery.
                 if (!response.isSuccessful) return
+            } catch (_: com.cloudyte.app.data.providers.UnsupportedProviderOperation) {
+                // Provider does not support remote session cancellation; proceed with local cancellation.
             } catch (_: Exception) {
                 return
             }

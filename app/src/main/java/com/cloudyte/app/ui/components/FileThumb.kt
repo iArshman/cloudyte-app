@@ -21,8 +21,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -37,11 +39,14 @@ import coil.compose.AsyncImagePainter
 import coil.compose.rememberAsyncImagePainter
 import com.cloudyte.app.CloudyteApplication
 import com.cloudyte.app.api.CloudFile
+import com.cloudyte.app.api.OfflineFileManager
+import com.cloudyte.app.core.cache.CacheKeyFactory
 import com.cloudyte.app.ui.theme.FileAudio
 import com.cloudyte.app.ui.theme.FileCode
 import com.cloudyte.app.ui.theme.FileDoc
 import com.cloudyte.app.ui.theme.FilePdf
 import com.cloudyte.app.ui.theme.FileVideo
+import java.io.File
 
 @Composable
 fun FileThumb(
@@ -50,20 +55,58 @@ fun FileThumb(
     sizeDp: Dp = 48.dp,
     modifier: Modifier = Modifier,
     cornerRadius: Dp = 12.dp,
-    showTypeBadgeInGrid: Boolean = false
+    showTypeBadgeInGrid: Boolean = false,
+    localSource: File? = null
 ) {
     val context = LocalContext.current
     val app = context.applicationContext as? CloudyteApplication
+    val downloadedFiles by OfflineFileManager.downloadedFiles.collectAsState()
+    val isDownloadedOffline = file.effectiveId in downloadedFiles
+    val effectiveAccountId = remember(accountId, file.accountId, file.thumbUrl) {
+        when {
+            accountId.isNotBlank() && accountId != "root" && accountId != "all" -> accountId
+            !file.accountId.isNullOrBlank() && file.accountId != "root" && file.accountId != "all" -> file.accountId
+            !file.thumbUrl.isNullOrBlank() -> {
+                Regex("""/api/thumb/([^/?]+)""").find(file.thumbUrl)?.groupValues?.getOrNull(1).orEmpty()
+            }
+            else -> ""
+        }
+    }
     val isPreviewable = (file.isImage || file.isVideo || !file.thumbUrl.isNullOrBlank()) &&
-        file.effectiveId.isNotBlank() && accountId.isNotBlank() && accountId != "root" && accountId != "all"
-    val thumbnailPath by produceState<String?>(null, accountId, file.effectiveId, file.updatedAt, sizeDp, isPreviewable) {
+        file.effectiveId.isNotBlank() && !file.isFolderItem
+    val thumbnailPath by produceState<String?>(
+        initialValue = null,
+        effectiveAccountId,
+        file.effectiveId,
+        file.updatedAt,
+        sizeDp,
+        isPreviewable,
+        isDownloadedOffline,
+        localSource?.absolutePath
+    ) {
         if (isPreviewable && app != null) {
-            val account = app.container.database.accountDao().getAccountById(accountId)
+            val resolvedAccId = if (effectiveAccountId.isNotBlank()) {
+                effectiveAccountId
+            } else {
+                app.container.database.accountDao().getAllAccounts().firstOrNull()?.id.orEmpty()
+            }
+            if (resolvedAccId.isBlank()) return@produceState
+            val account = app.container.database.accountDao().getAccountById(resolvedAccId)
+            val providerType = account?.accountType ?: "tgdrive"
+            val previewRevision = file.updatedAt?.toString() ?: file.time?.toString()
+            val resolvedLocalSource = localSource?.takeIf { it.isFile && it.length() > 0L }
+                ?: OfflineFileManager.findOfflineFile(context, resolvedAccId, file.effectiveId)
+                ?: app.container.previewStore.get(
+                    CacheKeyFactory.preview(resolvedAccId, providerType, file.effectiveId, previewRevision)
+                )
+                ?: file.path?.takeIf { it.isNotBlank() }?.let(::File)?.takeIf { it.isFile && it.length() > 0L }
+                ?: file.location?.takeIf { it.isNotBlank() }?.let(::File)?.takeIf { it.isFile && it.length() > 0L }
             value = app.container.thumbnailStore.resolve(
-                accountId = accountId,
-                providerType = account?.accountType ?: "unknown",
+                accountId = resolvedAccId,
+                providerType = providerType,
                 file = file,
-                sizePx = (sizeDp.value * 4).toInt().coerceIn(64, 512)
+                sizePx = (sizeDp.value * 4).toInt().coerceIn(64, 512),
+                localSource = resolvedLocalSource
             )
         }
     }
@@ -77,8 +120,21 @@ fun FileThumb(
         modifier = containerModifier.clip(RoundedCornerShape(cornerRadius)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)),
         contentAlignment = Alignment.Center
     ) {
-        if (thumbnailPath != null) {
-            val painter = rememberAsyncImagePainter(model = thumbnailPath)
+        if (!thumbnailPath.isNullOrBlank()) {
+            val imageModel: Any = remember(thumbnailPath) {
+                if (thumbnailPath!!.startsWith("/")) {
+                    File(thumbnailPath!!)
+                } else {
+                    thumbnailPath!!
+                }
+            }
+            val request = remember(imageModel, context) {
+                coil.request.ImageRequest.Builder(context)
+                    .data(imageModel)
+                    .crossfade(150)
+                    .build()
+            }
+            val painter = rememberAsyncImagePainter(model = request)
             val state = painter.state
             when (state) {
                 is AsyncImagePainter.State.Loading, is AsyncImagePainter.State.Empty ->
