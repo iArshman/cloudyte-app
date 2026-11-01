@@ -19,6 +19,7 @@ import com.cloudyte.app.core.cache.ThumbnailStore
 import com.cloudyte.app.core.cache.PreviewStore
 import com.cloudyte.app.core.cache.CacheQuotaManager
 import com.cloudyte.app.core.transfer.TransferDiagnostics
+import com.cloudyte.app.core.release.TransferRolloutGate
 import com.cloudyte.app.data.CloudFileRepository
 import com.cloudyte.app.data.TransferRepository
 import com.cloudyte.app.data.repository.FileRepositoryImpl
@@ -100,6 +101,9 @@ class AppContainer(context: Context) {
     val transferScheduler: TransferScheduler by lazy { TransferScheduler(appContext) }
 
     val transferDiagnostics: TransferDiagnostics by lazy { TransferDiagnostics() }
+
+    /** Fail-safe kill switch for staged production rollout; queued rows remain durable when disabled. */
+    val transferRolloutGate: TransferRolloutGate by lazy { TransferRolloutGate(appContext) }
 
     val transferQueueDrainer by lazy {
         RoomTransferQueueDrainer(

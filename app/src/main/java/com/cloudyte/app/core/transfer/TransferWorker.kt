@@ -38,6 +38,17 @@ class TransferWorker(
 
     private suspend fun drainQueue(application: CloudyteApplication): Result {
         val container = application.container
+        if (!container.transferRolloutGate.isEnabled()) {
+            val rollout = container.transferRolloutGate.current()
+            container.transferDiagnostics.recordEvent(
+                operationType = "rollout_gate",
+                state = "DISABLED",
+                errorCode = "ROLLOUT_DISABLED",
+                networkState = rollout.reason,
+                workerRunId = id.toString()
+            )
+            return Result.success()
+        }
         val now = System.currentTimeMillis()
         container.database.transferQueueDao().recoverExpiredLeases(now)
         container.database.transferQueueDao().requeueNetworkWaiters(now)

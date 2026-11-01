@@ -150,7 +150,7 @@ object UploadHelper {
                 } else {
                     val rawErr = response.errorBody()?.string()
                     val parsedErr = ApiClient.parseError(rawErr, response.code())
-                    Log.e("UploadHelper", "Upload failed: HTTP ${response.code()} $parsedErr (Raw: $rawErr)")
+                    Log.e("UploadHelper", "Upload failed: HTTP ${response.code()}")
                     UploadResult(
                         isSuccess = false,
                         statusCode = response.code(),
@@ -162,7 +162,7 @@ object UploadHelper {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: HttpException) {
-                Log.e("UploadHelper", "HTTP exception during upload", e)
+                Log.e("UploadHelper", "HTTP exception during upload: ${e.code()}")
                 UploadResult(
                     isSuccess = false,
                     statusCode = e.code(),
@@ -171,7 +171,7 @@ object UploadHelper {
                     isIoError = false
                 )
             } catch (e: IOException) {
-                Log.e("UploadHelper", "IOException during upload", e)
+                Log.e("UploadHelper", "Network I/O failure during upload")
                 UploadResult(
                     isSuccess = false,
                     errorMessage = e.localizedMessage ?: e.message ?: "Network I/O error",
@@ -179,7 +179,7 @@ object UploadHelper {
                     isIoError = true
                 )
             } catch (e: Exception) {
-                Log.e("UploadHelper", "Exception during upload", e)
+                Log.e("UploadHelper", "Unexpected upload failure: ${e::class.simpleName}")
                 UploadResult(
                     isSuccess = false,
                     errorMessage = e.localizedMessage ?: e.message ?: "Unknown upload error",
