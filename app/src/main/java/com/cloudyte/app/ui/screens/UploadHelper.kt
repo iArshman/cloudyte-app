@@ -8,6 +8,7 @@ import android.util.Log
 import android.webkit.MimeTypeMap
 import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.api.UploadSessionRequest
+import com.cloudyte.app.core.transfer.ResumableTransfer
 import com.cloudyte.app.data.providers.CloudProvider
 import com.cloudyte.app.data.providers.CloudyteProvider
 import kotlinx.coroutines.Dispatchers
