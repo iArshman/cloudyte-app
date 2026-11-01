@@ -302,7 +302,9 @@ data class UploadSessionRequest(
     val size: Long,
     val folderId: String? = null,
     val checksum: String? = null,
-    val idempotencyKey: String
+    val idempotencyKey: String,
+    val providerType: String? = null,
+    val desiredChunkSize: Long? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -312,7 +314,10 @@ data class UploadSessionResponse(
     val receivedBytes: Long = 0L,
     val totalBytes: Long = 0L,
     val chunkSize: Long = 8L * 1024L * 1024L,
-    val checksum: String? = null
+    val checksum: String? = null,
+    val providerType: String? = null,
+    val providerResumable: Boolean? = null,
+    val providerCancellable: Boolean? = null
 )
 
 @JsonClass(generateAdapter = true)

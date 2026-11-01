@@ -227,7 +227,9 @@ object UploadHelper {
                 size = totalBytes,
                 folderId = folderId,
                 checksum = checksum,
-                idempotencyKey = idempotencyKey
+                idempotencyKey = idempotencyKey,
+                providerType = provider.type,
+                desiredChunkSize = ResumableTransfer.DEFAULT_CHUNK_SIZE
             )
             var sessionResponse = provider.createUploadSession(accountId, sessionRequest)
             if (!sessionResponse.isSuccessful || sessionResponse.body() == null) {

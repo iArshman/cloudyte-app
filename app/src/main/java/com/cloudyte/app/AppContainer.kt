@@ -65,7 +65,7 @@ class AppContainer(context: Context) {
     }
 
     val transferRepository: TransferRepository by lazy {
-        TransferRepository(database.transferDao())
+        TransferRepository(database.transferDao(), providerRegistry)
     }
 
     val transferScheduler: TransferScheduler by lazy { TransferScheduler(appContext) }
