@@ -61,17 +61,29 @@ fun TextEditorScreen(
     var showSearchBar by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
 
-    val fileUrl = remember(accountId, fileId) {
-        ApiClient.getFileUrl(accountId, fileId, preview = false)
+    val effectiveAccId = remember(accountId, file?.effectiveAccountId) {
+        when {
+            file?.effectiveAccountId?.isNotBlank() == true -> file.effectiveAccountId
+            accountId.isNotBlank() && accountId != "all" && accountId != "root" -> accountId
+            else -> ""
+        }
+    }
+
+    val fileUrl = remember(effectiveAccId, fileId) {
+        val acc = effectiveAccId.ifBlank { accountId }
+        ApiClient.getFileUrl(acc, fileId, preview = false)
     }
 
     // Load file content
-    LaunchedEffect(fileId) {
+    LaunchedEffect(fileId, effectiveAccId) {
         isLoading = true
         errorMessage = null
         try {
             val content = withContext(Dispatchers.IO) {
-                val offlineFile = OfflineFileManager.findOfflineFile(context, accountId, fileId)
+                val acc = effectiveAccId.ifBlank { accountId }
+                val offlineFile = if (acc.isNotBlank() && acc != "all" && acc != "root") {
+                    OfflineFileManager.findOfflineFile(context, acc, fileId)
+                } else null
                 if (offlineFile != null && offlineFile.exists() && offlineFile.length() > 0) {
                     offlineFile.readText()
                 } else {

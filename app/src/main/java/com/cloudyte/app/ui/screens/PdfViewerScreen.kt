@@ -68,8 +68,17 @@ fun PdfViewerScreen(
     val file = remember(fileId, dbFile) { FileRepository.getFile(fileId) ?: dbFile }
     val fileName = file?.effectiveName ?: "Document.pdf"
 
-    val pdfUrl = remember(accountId, fileId) {
-        ApiClient.getFileUrl(accountId, fileId, preview = true)
+    val effectiveAccId = remember(accountId, file?.effectiveAccountId) {
+        when {
+            file?.effectiveAccountId?.isNotBlank() == true -> file.effectiveAccountId
+            accountId.isNotBlank() && accountId != "all" && accountId != "root" -> accountId
+            else -> ""
+        }
+    }
+
+    val pdfUrl = remember(effectiveAccId, fileId) {
+        val acc = effectiveAccId.ifBlank { accountId }
+        ApiClient.getFileUrl(acc, fileId, preview = true)
     }
 
     var isLoading by remember { mutableStateOf(true) }

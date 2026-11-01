@@ -212,6 +212,21 @@ data class CloudFile(
     val effectiveName: String get() = name ?: fileName ?: title ?: "Unnamed File"
     val isFolderItem: Boolean get() = isFolder == true || is_dir == true || isDirectory == true || type.equals("folder", ignoreCase = true)
     
+    val effectiveAccountId: String
+        get() {
+            if (!accountId.isNullOrBlank() && accountId != "all" && accountId != "root") {
+                return accountId
+            }
+            if (!thumbUrl.isNullOrBlank()) {
+                val match = Regex("""/api/(?:thumb|download)/([^/?#]+)""").find(thumbUrl)
+                val extracted = match?.groupValues?.getOrNull(1)
+                if (!extracted.isNullOrBlank() && extracted != "all" && extracted != "root") {
+                    return extracted
+                }
+            }
+            return ""
+        }
+    
     val fileExtension: String
         get() = effectiveName.substringAfterLast('.', "").lowercase(Locale.US)
 

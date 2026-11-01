@@ -97,10 +97,20 @@ fun VideoPlayerScreen(
     var playbackSpeed by remember { mutableFloatStateOf(1f) }
     var showSpeedDialog by remember { mutableStateOf(false) }
 
+    val effectiveAccId = remember(accountId, file?.effectiveAccountId) {
+        when {
+            file?.effectiveAccountId?.isNotBlank() == true -> file.effectiveAccountId
+            accountId.isNotBlank() && accountId != "all" && accountId != "root" -> accountId
+            else -> ""
+        }
+    }
+
     // Auto-cache video for offline viewing in background
-    LaunchedEffect(currentActiveFileId, file) {
-        file?.let {
-            OfflineFileManager.autoCacheOnView(context, accountId, it)
+    LaunchedEffect(currentActiveFileId, file, effectiveAccId) {
+        if (effectiveAccId.isNotBlank()) {
+            file?.let {
+                OfflineFileManager.autoCacheOnView(context, effectiveAccId, it)
+            }
         }
     }
 
@@ -114,11 +124,14 @@ fun VideoPlayerScreen(
             .setDefaultRequestProperties(headers)
             .setAllowCrossProtocolRedirects(true)
 
-        val offlineFile = OfflineFileManager.findOfflineFile(context, accountId, fileId)
+        val offlineFile = if (effectiveAccId.isNotBlank()) {
+            OfflineFileManager.findOfflineFile(context, effectiveAccId, fileId)
+        } else null
         val initialMediaItem = if (offlineFile != null && offlineFile.exists() && offlineFile.length() > 0) {
             MediaItem.fromUri(Uri.fromFile(offlineFile))
         } else {
-            val initialUrl = ApiClient.getFileUrl(accountId, fileId, preview = true)
+            val acc = effectiveAccId.ifBlank { accountId }
+            val initialUrl = ApiClient.getFileUrl(acc, fileId, preview = true)
             MediaItem.fromUri(initialUrl)
         }
 
@@ -132,12 +145,15 @@ fun VideoPlayerScreen(
     }
 
     // Update media source when switching videos
-    LaunchedEffect(currentActiveFileId) {
-        val offlineFile = OfflineFileManager.findOfflineFile(context, accountId, currentActiveFileId)
+    LaunchedEffect(currentActiveFileId, effectiveAccId) {
+        val offlineFile = if (effectiveAccId.isNotBlank()) {
+            OfflineFileManager.findOfflineFile(context, effectiveAccId, currentActiveFileId)
+        } else null
         val mediaItem = if (offlineFile != null && offlineFile.exists() && offlineFile.length() > 0) {
             MediaItem.fromUri(Uri.fromFile(offlineFile))
         } else {
-            val url = ApiClient.getFileUrl(accountId, currentActiveFileId, preview = true)
+            val acc = effectiveAccId.ifBlank { accountId }
+            val url = ApiClient.getFileUrl(acc, currentActiveFileId, preview = true)
             MediaItem.fromUri(url)
         }
         exoPlayer.setMediaItem(mediaItem)
