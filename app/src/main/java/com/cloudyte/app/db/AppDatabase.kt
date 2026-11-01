@@ -17,9 +17,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         LocalStorageSummary::class,
         LocalFolderSyncMeta::class,
         LocalFileMutation::class,
-        LocalFileTombstone::class
+        LocalFileTombstone::class,
+        ThumbnailEntity::class
     ],
-    version = 12,
+    version = 13,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -32,6 +33,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun folderSyncMetaDao(): FolderSyncMetaDao
     abstract fun fileMutationDao(): FileMutationDao
     abstract fun fileTombstoneDao(): FileTombstoneDao
+    abstract fun thumbnailDao(): ThumbnailDao
     abstract fun transferQueueDao(): TransferQueueDao
 
     companion object {
@@ -225,6 +227,33 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS thumbnail_cache (
+                        cacheKey TEXT NOT NULL PRIMARY KEY,
+                        accountId TEXT NOT NULL,
+                        providerType TEXT NOT NULL,
+                        remoteId TEXT NOT NULL,
+                        sourceRevision TEXT,
+                        path TEXT NOT NULL,
+                        mimeType TEXT NOT NULL,
+                        width INTEGER,
+                        height INTEGER,
+                        sizeBytes INTEGER NOT NULL,
+                        isEncrypted INTEGER NOT NULL DEFAULT 0,
+                        generatedAt INTEGER NOT NULL,
+                        lastAccessAt INTEGER NOT NULL,
+                        failureCount INTEGER NOT NULL DEFAULT 0,
+                        nextRetryAt INTEGER
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_thumbnail_cache_accountId_lastAccessAt ON thumbnail_cache(accountId, lastAccessAt)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_thumbnail_cache_providerType_remoteId ON thumbnail_cache(providerType, remoteId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_thumbnail_cache_lastAccessAt ON thumbnail_cache(lastAccessAt)")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -242,7 +271,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_8_9,
                         MIGRATION_9_10,
                         MIGRATION_10_11,
-                        MIGRATION_11_12
+                        MIGRATION_11_12,
+                        MIGRATION_12_13
                     )
                     .build()
                 INSTANCE = instance

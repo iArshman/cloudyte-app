@@ -22,9 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -37,8 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImagePainter
 import coil.compose.rememberAsyncImagePainter
-import coil.request.ImageRequest
-import com.cloudyte.app.api.ApiClient
+import com.cloudyte.app.CloudyteApplication
 import com.cloudyte.app.api.CloudFile
 import com.cloudyte.app.ui.theme.FileAudio
 import com.cloudyte.app.ui.theme.FileCode
@@ -56,168 +53,62 @@ fun FileThumb(
     showTypeBadgeInGrid: Boolean = false
 ) {
     val context = LocalContext.current
-    val validAccount = accountId.isNotBlank() && accountId != "root" && accountId != "all"
+    val app = context.applicationContext as? CloudyteApplication
     val isPreviewable = (file.isImage || file.isVideo || !file.thumbUrl.isNullOrBlank()) &&
-        file.effectiveId.isNotBlank() &&
-        (validAccount || !file.thumbUrl.isNullOrBlank())
-
-    val fallbackPreviewUrl = remember(file.effectiveId, accountId, validAccount) {
-        if (validAccount && file.effectiveId.isNotBlank()) {
-            ApiClient.getFileUrl(accountId = accountId, fileId = file.effectiveId, preview = true)
-        } else {
-            null
+        file.effectiveId.isNotBlank() && accountId.isNotBlank() && accountId != "root" && accountId != "all"
+    val thumbnailPath by produceState<String?>(null, accountId, file.effectiveId, file.updatedAt, sizeDp, isPreviewable) {
+        if (isPreviewable && app != null) {
+            val account = app.container.database.accountDao().getAccountById(accountId)
+            value = app.container.thumbnailStore.resolve(
+                accountId = accountId,
+                providerType = account?.accountType ?: "unknown",
+                file = file,
+                sizePx = (sizeDp.value * 4).toInt().coerceIn(64, 512)
+            )
         }
     }
 
-    val generatedThumbUrl = remember(file.effectiveId, accountId, file.isImage, file.isVideo, validAccount) {
-        if (validAccount && file.effectiveId.isNotBlank() && (file.isImage || file.isVideo)) {
-            ApiClient.getThumbUrl(accountId, file.effectiveId)
-        } else {
-            null
-        }
-    }
-
-    val primaryThumbUrl = remember(file.effectiveId, file.thumbUrl, generatedThumbUrl, fallbackPreviewUrl, isPreviewable) {
-        if (!isPreviewable) {
-            null
-        } else if (generatedThumbUrl != null) {
-            generatedThumbUrl
-        } else {
-            val raw = file.thumbUrl
-            if (!raw.isNullOrBlank()) {
-                val fullUrl = if (raw.startsWith("http://") || raw.startsWith("https://")) {
-                    raw
-                } else {
-                    val path = if (raw.startsWith("/")) raw else "/$raw"
-                    "${ApiClient.API_BASE_URL}$path"
-                }
-                val token = ApiClient.getToken()
-                if (!token.isNullOrEmpty() && fullUrl.startsWith(ApiClient.API_BASE_URL) && !fullUrl.contains("token=")) {
-                    val sep = if (fullUrl.contains("?")) "&" else "?"
-                    "$fullUrl${sep}token=$token"
-                } else {
-                    fullUrl
-                }
-            } else {
-                fallbackPreviewUrl
-            }
-        }
-    }
-
-    var useFallbackUrl by remember(primaryThumbUrl, generatedThumbUrl) { mutableStateOf(false) }
-    val activeUrl = if (useFallbackUrl && fallbackPreviewUrl != null && fallbackPreviewUrl != primaryThumbUrl) {
-        fallbackPreviewUrl
-    } else {
-        primaryThumbUrl
-    }
-
-    val cacheKey = remember(file.effectiveId, file.updatedAt, useFallbackUrl) {
-        "thumb:${file.effectiveId}:${file.updatedAt}:$useFallbackUrl"
-    }
-
-    val imageRequest = remember(context, activeUrl, cacheKey) {
-        activeUrl?.let { url ->
-            val builder = ImageRequest.Builder(context)
-                .data(url)
-                .memoryCacheKey(cacheKey)
-                .diskCacheKey(cacheKey)
-                .crossfade(true)
-            val token = ApiClient.getToken()
-            if (!token.isNullOrEmpty()) {
-                builder.addHeader("Authorization", "Bearer $token")
-            }
-            builder.build()
-        }
-    }
-
-    val containerModifier = if (modifier == Modifier) {
-        Modifier.size(sizeDp)
-    } else {
-        modifier.heightIn(min = sizeDp)
-    }
-
+    val containerModifier = if (modifier == Modifier) Modifier.size(sizeDp) else modifier.heightIn(min = sizeDp)
     val iconSize = (sizeDp * 0.52f).coerceIn(22.dp, 64.dp)
     val badgeSize = (sizeDp * 0.42f).coerceIn(20.dp, 48.dp)
     val playIconSize = (badgeSize * 0.62f).coerceIn(12.dp, 28.dp)
 
     Box(
-        modifier = containerModifier
-            .clip(RoundedCornerShape(cornerRadius))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)),
+        modifier = containerModifier.clip(RoundedCornerShape(cornerRadius)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)),
         contentAlignment = Alignment.Center
     ) {
-        if (imageRequest != null) {
-            val painter = rememberAsyncImagePainter(model = imageRequest)
+        if (thumbnailPath != null) {
+            val painter = rememberAsyncImagePainter(model = thumbnailPath)
             val state = painter.state
-
             when (state) {
-                is AsyncImagePainter.State.Loading,
-                is AsyncImagePainter.State.Empty -> {
-                    FileTypeFallbackContent(
-                        file = file,
-                        iconSize = iconSize,
-                        showTypeBadgeInGrid = showTypeBadgeInGrid
-                    )
-                }
-                is AsyncImagePainter.State.Error -> {
-                    if (!useFallbackUrl && fallbackPreviewUrl != null && fallbackPreviewUrl != primaryThumbUrl) {
-                        useFallbackUrl = true
-                    }
-                    FileTypeFallbackContent(
-                        file = file,
-                        iconSize = iconSize,
-                        showTypeBadgeInGrid = showTypeBadgeInGrid
-                    )
-                }
-                is AsyncImagePainter.State.Success -> {
+                is AsyncImagePainter.State.Loading, is AsyncImagePainter.State.Empty ->
+                    FileTypeFallbackContent(file, iconSize, showTypeBadgeInGrid)
+                is AsyncImagePainter.State.Error ->
+                    FileTypeFallbackContent(file, iconSize, showTypeBadgeInGrid)
+                is AsyncImagePainter.State.Success ->
                     Image(
                         painter = painter,
                         contentDescription = file.effectiveName,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop
                     )
-                }
             }
-
             if (file.isVideo && state is AsyncImagePainter.State.Success) {
-                Box(
-                    modifier = Modifier
-                        .size(badgeSize)
-                        .background(Color.Black.copy(alpha = 0.6f), CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = "Video",
-                        tint = Color.White,
-                        modifier = Modifier.size(playIconSize)
-                    )
+                Box(Modifier.size(badgeSize).background(Color.Black.copy(alpha = 0.6f), CircleShape), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.PlayArrow, "Video", tint = Color.White, modifier = Modifier.size(playIconSize))
                 }
             }
         } else {
-            FileTypeFallbackContent(
-                file = file,
-                iconSize = iconSize,
-                showTypeBadgeInGrid = showTypeBadgeInGrid
-            )
+            FileTypeFallbackContent(file, iconSize, showTypeBadgeInGrid)
         }
     }
 }
 
 @Composable
-private fun FileTypeFallbackContent(
-    file: CloudFile,
-    iconSize: Dp,
-    showTypeBadgeInGrid: Boolean
-) {
+private fun FileTypeFallbackContent(file: CloudFile, iconSize: Dp, showTypeBadgeInGrid: Boolean) {
     if (showTypeBadgeInGrid && !file.isFolderItem && !file.isImage && !file.isVideo) {
         val rawLabel = (file.type ?: file.effectiveType).uppercase().take(4).ifBlank { "FILE" }
-        Text(
-            text = rawLabel,
-            color = MaterialTheme.colorScheme.onSurface,
-            fontWeight = FontWeight.Bold,
-            fontSize = 18.sp
-        )
+        Text(rawLabel, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 18.sp)
     } else {
         val (icon, tint) = when {
             file.isFolderItem -> Icons.Default.Folder to MaterialTheme.colorScheme.primary
@@ -228,11 +119,6 @@ private fun FileTypeFallbackContent(
             file.isTextOrCode -> Icons.Default.Code to FileCode
             else -> Icons.Default.Description to MaterialTheme.colorScheme.onSurfaceVariant
         }
-        Icon(
-            imageVector = icon,
-            contentDescription = file.effectiveName,
-            tint = tint,
-            modifier = Modifier.size(iconSize)
-        )
+        Icon(icon, file.effectiveName, tint = tint, modifier = Modifier.size(iconSize))
     }
 }

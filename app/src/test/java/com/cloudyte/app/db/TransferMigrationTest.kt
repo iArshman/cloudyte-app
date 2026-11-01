@@ -110,4 +110,32 @@ class TransferMigrationTest {
             assertTrue(columns.containsAll(setOf("state", "leaseOwner", "leaseExpiresAt", "correlationId", "nextAttemptAt")))
         }
     }
+
+    @Test
+    fun migration12To13CreatesThumbnailCacheTable() {
+        AppDatabase.MIGRATION_12_13.migrate(database)
+
+        database.query("PRAGMA table_info(thumbnail_cache)").use { cursor ->
+            val columns = mutableSetOf<String>()
+            while (cursor.moveToNext()) columns += cursor.getString(1)
+            assertTrue(columns.containsAll(setOf(
+                "cacheKey", "accountId", "providerType", "remoteId", "sourceRevision",
+                "path", "mimeType", "width", "height", "sizeBytes", "isEncrypted",
+                "generatedAt", "lastAccessAt", "failureCount", "nextRetryAt"
+            )))
+        }
+
+        database.execSQL("""
+            INSERT INTO thumbnail_cache(
+                cacheKey, accountId, providerType, remoteId, path, mimeType,
+                sizeBytes, generatedAt, lastAccessAt
+            ) VALUES ('k', 'a1', 'CLOUDYTE', 'remote-1', '/tmp/k.jpg', 'image/jpeg', 10, 1, 1)
+        """.trimIndent())
+        database.query("SELECT accountId, remoteId, sizeBytes FROM thumbnail_cache WHERE cacheKey='k'").use { row ->
+            assertTrue(row.moveToFirst())
+            assertEquals("a1", row.getString(0))
+            assertEquals("remote-1", row.getString(1))
+            assertEquals(10L, row.getLong(2))
+        }
+    }
 }
