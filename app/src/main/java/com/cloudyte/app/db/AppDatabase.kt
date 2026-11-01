@@ -18,7 +18,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         LocalFolderSyncMeta::class,
         LocalFileMutation::class
     ],
-    version = 9,
+    version = 10,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -30,6 +30,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun storageSummaryDao(): StorageSummaryDao
     abstract fun folderSyncMetaDao(): FolderSyncMetaDao
     abstract fun fileMutationDao(): FileMutationDao
+    abstract fun transferQueueDao(): TransferQueueDao
 
     companion object {
         @Volatile
@@ -147,6 +148,45 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE transfers ADD COLUMN state TEXT NOT NULL DEFAULT 'QUEUED'")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN priority INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN operationType TEXT NOT NULL DEFAULT 'UPLOAD'")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN providerType TEXT")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN remoteId TEXT")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN parentFolderId TEXT")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN localUri TEXT")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN bytesPerSecond INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN etaSeconds INTEGER")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN lastProgressAt INTEGER")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN lastAttemptAt INTEGER")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN nextAttemptAt INTEGER")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN leaseOwner TEXT")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN leaseExpiresAt INTEGER")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN lastErrorCode TEXT")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN lastErrorMessage TEXT")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN lastHttpStatus INTEGER")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN correlationId TEXT")
+                db.execSQL("""UPDATE transfers SET state = CASE status
+                    WHEN 'RUNNING' THEN 'QUEUED'
+                    WHEN 'PAUSED' THEN 'PAUSED'
+                    WHEN 'COMPLETED' THEN 'COMPLETED'
+                    WHEN 'CANCELLED' THEN 'CANCELLED'
+                    WHEN 'FAILED' THEN 'FAILED_RETRYABLE'
+                    ELSE 'QUEUED' END""")
+                db.execSQL("UPDATE transfers SET status='PENDING', errorMessage='Recovered after app update', lastErrorCode='WORKER_INTERRUPTED', lastErrorMessage='Recovered after app update' WHERE status='RUNNING'")
+                db.execSQL("UPDATE transfers SET operationType = direction WHERE direction IS NOT NULL")
+                db.execSQL("UPDATE transfers SET remoteId = fileId WHERE remoteId IS NULL AND fileId IS NOT NULL")
+                db.execSQL("UPDATE transfers SET localUri = localPath WHERE localUri IS NULL AND localPath IS NOT NULL")
+                db.execSQL("UPDATE transfers SET parentFolderId = remotePath WHERE parentFolderId IS NULL AND remotePath IS NOT NULL")
+                db.execSQL("UPDATE transfers SET providerType = (SELECT accountType FROM local_accounts WHERE local_accounts.id = transfers.accountId) WHERE providerType IS NULL")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_transfers_state_priority_createdAt ON transfers(state, priority, createdAt)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_transfers_leaseExpiresAt ON transfers(leaseExpiresAt)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_transfers_providerType_remoteId ON transfers(providerType, remoteId)")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -161,7 +201,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_5_6,
                         MIGRATION_6_7,
                         MIGRATION_7_8,
-                        MIGRATION_8_9
+                        MIGRATION_8_9,
+                        MIGRATION_9_10
                     )
                     .build()
                 INSTANCE = instance

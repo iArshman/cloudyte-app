@@ -11,6 +11,7 @@ import com.cloudyte.app.api.UploadSessionRequest
 import com.cloudyte.app.data.providers.CloudProvider
 import com.cloudyte.app.data.providers.CloudyteProvider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -158,6 +159,8 @@ object UploadHelper {
                         isIoError = false
                     )
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: HttpException) {
                 Log.e("UploadHelper", "HTTP exception during upload", e)
                 UploadResult(
@@ -275,6 +278,10 @@ object UploadHelper {
             } else {
                 UploadResult(false, complete.code(), "Could not finalize upload session", explicitFileName)
             }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: HttpException) {
+            UploadResult(false, e.code(), "HTTP ${e.code()}: ${e.message()}", explicitFileName)
         } catch (e: IOException) {
             UploadResult(false, errorMessage = e.message ?: "Resumable upload I/O error", fileName = explicitFileName, isIoError = true)
         } catch (e: Exception) {

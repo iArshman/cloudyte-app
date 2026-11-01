@@ -13,6 +13,8 @@ import retrofit2.Response
  */
 interface CloudProvider {
     val type: String
+    val capabilities: ProviderCapabilities
+        get() = ProviderCapabilities()
 
     suspend fun createUploadSession(
         accountId: String,

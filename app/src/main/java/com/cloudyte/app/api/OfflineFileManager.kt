@@ -14,6 +14,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 
 object OfflineFileManager {
@@ -148,54 +149,45 @@ object OfflineFileManager {
 
         val tempFile = File(getVaultDir(context), "${targetFile.name}.tmp")
         try {
-            val downloadUrl = ApiClient.getCleanDownloadUrl(accountId, fid, preview = false)
-            val requestBuilder = Request.Builder().url(downloadUrl)
-            val response = ApiClient.okHttpClient.newCall(requestBuilder.build()).execute()
-            if (!response.isSuccessful) {
-                throw Exception("Download failed with HTTP ${response.code}")
-            }
-
-            val body = response.body ?: throw Exception("Empty response body")
-            val totalBytes = body.contentLength()
-            var downloadedBytes = 0L
-
-            body.byteStream().use { input ->
-                FileOutputStream(tempFile).use { output ->
-                    val buffer = ByteArray(8192)
-                    var bytesRead: Int
-                    var lastUpdate = System.currentTimeMillis()
-
-                    while (input.read(buffer).also { bytesRead = it } != -1) {
-                        output.write(buffer, 0, bytesRead)
-                        downloadedBytes += bytesRead
-                        if (totalBytes > 0) {
-                            val progress = (downloadedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
-                            val now = System.currentTimeMillis()
-                            if (now - lastUpdate > 100 || progress >= 1f) {
-                                lastUpdate = now
-                                _activeDownloads.value = _activeDownloads.value + (fid to progress)
-                                onProgress?.invoke(progress)
-                            }
-                        }
+            if (tempFile.exists()) tempFile.delete()
+            val app = context.applicationContext as? com.cloudyte.app.CloudyteApplication
+                ?: throw IllegalStateException("Application transfer queue is unavailable")
+            val transferId = app.container.transferRepository.enqueueOrGetOfflineDownload(
+                accountId = accountId,
+                fileId = fid,
+                fileName = fileName,
+                destinationPath = tempFile.absolutePath,
+                totalBytes = file.sizeBytes.coerceAtLeast(0L)
+            )
+            app.container.transferCoordinator.dispatch(com.cloudyte.app.core.transfer.TransferCommand.Start(transferId))
+            val completed = kotlinx.coroutines.withTimeoutOrNull(30 * 60 * 1000L) {
+                while (true) {
+                    val row = app.container.database.transferDao().getById(transferId)
+                        ?: throw IOException("Queued download disappeared")
+                    val state = row.state
+                    val total = row.totalBytes
+                    val progress = if (total > 0L) (row.bytesTransferred.toFloat() / total).coerceIn(0f, 1f) else 0f
+                    _activeDownloads.value = _activeDownloads.value + (fid to progress)
+                    onProgress?.invoke(progress)
+                    when (state) {
+                        "COMPLETED" -> return@withTimeoutOrNull true
+                        "FAILED_RETRYABLE", "FAILED_PERMANENT", "WAITING_FOR_AUTH", "CANCELLED", "EXPIRED" ->
+                            throw IOException(row.lastErrorMessage ?: row.errorMessage ?: "Download failed ($state)")
                     }
-                    output.flush()
+                    kotlinx.coroutines.delay(250L)
                 }
-            }
-
-            if (tempFile.exists() && tempFile.length() > 0) {
+                false
+            } ?: throw IOException("Download is still queued; try again shortly")
+            if (completed && tempFile.exists()) {
                 if (targetFile.exists()) targetFile.delete()
-                if (tempFile.renameTo(targetFile)) {
-                    _downloadedFiles.value = _downloadedFiles.value + fid
-                    _activeDownloads.value = _activeDownloads.value - fid
-                    downloadingSet.remove(fid)
-                    onProgress?.invoke(1f)
-                    return@withContext Result.success(targetFile)
-                } else {
-                    throw Exception("Failed to rename temporary file to target")
-                }
-            } else {
-                throw Exception("Downloaded file is empty")
+                if (!tempFile.renameTo(targetFile)) throw IOException("Failed to promote downloaded file into offline storage")
+                _downloadedFiles.value = _downloadedFiles.value + fid
+                _activeDownloads.value = _activeDownloads.value - fid
+                downloadingSet.remove(fid)
+                onProgress?.invoke(1f)
+                return@withContext Result.success(targetFile)
             }
+            throw IOException("Queued download completed without a local file")
         } catch (e: Exception) {
             Log.e(TAG, "Download failed for $fileName", e)
             if (tempFile.exists()) tempFile.delete()
