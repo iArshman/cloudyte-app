@@ -15,6 +15,9 @@ import com.cloudyte.app.core.transfer.ScheduleReason
 import com.cloudyte.app.core.network.ConnectivityNetworkMonitor
 import com.cloudyte.app.core.network.DefaultNetworkPolicy
 import com.cloudyte.app.core.network.TransferNetworkGate
+import com.cloudyte.app.core.cache.ThumbnailStore
+import com.cloudyte.app.core.cache.PreviewStore
+import com.cloudyte.app.core.cache.CacheQuotaManager
 import com.cloudyte.app.data.CloudFileRepository
 import com.cloudyte.app.data.TransferRepository
 import com.cloudyte.app.data.repository.FileRepositoryImpl
@@ -73,6 +76,16 @@ class AppContainer(context: Context) {
 
     val database: AppDatabase by lazy {
         AppDatabase.getDatabase(appContext)
+    }
+
+    val thumbnailStore: ThumbnailStore by lazy {
+        ThumbnailStore(appContext, database.thumbnailDao())
+    }
+
+    val previewStore: PreviewStore by lazy { PreviewStore(appContext) }
+
+    val cacheQuotaManager: CacheQuotaManager by lazy {
+        CacheQuotaManager(appContext, database.thumbnailDao())
     }
 
     val cloudFileRepository: CloudFileRepository by lazy {
