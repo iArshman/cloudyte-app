@@ -40,10 +40,15 @@ class ThumbnailStore(
         sizePx: Int = 256,
         localSource: File? = null
     ): String? = withContext(Dispatchers.IO) {
-        if (accountId.isBlank() || file.effectiveId.isBlank() || file.isFolderItem) return@withContext null
+        val resolvedAccId = when {
+            file.effectiveAccountId.isNotBlank() -> file.effectiveAccountId
+            accountId.isNotBlank() && accountId != "all" && accountId != "root" -> accountId
+            else -> ""
+        }
+        if (resolvedAccId.isBlank() || file.effectiveId.isBlank() || file.isFolderItem) return@withContext null
         val normalizedSize = sizePx.coerceIn(64, 512)
-        val key = CacheKeyFactory.thumbnail(accountId, providerType, file, normalizedSize)
-        val fallback = fallbackUrl(accountId, file)
+        val key = CacheKeyFactory.thumbnail(resolvedAccId, providerType, file, normalizedSize)
+        val fallback = fallbackUrl(resolvedAccId, file)
 
         val now = System.currentTimeMillis()
         val existing = dao.get(key)
@@ -96,12 +101,12 @@ class ThumbnailStore(
 
                 try {
                     val generated = validLocalSource?.let {
-                        generateFromLocal(it, key, accountId, providerType, file, normalizedSize, permitNow)
+                        generateFromLocal(it, key, resolvedAccId, providerType, file, normalizedSize, permitNow)
                     }
                     generated ?: downloadRemote(
-                        sourceUrl = providerThumbUrl(accountId, file, normalizedSize),
+                        sourceUrl = providerThumbUrl(resolvedAccId, file, normalizedSize),
                         key = key,
-                        accountId = accountId,
+                        accountId = resolvedAccId,
                         providerType = providerType,
                         file = file,
                         sizePx = normalizedSize,
@@ -176,7 +181,13 @@ class ThumbnailStore(
             bitmap.recycle()
         }
         if (target.exists()) target.delete()
-        check(temp.renameTo(target)) { "Unable to commit generated thumbnail" }
+        if (!temp.renameTo(target)) {
+            try {
+                temp.copyTo(target, overwrite = true)
+                temp.delete()
+            } catch (_: Exception) {}
+        }
+        check(target.exists() && target.length() > 0L) { "Unable to commit generated thumbnail" }
         dao.upsert(entity(key, target, accountId, providerType, file, target.length(), bitmap.width, bitmap.height, now))
         return target
     }
@@ -244,7 +255,13 @@ class ThumbnailStore(
                     }
 
                     if (target.exists()) target.delete()
-                    check(temp.renameTo(target)) { "Unable to commit downloaded thumbnail" }
+                    if (!temp.renameTo(target)) {
+                        try {
+                            temp.copyTo(target, overwrite = true)
+                            temp.delete()
+                        } catch (_: Exception) {}
+                    }
+                    check(target.exists() && target.length() > 0L) { "Unable to commit downloaded thumbnail" }
                     dao.upsert(
                         entity(
                             key = key,
@@ -323,11 +340,15 @@ class ThumbnailStore(
                 full
             }
         }
-        return ApiClient.getThumbUrl(accountId, file.effectiveId, sizePx)
+        val acc = file.effectiveAccountId.ifBlank { accountId.takeIf { it != "all" && it != "root" }.orEmpty() }
+        return ApiClient.getThumbUrl(acc, file.effectiveId, sizePx)
     }
 
-    private fun fallbackUrl(accountId: String, file: CloudFile): String? =
-        if (file.isImage || file.isVideo) ApiClient.getFileUrl(accountId, file.effectiveId, preview = true) else null
+    private fun fallbackUrl(accountId: String, file: CloudFile): String? {
+        val acc = file.effectiveAccountId.ifBlank { accountId.takeIf { it != "all" && it != "root" }.orEmpty() }
+        if (acc.isBlank()) return null
+        return if (file.isImage || file.isVideo) ApiClient.getFileUrl(acc, file.effectiveId, preview = true) else null
+    }
 
     private fun backoffMs(failureCount: Int): Long =
         (5_000L * (1L shl failureCount.coerceIn(0, 6))).coerceAtMost(60L * 60L * 1000L)

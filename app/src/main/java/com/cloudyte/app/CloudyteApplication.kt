@@ -10,7 +10,10 @@ import com.cloudyte.app.core.transfer.ScheduleReason
 import com.cloudyte.app.core.transfer.WorkMaintenanceScheduler
 import com.cloudyte.app.core.cache.CacheCleanupWorker
 
-class CloudyteApplication : Application() {
+import coil.ImageLoader
+import coil.ImageLoaderFactory
+
+class CloudyteApplication : Application(), ImageLoaderFactory {
     lateinit var container: AppContainer
         private set
 
@@ -30,5 +33,13 @@ class CloudyteApplication : Application() {
         } catch (error: IllegalStateException) {
             Log.w("CloudyteApplication", "WorkManager is not initialized; startup queue work will be scheduled on the next trigger", error)
         }
+    }
+
+    override fun newImageLoader(): ImageLoader {
+        return ImageLoader.Builder(this)
+            .okHttpClient { ApiClient.okHttpClient }
+            .respectCacheHeaders(false)
+            .crossfade(true)
+            .build()
     }
 }

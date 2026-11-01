@@ -48,8 +48,9 @@ data class LocalCloudFile(
     companion object {
         fun fromCloudFile(file: CloudFile, accountId: String?, folderId: String? = null): LocalCloudFile {
             val safeFolderId = if (folderId.isNullOrBlank() || folderId == "root") "root" else folderId
+            val resolvedAccId = file.effectiveAccountId.ifBlank { accountId.orEmpty() }
             return LocalCloudFile(
-                id = if (file.effectiveId.isNotBlank()) file.effectiveId else "${accountId}_${safeFolderId}_${file.effectiveName}",
+                id = if (file.effectiveId.isNotBlank()) file.effectiveId else "${resolvedAccId}_${safeFolderId}_${file.effectiveName}",
                 name = file.effectiveName,
                 type = file.effectiveType,
                 size = file.formattedSize,
@@ -58,7 +59,7 @@ data class LocalCloudFile(
                 isFolder = file.isFolderItem,
                 path = file.path ?: "",
                 folderId = safeFolderId,
-                accountId = accountId,
+                accountId = resolvedAccId,
                 mimeType = file.mimeType,
                 cachedAt = System.currentTimeMillis(),
                 updatedAt = file.updatedAt,

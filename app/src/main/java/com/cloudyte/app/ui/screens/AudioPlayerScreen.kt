@@ -49,8 +49,17 @@ fun AudioPlayerScreen(
     val file = remember(fileId) { FileRepository.getFile(fileId) }
     val fileName = file?.effectiveName ?: "Audio Track"
 
-    val audioUrl = remember(accountId, fileId) {
-        ApiClient.getFileUrl(accountId, fileId, preview = true)
+    val effectiveAccId = remember(accountId, file?.effectiveAccountId) {
+        when {
+            file?.effectiveAccountId?.isNotBlank() == true -> file.effectiveAccountId
+            accountId.isNotBlank() && accountId != "all" && accountId != "root" -> accountId
+            else -> ""
+        }
+    }
+
+    val audioUrl = remember(effectiveAccId, fileId) {
+        val acc = effectiveAccId.ifBlank { accountId }
+        ApiClient.getFileUrl(acc, fileId, preview = true)
     }
 
     var isPlaying by remember { mutableStateOf(true) }
@@ -62,9 +71,12 @@ fun AudioPlayerScreen(
     var showSpeedDialog by remember { mutableStateOf(false) }
 
     // Auto-cache audio for offline listening in background
-    LaunchedEffect(fileId, file) {
-        file?.let {
-            OfflineFileManager.autoCacheOnView(context, accountId, it)
+    LaunchedEffect(fileId, file, effectiveAccId) {
+        val acc = effectiveAccId.ifBlank { accountId }
+        if (acc.isNotBlank() && acc != "all" && acc != "root") {
+            file?.let {
+                OfflineFileManager.autoCacheOnView(context, acc, it)
+            }
         }
     }
 

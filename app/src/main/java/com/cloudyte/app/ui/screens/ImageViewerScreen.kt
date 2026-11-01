@@ -275,7 +275,11 @@ fun ImageViewerScreen(
                 exit = fadeOut(),
                 modifier = Modifier.align(Alignment.TopCenter)
             ) {
-                val currentFileUrl = currentFile?.let { ApiClient.getFileUrl(accountId, it.effectiveId, preview = false) } ?: ""
+                val currentAccId = currentFile?.effectiveAccountId?.takeIf { it.isNotBlank() }
+                    ?: accountId.takeIf { it.isNotBlank() && it != "all" && it != "root" }.orEmpty()
+                val currentFileUrl = if (currentFile != null && currentAccId.isNotBlank()) {
+                    ApiClient.getFileUrl(currentAccId, currentFile.effectiveId, preview = false)
+                } else ""
 
                 Box(
                     modifier = Modifier
@@ -465,7 +469,10 @@ fun ImageViewerScreen(
                         ) {
                             itemsIndexed(displayedFiles) { index, file ->
                                 val isSelected = index == pagerState.currentPage
-                                val thumbUrl = ApiClient.getFileUrl(accountId, file.effectiveId, preview = true)
+                                val itemAccId = file.effectiveAccountId.ifBlank {
+                                    accountId.takeIf { it.isNotBlank() && it != "all" && it != "root" }.orEmpty()
+                                }
+                                val thumbUrl = if (itemAccId.isNotBlank()) ApiClient.getFileUrl(itemAccId, file.effectiveId, preview = true) else ""
 
                                 Box(
                                     modifier = Modifier
@@ -538,27 +545,36 @@ private fun MediaPageContent(
     navController: NavController
 ) {
     val context = LocalContext.current
-    val fileUrl = remember(accountId, file.effectiveId) {
-        ApiClient.getFileUrl(accountId, file.effectiveId, preview = true)
+    val effectiveAccId = remember(accountId, file.effectiveAccountId) {
+        when {
+            file.effectiveAccountId.isNotBlank() -> file.effectiveAccountId
+            accountId.isNotBlank() && accountId != "all" && accountId != "root" -> accountId
+            else -> ""
+        }
+    }
+    val fileUrl = remember(effectiveAccId, file.effectiveId) {
+        if (effectiveAccId.isNotBlank()) ApiClient.getFileUrl(effectiveAccId, file.effectiveId, preview = true) else ""
     }
 
     // Auto-cache file in background when viewed
-    LaunchedEffect(file.effectiveId) {
-        OfflineFileManager.autoCacheOnView(context, accountId, file)
+    LaunchedEffect(file.effectiveId, effectiveAccId) {
+        if (effectiveAccId.isNotBlank()) {
+            OfflineFileManager.autoCacheOnView(context, effectiveAccId, file)
+        }
     }
 
-    val offlineFile = remember(accountId, file.effectiveId) {
-        OfflineFileManager.findOfflineFile(context, accountId, file.effectiveId)
+    val offlineFile = remember(effectiveAccId, file.effectiveId) {
+        OfflineFileManager.findOfflineFile(context, effectiveAccId, file.effectiveId)
     }
     val app = context.applicationContext as? com.cloudyte.app.CloudyteApplication
-    var cachedPreviewFile by remember(accountId, file.effectiveId) { mutableStateOf<java.io.File?>(null) }
-    LaunchedEffect(accountId, file.effectiveId) {
-        if (app != null) {
+    var cachedPreviewFile by remember(effectiveAccId, file.effectiveId) { mutableStateOf<java.io.File?>(null) }
+    LaunchedEffect(effectiveAccId, file.effectiveId) {
+        if (app != null && effectiveAccId.isNotBlank()) {
             val rev = file.updatedAt?.toString() ?: file.time?.toString()
-            val acc = app.container.database.accountDao().getAccountById(accountId)
+            val acc = app.container.database.accountDao().getAccountById(effectiveAccId)
             val pType = acc?.accountType ?: "unknown"
             cachedPreviewFile = app.container.previewStore.get(
-                com.cloudyte.app.core.cache.CacheKeyFactory.preview(accountId, pType, file.effectiveId, rev)
+                com.cloudyte.app.core.cache.CacheKeyFactory.preview(effectiveAccId, pType, file.effectiveId, rev)
             )
         }
     }
