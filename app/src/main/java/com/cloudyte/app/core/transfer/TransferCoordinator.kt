@@ -10,7 +10,7 @@ class TransferCoordinator(
     context: Context,
     private val repository: TransferRepository,
     private val scheduleBackgroundWork: (Context) -> Unit,
-    private val diagnostics: TransferDiagnostics = TransferDiagnostics()
+    val diagnostics: TransferDiagnostics = TransferDiagnostics()
 ) : TransferEngine {
     private val appContext = context.applicationContext
 

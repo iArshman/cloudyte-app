@@ -18,6 +18,7 @@ import com.cloudyte.app.core.network.TransferNetworkGate
 import com.cloudyte.app.core.cache.ThumbnailStore
 import com.cloudyte.app.core.cache.PreviewStore
 import com.cloudyte.app.core.cache.CacheQuotaManager
+import com.cloudyte.app.core.transfer.TransferDiagnostics
 import com.cloudyte.app.data.CloudFileRepository
 import com.cloudyte.app.data.TransferRepository
 import com.cloudyte.app.data.repository.FileRepositoryImpl
@@ -98,12 +99,15 @@ class AppContainer(context: Context) {
 
     val transferScheduler: TransferScheduler by lazy { TransferScheduler(appContext) }
 
+    val transferDiagnostics: TransferDiagnostics by lazy { TransferDiagnostics() }
+
     val transferQueueDrainer by lazy {
         RoomTransferQueueDrainer(
             queueDao = database.transferQueueDao(),
             executor = CloudTransferOperationExecutor(appContext, database, transferRepository, providerRegistry),
             ownerId = "${Process.myPid()}-${UUID.randomUUID()}",
-            networkGate = transferNetworkGate
+            networkGate = transferNetworkGate,
+            diagnostics = transferDiagnostics
         )
     }
 
@@ -121,7 +125,8 @@ class AppContainer(context: Context) {
             repository = transferDomainRepository,
             scheduleBackgroundWork = { context ->
                 transferScheduler.kick(ScheduleReason.USER_ENQUEUE, allowMetered = true)
-            }
+            },
+            diagnostics = transferDiagnostics
         )
     }
 

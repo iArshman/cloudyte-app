@@ -1,5 +1,7 @@
 package com.cloudyte.app.core.transfer
 
+import com.cloudyte.app.core.common.AppError
+
 sealed interface TransferExecutionState {
     data object Pending : TransferExecutionState
     data class Running(val progress: TransferProgress) : TransferExecutionState
@@ -41,5 +43,5 @@ data class TransferProgressSnapshot(
     val totalParts: Int? = null,
     val lastCheckpointAt: Long = System.currentTimeMillis(),
     val retryCount: Int = 0,
-    val errorCode: String? = null
+    val error: AppError? = null
 )

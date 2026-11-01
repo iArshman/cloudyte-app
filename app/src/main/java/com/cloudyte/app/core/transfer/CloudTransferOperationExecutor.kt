@@ -75,8 +75,7 @@ class CloudTransferOperationExecutor(
         if (size < 0L) return TransferOutcome.Permanent("SOURCE_SIZE_UNKNOWN", "Could not determine source size")
         val accountType = transfer.providerType ?: database.accountDao().getAccountById(transfer.accountId)?.accountType
         val provider = providers.forAccountType(accountType)
-        var lastBytes = transfer.bytesTransferred
-        var lastAt = System.currentTimeMillis()
+        val progressCalculator = TransferProgressCalculator()
         val key = transfer.idempotencyKey ?: transfer.id
         val result = UploadHelper.uploadFileResumable(
             context = context,
@@ -96,16 +95,11 @@ class CloudTransferOperationExecutor(
             },
             onProgress = { bytes, chunkIndex ->
                 currentCoroutineContext().ensureActive()
-                val now = System.currentTimeMillis()
-                val elapsed = (now - lastAt).coerceAtLeast(1L)
-                val speed = ((bytes - lastBytes).coerceAtLeast(0L) * 1000L) / elapsed
-                val eta = if (speed > 0L && size > bytes) (size - bytes) / speed else null
-                onProgress(bytes, size, speed, eta)
+                val metrics = progressCalculator.update(bytes, size)
+                onProgress(bytes, size, metrics.bytesPerSecond, metrics.etaSeconds)
                 if (!transfers.updateResumableProgressOwned(transfer.id, leaseOwner, bytes, chunkIndex)) {
                     throw CancellationException("Transfer lease lost before upload progress checkpoint")
                 }
-                lastBytes = bytes
-                lastAt = now
             }
         )
         return when {
@@ -141,21 +135,15 @@ class CloudTransferOperationExecutor(
             response.byteStream().use { input -> output.use { out ->
                 val buffer = ByteArray(64 * 1024)
                 var copied = 0L
-                var lastBytes = 0L
-                var lastAt = System.currentTimeMillis()
+                val progressCalculator = TransferProgressCalculator()
                 while (true) {
                     currentCoroutineContext().ensureActive()
                     val count = input.read(buffer)
                     if (count < 0) break
                     out.write(buffer, 0, count)
                     copied += count
-                    val now = System.currentTimeMillis()
-                    val elapsed = (now - lastAt).coerceAtLeast(1L)
-                    val speed = ((copied - lastBytes) * 1000L) / elapsed
-                    val eta = if (speed > 0L && total > copied) (total - copied) / speed else null
-                    onProgress(copied, total, speed, eta)
-                    lastBytes = copied
-                    lastAt = now
+                    val metrics = progressCalculator.update(copied, total)
+                    onProgress(copied, total, metrics.bytesPerSecond, metrics.etaSeconds)
                 }
                 out.flush()
                 if (total > 0L && copied != total) throw IOException("Download ended before the expected byte count")

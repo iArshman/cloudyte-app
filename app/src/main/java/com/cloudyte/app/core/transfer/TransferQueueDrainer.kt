@@ -44,7 +44,8 @@ class RoomTransferQueueDrainer(
     private val now: () -> Long = System::currentTimeMillis,
     private val leaseDurationMs: Long = 2 * 60 * 1000L,
     private val maxTransfersPerDrain: Int = 3,
-    private val networkGate: TransferNetworkGate? = null
+    private val networkGate: TransferNetworkGate? = null,
+    private val diagnostics: TransferDiagnostics? = null
 ) : TransferQueueDrainer {
     override suspend fun drain(
         trigger: DrainTrigger,
@@ -71,11 +72,32 @@ class RoomTransferQueueDrainer(
                             else -> "NETWORK_POLICY"
                         }
                         transition(transfer, leaseOwner, TransferState.RUNNING, TransferState.WAITING_FOR_NETWORK, "PENDING", "NETWORK_POLICY", reason)
+                        diagnostics?.recordEvent(
+                            operationType = "queue_policy",
+                            transferId = transfer.id,
+                            accountId = transfer.accountId,
+                            providerType = transfer.providerType,
+                            state = TransferState.WAITING_FOR_NETWORK.name,
+                            retryCount = transfer.attemptCount,
+                            errorCode = "NETWORK_POLICY",
+                            networkState = reason,
+                            workerRunId = leaseOwner
+                        )
                         processed++
                         continue
                     }
                     is PolicyDecision.WaitingForAuth -> {
                         transition(transfer, leaseOwner, TransferState.RUNNING, TransferState.WAITING_FOR_AUTH, "PENDING", "AUTH_REQUIRED", decision.reason)
+                        diagnostics?.recordEvent(
+                            operationType = "queue_policy",
+                            transferId = transfer.id,
+                            accountId = transfer.accountId,
+                            providerType = transfer.providerType,
+                            state = TransferState.WAITING_FOR_AUTH.name,
+                            retryCount = transfer.attemptCount,
+                            errorCode = "AUTH_REQUIRED",
+                            workerRunId = leaseOwner
+                        )
                         processed++
                         continue
                     }
@@ -114,6 +136,18 @@ class RoomTransferQueueDrainer(
                     TransferOutcome.Paused -> transitionVia(transfer, leaseOwner, TransferState.RUNNING, TransferState.PAUSING, TransferState.PAUSED, "PAUSED")
                     TransferOutcome.Cancelled -> transitionVia(transfer, leaseOwner, TransferState.RUNNING, TransferState.CANCELLING, TransferState.CANCELLED, "CANCELLED")
                 }
+                diagnostics?.recordEvent(
+                    operationType = "transfer",
+                    transferId = transfer.id,
+                    accountId = transfer.accountId,
+                    providerType = transfer.providerType,
+                    state = outcome.diagnosticState(),
+                    retryCount = transfer.attemptCount,
+                    errorCode = outcome.diagnosticCode(),
+                    httpStatus = outcome.diagnosticHttpStatus(),
+                    checkpointAt = now(),
+                    workerRunId = leaseOwner
+                )
                 processed++
             } catch (cancelled: CancellationException) {
                 queueDao.returnToQueue(transfer.id, leaseOwner, now())
@@ -155,5 +189,29 @@ class RoomTransferQueueDrainer(
         val exponent = (attemptCount - 1).coerceIn(0, 10)
         val delayMs = (30_000L * (1L shl exponent)).coerceAtMost(6 * 60 * 60 * 1000L)
         return now() + delayMs
+    }
+
+    private fun TransferOutcome.diagnosticState(): String = when (this) {
+        TransferOutcome.Completed -> TransferState.COMPLETED.name
+        is TransferOutcome.Retryable -> TransferState.FAILED_RETRYABLE.name
+        is TransferOutcome.Permanent -> TransferState.FAILED_PERMANENT.name
+        is TransferOutcome.WaitingForNetwork -> TransferState.WAITING_FOR_NETWORK.name
+        is TransferOutcome.WaitingForAuth -> TransferState.WAITING_FOR_AUTH.name
+        TransferOutcome.Paused -> TransferState.PAUSED.name
+        TransferOutcome.Cancelled -> TransferState.CANCELLED.name
+    }
+
+    private fun TransferOutcome.diagnosticCode(): String? = when (this) {
+        is TransferOutcome.Retryable -> code
+        is TransferOutcome.Permanent -> code
+        is TransferOutcome.WaitingForNetwork -> code
+        is TransferOutcome.WaitingForAuth -> code
+        else -> null
+    }
+
+    private fun TransferOutcome.diagnosticHttpStatus(): Int? = when (this) {
+        is TransferOutcome.Retryable -> httpStatus
+        is TransferOutcome.Permanent -> httpStatus
+        else -> null
     }
 }

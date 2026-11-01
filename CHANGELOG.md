@@ -41,6 +41,13 @@ Target: `itxrex07/cd`, branch `main`
 - Routed `FileThumb` through `ThumbnailStore`; UI no longer builds provider URLs or appends authentication tokens directly.
 - Added cache-key isolation and migration tests.
 
+## Phase 7 — UI and diagnostics
+
+- Added a user-facing diagnostics screen reachable from Settings with redacted copy/share export. Reports include app/build and schema versions, hashed account identity, provider, transfer state, retry/error details, checkpoint time, worker run ID, cache category, and correlation IDs without credentials, raw URLs, file names, or content.
+- Added request correlation headers through a centralized OkHttp interceptor and bounded in-memory transfer diagnostics with structured queue-policy and transfer-outcome events.
+- Added rolling-window transfer speed and ETA calculation with minimum sample duration and outlier suppression, and routed upload/download progress through it.
+- Added the diagnostics entry point and preserved stable back navigation for the Settings UI.
+
 ## Verification
 
 - Server syntax, lint, and protocol tests pass for the existing provider contract.
