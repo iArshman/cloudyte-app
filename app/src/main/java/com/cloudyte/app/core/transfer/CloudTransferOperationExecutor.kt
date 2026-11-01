@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import com.cloudyte.app.data.TransferRepository
+import com.cloudyte.app.data.providers.UnsupportedProviderOperation
 import com.cloudyte.app.data.providers.ProviderRegistry
 import com.cloudyte.app.db.AppDatabase
 import com.cloudyte.app.db.LocalTransfer
@@ -56,6 +57,8 @@ class CloudTransferOperationExecutor(
         }
     } catch (error: IOException) {
         TransferOutcome.Retryable("IO_FAILURE", error.message ?: "I/O failure")
+    } catch (error: UnsupportedProviderOperation) {
+        TransferOutcome.Permanent("PROVIDER_UNSUPPORTED_OPERATION", error.message ?: "Provider does not support this transfer operation")
     } catch (error: Exception) {
         TransferOutcome.Permanent("TRANSFER_EXECUTION_ERROR", error.message ?: "Transfer failed")
     }

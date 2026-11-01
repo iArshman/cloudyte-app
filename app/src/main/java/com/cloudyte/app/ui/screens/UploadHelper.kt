@@ -205,6 +205,7 @@ object UploadHelper {
         onProgress: suspend (Long, Int) -> Unit = { _, _ -> }
     ): UploadResult = withContext(Dispatchers.IO) {
         try {
+            provider.requireResumableUpload()
             val resolver = context.contentResolver
             val totalBytes = explicitFileSize
             if (totalBytes < 0L) throw IOException("File size is required for resumable upload")
@@ -220,21 +221,39 @@ object UploadHelper {
                 } ?: throw IOException("Cannot open local file stream")
                 digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
             }
-            val sessionResponse = provider.createUploadSession(
-                accountId,
-                UploadSessionRequest(
-                    fileName = explicitFileName,
-                    mimeType = explicitMimeType,
-                    size = totalBytes,
-                    folderId = folderId,
-                    checksum = checksum,
-                    idempotencyKey = idempotencyKey
-                )
+            val sessionRequest = UploadSessionRequest(
+                fileName = explicitFileName,
+                mimeType = explicitMimeType,
+                size = totalBytes,
+                folderId = folderId,
+                checksum = checksum,
+                idempotencyKey = idempotencyKey
             )
+            var sessionResponse = provider.createUploadSession(accountId, sessionRequest)
             if (!sessionResponse.isSuccessful || sessionResponse.body() == null) {
                 return@withContext UploadResult(false, sessionResponse.code(), "Could not create upload session", explicitFileName)
             }
-            val session = sessionResponse.body()!!
+            val createdSession = sessionResponse.body()!!
+            // Creation is idempotent by logical transfer key; query the provider/server state
+            // before resuming so local progress is never mistaken for committed bytes.
+            val statusResponse = provider.queryUploadSession(createdSession.sessionId)
+            if (!statusResponse.isSuccessful || statusResponse.body() == null) {
+                return@withContext UploadResult(false, statusResponse.code(), "Could not reconcile upload session offset", explicitFileName)
+            }
+            var session = statusResponse.body()!!
+            if (session.status.equals("expired", ignoreCase = true) || session.status.equals("UPLOAD_SESSION_EXPIRED", ignoreCase = true)) {
+                // The server excludes expired sessions from idempotency lookup, so the same
+                // key creates a fresh provider session without changing transfer identity.
+                sessionResponse = provider.createUploadSession(accountId, sessionRequest)
+                if (!sessionResponse.isSuccessful || sessionResponse.body() == null) {
+                    return@withContext UploadResult(false, sessionResponse.code(), "Could not renew expired upload session", explicitFileName)
+                }
+                val renewed = provider.queryUploadSession(sessionResponse.body()!!.sessionId)
+                if (!renewed.isSuccessful || renewed.body() == null || renewed.body()!!.status.equals("expired", ignoreCase = true)) {
+                    return@withContext UploadResult(false, renewed.code(), "Could not reconcile renewed upload session", explicitFileName)
+                }
+                session = renewed.body()!!
+            }
             var offset = session.receivedBytes.coerceIn(0L, totalBytes)
             val chunkSize = session.chunkSize.coerceAtLeast(64L * 1024L).coerceAtMost(16L * 1024L * 1024L)
             var nextChunkIndex = ((offset + chunkSize - 1L) / chunkSize).toInt()

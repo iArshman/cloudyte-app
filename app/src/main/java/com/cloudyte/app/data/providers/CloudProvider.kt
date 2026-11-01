@@ -2,64 +2,54 @@ package com.cloudyte.app.data.providers
 
 import com.cloudyte.app.api.CloudyteApi
 import com.cloudyte.app.api.UploadChunkResponse
+import com.cloudyte.app.api.UploadCompleteResponse
 import com.cloudyte.app.api.UploadSessionRequest
 import com.cloudyte.app.api.UploadSessionResponse
 import okhttp3.MultipartBody
 import retrofit2.Response
 
-/**
- * Provider-facing upload contract. The server may route each implementation to
- * a different provider, but the transfer engine only depends on this boundary.
- */
+/** Typed failure distinct from network/server errors. */
+class UnsupportedProviderOperation(val providerType: String, val operation: String) :
+    UnsupportedOperationException("Provider '$providerType' does not support $operation")
+
+/** Provider boundary for Cloudyte's server-backed transfer protocol. */
 interface CloudProvider {
     val type: String
     val capabilities: ProviderCapabilities
-        get() = ProviderCapabilities()
+    suspend fun createUploadSession(accountId: String, request: UploadSessionRequest): Response<UploadSessionResponse>
+    suspend fun queryUploadSession(sessionId: String): Response<UploadSessionResponse> =
+        throw UnsupportedProviderOperation(type, "upload session offset query")
+    suspend fun uploadChunk(sessionId: String, contentRange: String, chunk: MultipartBody.Part): Response<UploadChunkResponse>
+    suspend fun completeUploadSession(sessionId: String): Response<UploadCompleteResponse>
+    suspend fun cancelUploadSession(sessionId: String): Response<Unit> =
+        throw UnsupportedProviderOperation(type, "upload session cancellation")
 
-    suspend fun createUploadSession(
-        accountId: String,
-        request: UploadSessionRequest
-    ): Response<UploadSessionResponse>
-
-    suspend fun uploadChunk(
-        sessionId: String,
-        contentRange: String,
-        chunk: MultipartBody.Part
-    ): Response<UploadChunkResponse>
-
-    suspend fun completeUploadSession(sessionId: String): Response<com.cloudyte.app.api.UploadCompleteResponse>
+    fun requireResumableUpload() {
+        if (!capabilities.supportsResumableUpload) throw UnsupportedProviderOperation(type, "resumable upload")
+    }
 }
 
-abstract class ApiCloudProvider(
-    private val api: CloudyteApi
-) : CloudProvider {
-    override suspend fun createUploadSession(
-        accountId: String,
-        request: UploadSessionRequest
-    ) = api.createUploadSession(accountId, request)
-
-    override suspend fun uploadChunk(
-        sessionId: String,
-        contentRange: String,
-        chunk: MultipartBody.Part
-    ) = api.uploadChunk(sessionId, contentRange, chunk)
-
-    override suspend fun completeUploadSession(sessionId: String) =
-        api.completeUploadSession(sessionId)
+abstract class ApiCloudProvider(private val api: CloudyteApi) : CloudProvider {
+    override suspend fun createUploadSession(accountId: String, request: UploadSessionRequest) = api.createUploadSession(accountId, request)
+    override suspend fun queryUploadSession(sessionId: String) = api.getUploadSession(sessionId)
+    override suspend fun uploadChunk(sessionId: String, contentRange: String, chunk: MultipartBody.Part) = api.uploadChunk(sessionId, contentRange, chunk)
+    override suspend fun completeUploadSession(sessionId: String) = api.completeUploadSession(sessionId)
+    override suspend fun cancelUploadSession(sessionId: String) = api.cancelUploadSession(sessionId)
 }
 
 class TelegramProvider(api: CloudyteApi) : ApiCloudProvider(api) {
-    override val type: String = "telegram"
+    override val type = "telegram"
+    override val capabilities = ProviderCapabilities(supportsResumableDownload = false)
 }
-
 class GoogleDriveProvider(api: CloudyteApi) : ApiCloudProvider(api) {
-    override val type: String = "google_drive"
+    override val type = "google_drive"
+    override val capabilities = ProviderCapabilities(supportsResumableDownload = false)
 }
-
 class OneDriveProvider(api: CloudyteApi) : ApiCloudProvider(api) {
-    override val type: String = "onedrive"
+    override val type = "onedrive"
+    override val capabilities = ProviderCapabilities(supportsResumableDownload = false)
 }
-
 class CloudyteProvider(api: CloudyteApi) : ApiCloudProvider(api) {
-    override val type: String = "cloudyte"
+    override val type = "cloudyte"
+    override val capabilities = ProviderCapabilities(supportsResumableDownload = false)
 }
