@@ -5,13 +5,7 @@ import com.cloudyte.app.domain.model.Transfer
 import com.cloudyte.app.domain.repository.TransferRepository
 import kotlinx.coroutines.flow.Flow
 
-/**
- * Single command boundary for transfer lifecycle operations.
- *
- * The current scheduler still executes the durable backup batch through
- * BackupWorker. This coordinator gives features one stable API while the
- * per-transfer worker implementation is introduced incrementally.
- */
+/** Command boundary for lifecycle actions; background execution is delegated to the durable queue scheduler. */
 class TransferCoordinator(
     context: Context,
     private val repository: TransferRepository,
@@ -27,35 +21,33 @@ class TransferCoordinator(
         execute(command)
     }
 
-    override suspend fun execute(command: TransferCommand): TransferState {
+    override suspend fun execute(command: TransferCommand): TransferExecutionState {
         diagnostics.record(command)
-        when (command) {
+        return when (command) {
             is TransferCommand.Start -> {
                 schedule()
-                return TransferState.Pending
+                TransferExecutionState.Pending
             }
             is TransferCommand.Retry -> {
                 repository.retry(command.transferId)
                 schedule()
-                return TransferState.Pending
+                TransferExecutionState.Pending
             }
             is TransferCommand.Pause -> {
                 repository.pause(command.transferId)
-                return TransferState.Paused
+                TransferExecutionState.Paused
             }
             is TransferCommand.Resume -> {
                 repository.resume(command.transferId)
                 schedule()
-                return TransferState.Pending
+                TransferExecutionState.Pending
             }
             is TransferCommand.Cancel -> {
                 repository.cancel(command.transferId)
-                return TransferState.Cancelled
+                TransferExecutionState.Cancelled
             }
         }
     }
 
-    private fun schedule() {
-        scheduleBackgroundWork(appContext)
-    }
+    private fun schedule() = scheduleBackgroundWork(appContext)
 }

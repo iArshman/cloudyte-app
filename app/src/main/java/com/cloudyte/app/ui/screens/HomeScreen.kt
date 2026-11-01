@@ -310,17 +310,41 @@ fun HomeScreen(
     }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+        contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
         uri?.let {
             val accId = currentAccountId ?: accounts.firstOrNull()?.effectiveId
             if (!accId.isNullOrEmpty()) {
                 isUploading = true
                 coroutineScope.launch {
-                    val uploadResult = UploadHelper.uploadFile(context, accId, null, it)
-                    isUploading = false
-                    if (uploadResult.isSuccess) {
-                        viewModel.loadData(forceStorageRefresh = true)
+                    try {
+                        runCatching {
+                            context.contentResolver.takePersistableUriPermission(it, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        var name = "upload_${System.currentTimeMillis()}"
+                        var size = 0L
+                        context.contentResolver.query(it, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME, android.provider.OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+                            if (cursor.moveToFirst()) {
+                                val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                                if (nameIndex >= 0) name = cursor.getString(nameIndex) ?: name
+                                val sizeIndex = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                                if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) size = cursor.getLong(sizeIndex)
+                            }
+                        }
+                        val app = context.applicationContext as com.cloudyte.app.CloudyteApplication
+                        val transferId = app.container.transferRepository.enqueueTransfer(
+                            accountId = accId,
+                            fileName = name,
+                            localPath = it.toString(),
+                            direction = com.cloudyte.app.db.TransferDirection.UPLOAD,
+                            totalBytes = size
+                        )
+                        app.container.transferCoordinator.dispatch(com.cloudyte.app.core.transfer.TransferCommand.Start(transferId))
+                        android.widget.Toast.makeText(context, "$name added to transfers", android.widget.Toast.LENGTH_SHORT).show()
+                    } catch (error: Exception) {
+                        android.widget.Toast.makeText(context, error.message ?: "Could not queue upload", android.widget.Toast.LENGTH_LONG).show()
+                    } finally {
+                        isUploading = false
                     }
                 }
             }
@@ -419,7 +443,7 @@ fun HomeScreen(
                 }
             } else {
                 FloatingActionButton(
-                    onClick = { filePickerLauncher.launch("*/*") },
+                    onClick = { filePickerLauncher.launch(arrayOf("*/*")) },
                     shape = RoundedCornerShape(18.dp),
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary,
@@ -560,7 +584,7 @@ fun HomeScreen(
                 )
                 Spacer(modifier = Modifier.height(16.dp))
                 QuickActionsRow(
-                    onUploadClick = { filePickerLauncher.launch("*/*") },
+                    onUploadClick = { filePickerLauncher.launch(arrayOf("*/*")) },
                     onNewFolderClick = { showCreateFolderDialog = true },
                     onSearchClick = { navController.navigateSingleTopRestore("files") },
                     onDrivesClick = { navController.navigateSingleTopRestore("settings") }

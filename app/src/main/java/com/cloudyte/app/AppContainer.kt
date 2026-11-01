@@ -8,6 +8,10 @@ import com.cloudyte.app.core.transfer.FileChunkStore
 import com.cloudyte.app.core.transfer.ChunkStore
 import com.cloudyte.app.core.transfer.RetryPolicy
 import com.cloudyte.app.core.transfer.TransferCoordinator
+import com.cloudyte.app.core.transfer.CloudTransferOperationExecutor
+import com.cloudyte.app.core.transfer.RoomTransferQueueDrainer
+import com.cloudyte.app.core.transfer.TransferScheduler
+import com.cloudyte.app.core.transfer.ScheduleReason
 import com.cloudyte.app.data.CloudFileRepository
 import com.cloudyte.app.data.TransferRepository
 import com.cloudyte.app.data.repository.FileRepositoryImpl
@@ -31,6 +35,8 @@ import com.cloudyte.app.domain.usecase.RetryTransfer
 import com.cloudyte.app.sync.AutoSyncManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
+import android.os.Process
+import java.util.UUID
 
 /**
  * Composition root for application-scoped dependencies.
@@ -62,6 +68,16 @@ class AppContainer(context: Context) {
         TransferRepository(database.transferDao())
     }
 
+    val transferScheduler: TransferScheduler by lazy { TransferScheduler(appContext) }
+
+    val transferQueueDrainer by lazy {
+        RoomTransferQueueDrainer(
+            queueDao = database.transferQueueDao(),
+            executor = CloudTransferOperationExecutor(appContext, database, transferRepository, providerRegistry),
+            ownerId = "${Process.myPid()}-${UUID.randomUUID()}"
+        )
+    }
+
     val fileDomainRepository: DomainFileRepository by lazy {
         FileRepositoryImpl(cloudFileRepository)
     }
@@ -75,7 +91,7 @@ class AppContainer(context: Context) {
             context = appContext,
             repository = transferDomainRepository,
             scheduleBackgroundWork = { context ->
-                AutoSyncManager.triggerImmediateSync(context, isManual = true)
+                transferScheduler.kick(ScheduleReason.USER_ENQUEUE, allowMetered = true)
             }
         )
     }
