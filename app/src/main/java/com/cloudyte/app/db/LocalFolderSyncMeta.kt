@@ -14,5 +14,16 @@ data class LocalFolderSyncMeta(
     val accountKey: String,
     val folderId: String,
     val etag: String?,
-    val lastSyncedAt: Long
+    val lastSyncedAt: Long,
+    val providerType: String = "unknown",
+    val syncState: String = "IDLE",
+    val lastRequestedAt: Long? = null,
+    val lastSuccessfulAt: Long? = lastSyncedAt,
+    val lastAttemptAt: Long? = null,
+    val nextAttemptAt: Long? = null,
+    val isCompleteSnapshot: Boolean = false,
+    val continuationToken: String? = null,
+    val remoteRevision: String? = null,
+    val lastErrorCode: String? = null,
+    val lastErrorMessage: String? = null
 )

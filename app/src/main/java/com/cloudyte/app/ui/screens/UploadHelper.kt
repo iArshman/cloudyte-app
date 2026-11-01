@@ -8,9 +8,11 @@ import android.util.Log
 import android.webkit.MimeTypeMap
 import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.api.UploadSessionRequest
+import com.cloudyte.app.core.transfer.ResumableTransfer
 import com.cloudyte.app.data.providers.CloudProvider
 import com.cloudyte.app.data.providers.CloudyteProvider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -149,7 +151,7 @@ object UploadHelper {
                 } else {
                     val rawErr = response.errorBody()?.string()
                     val parsedErr = ApiClient.parseError(rawErr, response.code())
-                    Log.e("UploadHelper", "Upload failed: HTTP ${response.code()} $parsedErr (Raw: $rawErr)")
+                    Log.e("UploadHelper", "Upload failed: HTTP ${response.code()}")
                     UploadResult(
                         isSuccess = false,
                         statusCode = response.code(),
@@ -158,8 +160,10 @@ object UploadHelper {
                         isIoError = false
                     )
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: HttpException) {
-                Log.e("UploadHelper", "HTTP exception during upload", e)
+                Log.e("UploadHelper", "HTTP exception during upload: ${e.code()}")
                 UploadResult(
                     isSuccess = false,
                     statusCode = e.code(),
@@ -168,7 +172,7 @@ object UploadHelper {
                     isIoError = false
                 )
             } catch (e: IOException) {
-                Log.e("UploadHelper", "IOException during upload", e)
+                Log.e("UploadHelper", "Network I/O failure during upload")
                 UploadResult(
                     isSuccess = false,
                     errorMessage = e.localizedMessage ?: e.message ?: "Network I/O error",
@@ -176,7 +180,7 @@ object UploadHelper {
                     isIoError = true
                 )
             } catch (e: Exception) {
-                Log.e("UploadHelper", "Exception during upload", e)
+                Log.e("UploadHelper", "Unexpected upload failure: ${e::class.simpleName}")
                 UploadResult(
                     isSuccess = false,
                     errorMessage = e.localizedMessage ?: e.message ?: "Unknown upload error",
@@ -202,6 +206,7 @@ object UploadHelper {
         onProgress: suspend (Long, Int) -> Unit = { _, _ -> }
     ): UploadResult = withContext(Dispatchers.IO) {
         try {
+            provider.requireResumableUpload()
             val resolver = context.contentResolver
             val totalBytes = explicitFileSize
             if (totalBytes < 0L) throw IOException("File size is required for resumable upload")
@@ -217,21 +222,41 @@ object UploadHelper {
                 } ?: throw IOException("Cannot open local file stream")
                 digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
             }
-            val sessionResponse = provider.createUploadSession(
-                accountId,
-                UploadSessionRequest(
-                    fileName = explicitFileName,
-                    mimeType = explicitMimeType,
-                    size = totalBytes,
-                    folderId = folderId,
-                    checksum = checksum,
-                    idempotencyKey = idempotencyKey
-                )
+            val sessionRequest = UploadSessionRequest(
+                fileName = explicitFileName,
+                mimeType = explicitMimeType,
+                size = totalBytes,
+                folderId = folderId,
+                checksum = checksum,
+                idempotencyKey = idempotencyKey,
+                providerType = provider.type,
+                desiredChunkSize = ResumableTransfer.DEFAULT_CHUNK_SIZE
             )
+            var sessionResponse = provider.createUploadSession(accountId, sessionRequest)
             if (!sessionResponse.isSuccessful || sessionResponse.body() == null) {
                 return@withContext UploadResult(false, sessionResponse.code(), "Could not create upload session", explicitFileName)
             }
-            val session = sessionResponse.body()!!
+            val createdSession = sessionResponse.body()!!
+            // Creation is idempotent by logical transfer key; query the provider/server state
+            // before resuming so local progress is never mistaken for committed bytes.
+            val statusResponse = provider.queryUploadSession(createdSession.sessionId)
+            if (!statusResponse.isSuccessful || statusResponse.body() == null) {
+                return@withContext UploadResult(false, statusResponse.code(), "Could not reconcile upload session offset", explicitFileName)
+            }
+            var session = statusResponse.body()!!
+            if (session.status.equals("expired", ignoreCase = true) || session.status.equals("UPLOAD_SESSION_EXPIRED", ignoreCase = true)) {
+                // The server excludes expired sessions from idempotency lookup, so the same
+                // key creates a fresh provider session without changing transfer identity.
+                sessionResponse = provider.createUploadSession(accountId, sessionRequest)
+                if (!sessionResponse.isSuccessful || sessionResponse.body() == null) {
+                    return@withContext UploadResult(false, sessionResponse.code(), "Could not renew expired upload session", explicitFileName)
+                }
+                val renewed = provider.queryUploadSession(sessionResponse.body()!!.sessionId)
+                if (!renewed.isSuccessful || renewed.body() == null || renewed.body()!!.status.equals("expired", ignoreCase = true)) {
+                    return@withContext UploadResult(false, renewed.code(), "Could not reconcile renewed upload session", explicitFileName)
+                }
+                session = renewed.body()!!
+            }
             var offset = session.receivedBytes.coerceIn(0L, totalBytes)
             val chunkSize = session.chunkSize.coerceAtLeast(64L * 1024L).coerceAtMost(16L * 1024L * 1024L)
             var nextChunkIndex = ((offset + chunkSize - 1L) / chunkSize).toInt()
@@ -275,6 +300,10 @@ object UploadHelper {
             } else {
                 UploadResult(false, complete.code(), "Could not finalize upload session", explicitFileName)
             }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: HttpException) {
+            UploadResult(false, e.code(), "HTTP ${e.code()}: ${e.message()}", explicitFileName)
         } catch (e: IOException) {
             UploadResult(false, errorMessage = e.message ?: "Resumable upload I/O error", fileName = explicitFileName, isIoError = true)
         } catch (e: Exception) {
