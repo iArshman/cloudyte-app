@@ -5,15 +5,22 @@ import com.cloudyte.app.db.TransferQueueDao
 import com.cloudyte.app.core.network.PolicyDecision
 import com.cloudyte.app.core.network.TransferNetworkGate
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.UUID
 
+class TransferInterruptedException(
+    val outcome: TransferOutcome,
+    message: String = "Transfer interrupted with $outcome"
+) : CancellationException(message)
+
 interface TransferOperationExecutor {
     suspend fun execute(transfer: LocalTransfer, leaseOwner: String, onProgress: suspend (bytes: Long, total: Long, speed: Long, etaSeconds: Long?) -> Unit): TransferOutcome
     suspend fun onCompleted(transfer: LocalTransfer) = Unit
+    suspend fun onCancelled(transfer: LocalTransfer) = Unit
 }
 
 sealed interface TransferOutcome {
@@ -59,6 +66,12 @@ class RoomTransferQueueDrainer(
             val leaseOwner = "$ownerId:${UUID.randomUUID()}"
             val transfer = queueDao.acquireNextRunnableLease(leaseOwner, acquiredAt, acquiredAt + leaseDurationMs) ?: break
             try {
+                val preExecutionInterrupt = detectInterruption(transfer.id)
+                if (preExecutionInterrupt != null) {
+                    applyOutcome(transfer, leaseOwner, preExecutionInterrupt)
+                    processed++
+                    continue
+                }
                 when (val decision = networkGate?.check(transfer)) {
                     is PolicyDecision.WaitingForNetwork,
                     is PolicyDecision.WaitingForCharging,
@@ -104,62 +117,161 @@ class RoomTransferQueueDrainer(
                     PolicyDecision.Allowed, null -> Unit
                 }
                 val outcome = coroutineScope {
+                    val executionJob = coroutineContext[Job]
+                    ActiveTransferSignalRegistry.registerHook(transfer.id) { signal ->
+                        val interruptedOutcome = when (signal) {
+                            ActiveTransferSignal.CANCEL -> TransferOutcome.Cancelled
+                            ActiveTransferSignal.PAUSE -> TransferOutcome.Paused
+                        }
+                        executionJob?.cancel(TransferInterruptedException(interruptedOutcome))
+                    }
                     val heartbeat = launch {
                         while (true) {
                             delay((leaseDurationMs / 3L).coerceAtLeast(5_000L))
+                            detectInterruption(transfer.id)?.let { throw TransferInterruptedException(it) }
                             val tick = now()
                             if (queueDao.renewLease(transfer.id, leaseOwner, tick + leaseDurationMs, tick) != 1) {
+                                detectInterruption(transfer.id)?.let { throw TransferInterruptedException(it) }
                                 throw CancellationException("Transfer lease lost")
                             }
                         }
                     }
                     try {
                         executor.execute(transfer, leaseOwner) { bytes, total, speed, eta ->
+                            detectInterruption(transfer.id)?.let { throw TransferInterruptedException(it) }
                             val tick = now()
-                            check(queueDao.renewLease(transfer.id, leaseOwner, tick + leaseDurationMs, tick) == 1) { "Transfer lease lost" }
-                            check(queueDao.persistProgress(transfer.id, leaseOwner, bytes, total, speed, eta, tick) == 1) { "Transfer progress write lost its lease" }
+                            if (queueDao.renewLease(transfer.id, leaseOwner, tick + leaseDurationMs, tick) != 1) {
+                                detectInterruption(transfer.id)?.let { throw TransferInterruptedException(it) }
+                                error("Transfer lease lost")
+                            }
+                            if (queueDao.persistProgress(transfer.id, leaseOwner, bytes, total, speed, eta, tick) != 1) {
+                                detectInterruption(transfer.id)?.let { throw TransferInterruptedException(it) }
+                                error("Transfer progress write lost its lease")
+                            }
                             onProgress(TransferProgressSnapshot(transfer.id, TransferState.RUNNING, bytes, total, speed, eta, retryCount = transfer.attemptCount))
                         }
                     } finally {
+                        ActiveTransferSignalRegistry.unregisterHook(transfer.id)
                         heartbeat.cancelAndJoin()
                     }
                 }
-                when (outcome) {
-                    TransferOutcome.Completed -> {
-                        transition(transfer, leaseOwner, TransferState.RUNNING, TransferState.COMPLETED, "COMPLETED")
-                        runCatching { executor.onCompleted(transfer) }
-                    }
-                    is TransferOutcome.Retryable -> transition(transfer, leaseOwner, TransferState.RUNNING, TransferState.FAILED_RETRYABLE, "FAILED", outcome.code, outcome.message, outcome.retryAt ?: retryAt(transfer.attemptCount), outcome.httpStatus)
-                    is TransferOutcome.Permanent -> transition(transfer, leaseOwner, TransferState.RUNNING, TransferState.FAILED_PERMANENT, "FAILED", outcome.code, outcome.message, httpStatus = outcome.httpStatus)
-                    is TransferOutcome.WaitingForNetwork -> transition(transfer, leaseOwner, TransferState.RUNNING, TransferState.WAITING_FOR_NETWORK, "PENDING", outcome.code, outcome.message)
-                    is TransferOutcome.WaitingForAuth -> transition(transfer, leaseOwner, TransferState.RUNNING, TransferState.WAITING_FOR_AUTH, "PENDING", outcome.code, outcome.message)
-                    TransferOutcome.Paused -> transitionVia(transfer, leaseOwner, TransferState.RUNNING, TransferState.PAUSING, TransferState.PAUSED, "PAUSED")
-                    TransferOutcome.Cancelled -> transitionVia(transfer, leaseOwner, TransferState.RUNNING, TransferState.CANCELLING, TransferState.CANCELLED, "CANCELLED")
-                }
-                diagnostics?.recordEvent(
-                    operationType = "transfer",
-                    transferId = transfer.id,
-                    accountId = transfer.accountId,
-                    providerType = transfer.providerType,
-                    state = outcome.diagnosticState(),
-                    retryCount = transfer.attemptCount,
-                    errorCode = outcome.diagnosticCode(),
-                    httpStatus = outcome.diagnosticHttpStatus(),
-                    checkpointAt = now(),
-                    workerRunId = leaseOwner
-                )
+                val resolvedOutcome = detectInterruption(transfer.id) ?: outcome
+                applyOutcome(transfer, leaseOwner, resolvedOutcome)
+                processed++
+            } catch (interrupted: TransferInterruptedException) {
+                applyOutcome(transfer, leaseOwner, interrupted.outcome)
                 processed++
             } catch (cancelled: CancellationException) {
-                queueDao.returnToQueue(transfer.id, leaseOwner, now())
-                throw cancelled
+                val interrupted = detectInterruption(transfer.id)
+                if (interrupted != null && !isStopped()) {
+                    applyOutcome(transfer, leaseOwner, interrupted)
+                    processed++
+                } else {
+                    queueDao.returnToQueue(transfer.id, leaseOwner, now())
+                    throw cancelled
+                }
             } catch (error: Exception) {
-                transition(transfer, leaseOwner, TransferState.RUNNING, TransferState.FAILED_RETRYABLE, "FAILED", "UNEXPECTED", error.message ?: "Transfer failed", now() + 30_000L)
+                val interrupted = detectInterruption(transfer.id)
+                if (interrupted != null) {
+                    applyOutcome(transfer, leaseOwner, interrupted)
+                } else {
+                    runCatching {
+                        transition(transfer, leaseOwner, TransferState.RUNNING, TransferState.FAILED_RETRYABLE, "FAILED", "UNEXPECTED", error.message ?: "Transfer failed", now() + 30_000L)
+                    }
+                }
                 processed++
             } finally {
+                ActiveTransferSignalRegistry.unregisterHook(transfer.id)
+                ActiveTransferSignalRegistry.clear(transfer.id)
                 queueDao.releaseLease(transfer.id, leaseOwner, now())
             }
         }
         return if (isStopped()) DrainResult.Stopped else DrainResult.Drained(processed, queueDao.hasRunnableTransfers(now()))
+    }
+
+    private suspend fun detectInterruption(transferId: String): TransferOutcome? {
+        when (ActiveTransferSignalRegistry.currentSignal(transferId)) {
+            ActiveTransferSignal.CANCEL -> return TransferOutcome.Cancelled
+            ActiveTransferSignal.PAUSE -> return TransferOutcome.Paused
+            null -> Unit
+        }
+        val row = queueDao.currentRow(transferId) ?: return null
+        return when {
+            row.state in setOf(TransferState.CANCELLING.name, TransferState.CANCELLED.name) ||
+                row.status == "CANCELLED" -> TransferOutcome.Cancelled
+            row.state in setOf(TransferState.PAUSING.name, TransferState.PAUSED.name) ||
+                row.status == "PAUSED" -> TransferOutcome.Paused
+            else -> null
+        }
+    }
+
+    private suspend fun applyOutcome(
+        transfer: LocalTransfer,
+        leaseOwner: String,
+        outcome: TransferOutcome
+    ) {
+        when (outcome) {
+            TransferOutcome.Completed -> {
+                transition(transfer, leaseOwner, TransferState.RUNNING, TransferState.COMPLETED, "COMPLETED")
+                runCatching { executor.onCompleted(transfer) }
+            }
+            is TransferOutcome.Retryable -> transition(transfer, leaseOwner, TransferState.RUNNING, TransferState.FAILED_RETRYABLE, "FAILED", outcome.code, outcome.message, outcome.retryAt ?: retryAt(transfer.attemptCount), outcome.httpStatus)
+            is TransferOutcome.Permanent -> transition(transfer, leaseOwner, TransferState.RUNNING, TransferState.FAILED_PERMANENT, "FAILED", outcome.code, outcome.message, httpStatus = outcome.httpStatus)
+            is TransferOutcome.WaitingForNetwork -> transition(transfer, leaseOwner, TransferState.RUNNING, TransferState.WAITING_FOR_NETWORK, "PENDING", outcome.code, outcome.message)
+            is TransferOutcome.WaitingForAuth -> transition(transfer, leaseOwner, TransferState.RUNNING, TransferState.WAITING_FOR_AUTH, "PENDING", outcome.code, outcome.message)
+            TransferOutcome.Paused -> transitionPausedDeterministic(transfer, leaseOwner)
+            TransferOutcome.Cancelled -> {
+                val latest = queueDao.currentRow(transfer.id) ?: transfer
+                runCatching { executor.onCancelled(latest) }
+                transitionCancelledDeterministic(transfer, leaseOwner)
+            }
+        }
+        diagnostics?.recordEvent(
+            operationType = "transfer",
+            transferId = transfer.id,
+            accountId = transfer.accountId,
+            providerType = transfer.providerType,
+            state = outcome.diagnosticState(),
+            retryCount = transfer.attemptCount,
+            errorCode = outcome.diagnosticCode(),
+            httpStatus = outcome.diagnosticHttpStatus(),
+            checkpointAt = now(),
+            workerRunId = leaseOwner
+        )
+    }
+
+    private suspend fun transitionPausedDeterministic(transfer: LocalTransfer, leaseOwner: String) {
+        val current = queueDao.currentRow(transfer.id)
+        if (current != null && current.state == TransferState.RUNNING.name && current.leaseOwner == leaseOwner) {
+            transitionVia(transfer, leaseOwner, TransferState.RUNNING, TransferState.PAUSING, TransferState.PAUSED, "PAUSED")
+        } else {
+            queueDao.finalizeInterrupted(
+                id = transfer.id,
+                ownerId = leaseOwner,
+                finalState = TransferState.PAUSED.name,
+                legacyStatus = "PAUSED",
+                errorCode = null,
+                errorMessage = null,
+                now = now()
+            )
+        }
+    }
+
+    private suspend fun transitionCancelledDeterministic(transfer: LocalTransfer, leaseOwner: String) {
+        val current = queueDao.currentRow(transfer.id)
+        if (current != null && current.state == TransferState.RUNNING.name && current.leaseOwner == leaseOwner) {
+            transitionVia(transfer, leaseOwner, TransferState.RUNNING, TransferState.CANCELLING, TransferState.CANCELLED, "CANCELLED")
+        } else {
+            queueDao.finalizeInterrupted(
+                id = transfer.id,
+                ownerId = leaseOwner,
+                finalState = TransferState.CANCELLED.name,
+                legacyStatus = "CANCELLED",
+                errorCode = "USER_CANCELLED",
+                errorMessage = "Cancelled",
+                now = now()
+            )
+        }
     }
 
     private suspend fun transition(
@@ -215,3 +327,4 @@ class RoomTransferQueueDrainer(
         else -> null
     }
 }
+

@@ -50,7 +50,7 @@ fun AudioPlayerScreen(
     val fileName = file?.effectiveName ?: "Audio Track"
 
     val audioUrl = remember(accountId, fileId) {
-        ApiClient.getFileUrl(accountId, fileId, preview = false)
+        ApiClient.getFileUrl(accountId, fileId, preview = true)
     }
 
     var isPlaying by remember { mutableStateOf(true) }

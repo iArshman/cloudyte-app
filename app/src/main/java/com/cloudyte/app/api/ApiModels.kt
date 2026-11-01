@@ -205,7 +205,8 @@ data class CloudFile(
     val resolution: String? = null,
     val isFolder: Boolean? = false,
     val is_dir: Boolean? = false,
-    val isDirectory: Boolean? = false
+    val isDirectory: Boolean? = false,
+    val accountId: String? = null
 ) {
     val effectiveId: String get() = id ?: _id ?: fileId ?: ""
     val effectiveName: String get() = name ?: fileName ?: title ?: "Unnamed File"

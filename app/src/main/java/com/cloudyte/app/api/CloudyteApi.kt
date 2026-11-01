@@ -109,8 +109,9 @@ interface CloudyteApi {
     suspend fun downloadFile(
         @Path("accountId") accountId: String,
         @Path("fileId") fileId: String,
-        @Query("preview") preview: Int? = null
-    ): ResponseBody
+        @Query("preview") preview: Int? = null,
+        @Header("Range") range: String? = null
+    ): Response<ResponseBody>
 
     @PATCH("/api/files/{fileId}")
     suspend fun renameFile(

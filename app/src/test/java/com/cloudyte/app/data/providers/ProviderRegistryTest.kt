@@ -45,6 +45,9 @@ class ProviderRegistryTest {
         assertTrue(registry.forAccountType("telegram").capabilities.supportsResumableUpload)
         assertFalse(registry.forAccountType("telegram").capabilities.supportsProviderNativeResumability)
         assertFalse(registry.forAccountType("telegram").capabilities.supportsProviderSessionCancellation)
-        assertFalse(registry.forAccountType("cloudyte").capabilities.supportsResumableUpload)
+        assertTrue(registry.forAccountType("cloudyte").capabilities.supportsResumableUpload)
+        assertFalse(registry.forAccountType("cloudyte").capabilities.supportsProviderNativeResumability)
+        assertTrue(registry.forAccountType("cloudyte").capabilities.supportsResumableDownload)
+        registry.forAccountType("cloudyte").requireResumableUpload()
     }
 }

@@ -130,7 +130,8 @@ class AppContainer(context: Context) {
             scheduleBackgroundWork = { context ->
                 transferScheduler.kick(ScheduleReason.USER_ENQUEUE, allowMetered = true)
             },
-            diagnostics = transferDiagnostics
+            diagnostics = transferDiagnostics,
+            scheduler = transferScheduler
         )
     }
 
