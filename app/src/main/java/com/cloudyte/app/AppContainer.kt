@@ -12,6 +12,9 @@ import com.cloudyte.app.core.transfer.CloudTransferOperationExecutor
 import com.cloudyte.app.core.transfer.RoomTransferQueueDrainer
 import com.cloudyte.app.core.transfer.TransferScheduler
 import com.cloudyte.app.core.transfer.ScheduleReason
+import com.cloudyte.app.core.network.ConnectivityNetworkMonitor
+import com.cloudyte.app.core.network.DefaultNetworkPolicy
+import com.cloudyte.app.core.network.TransferNetworkGate
 import com.cloudyte.app.data.CloudFileRepository
 import com.cloudyte.app.data.TransferRepository
 import com.cloudyte.app.data.repository.FileRepositoryImpl
@@ -35,6 +38,11 @@ import com.cloudyte.app.domain.usecase.RetryTransfer
 import com.cloudyte.app.sync.AutoSyncManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 import android.os.Process
 import java.util.UUID
 
@@ -49,6 +57,13 @@ class AppContainer(context: Context) {
 
     val dispatchers: DispatcherProvider = DefaultDispatcherProvider
     val applicationScope: CoroutineScope = CoroutineScope(SupervisorJob() + dispatchers.default)
+    val networkMonitor: ConnectivityNetworkMonitor = ConnectivityNetworkMonitor(appContext)
+    val networkPolicy = DefaultNetworkPolicy()
+    val transferNetworkGate = TransferNetworkGate(
+        monitor = networkMonitor,
+        policy = networkPolicy,
+        preferences = { com.cloudyte.app.data.UserPreferences.observe(appContext).first() }
+    )
     val retryPolicy: RetryPolicy = RetryPolicy()
     val chunkStore: ChunkStore by lazy { FileChunkStore(appContext) }
 
@@ -74,7 +89,8 @@ class AppContainer(context: Context) {
         RoomTransferQueueDrainer(
             queueDao = database.transferQueueDao(),
             executor = CloudTransferOperationExecutor(appContext, database, transferRepository, providerRegistry),
-            ownerId = "${Process.myPid()}-${UUID.randomUUID()}"
+            ownerId = "${Process.myPid()}-${UUID.randomUUID()}",
+            networkGate = transferNetworkGate
         )
     }
 
@@ -110,4 +126,19 @@ class AppContainer(context: Context) {
     val pauseTransfer by lazy { PauseTransfer(transferDomainRepository) }
     val resumeTransfer by lazy { ResumeTransfer(transferDomainRepository) }
     val cancelTransfer by lazy { CancelTransfer(transferDomainRepository) }
+
+    init {
+        networkMonitor.start()
+        applicationScope.launch {
+            networkMonitor.status
+                .distinctUntilChanged()
+                .drop(1)
+                .collect { status ->
+                    if (status != com.cloudyte.app.core.network.NetworkStatus.UNAVAILABLE &&
+                        status != com.cloudyte.app.core.network.NetworkStatus.CAPTIVE_PORTAL) {
+                        transferScheduler.kick(ScheduleReason.NETWORK_RESTORED, allowMetered = true)
+                    }
+                }
+        }
+    }
 }

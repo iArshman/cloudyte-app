@@ -2,6 +2,8 @@ package com.cloudyte.app.core.transfer
 
 import com.cloudyte.app.db.LocalTransfer
 import com.cloudyte.app.db.TransferQueueDao
+import com.cloudyte.app.core.network.PolicyDecision
+import com.cloudyte.app.core.network.TransferNetworkGate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
@@ -41,7 +43,8 @@ class RoomTransferQueueDrainer(
     private val ownerId: String,
     private val now: () -> Long = System::currentTimeMillis,
     private val leaseDurationMs: Long = 2 * 60 * 1000L,
-    private val maxTransfersPerDrain: Int = 3
+    private val maxTransfersPerDrain: Int = 3,
+    private val networkGate: TransferNetworkGate? = null
 ) : TransferQueueDrainer {
     override suspend fun drain(
         trigger: DrainTrigger,
@@ -55,6 +58,29 @@ class RoomTransferQueueDrainer(
             val leaseOwner = "$ownerId:${UUID.randomUUID()}"
             val transfer = queueDao.acquireNextRunnableLease(leaseOwner, acquiredAt, acquiredAt + leaseDurationMs) ?: break
             try {
+                when (val decision = networkGate?.check(transfer)) {
+                    is PolicyDecision.WaitingForNetwork,
+                    is PolicyDecision.WaitingForCharging,
+                    is PolicyDecision.WaitingForBattery,
+                    is PolicyDecision.WaitingForRoaming -> {
+                        val reason = when (decision) {
+                            is PolicyDecision.WaitingForNetwork -> decision.reason
+                            is PolicyDecision.WaitingForCharging -> decision.reason
+                            is PolicyDecision.WaitingForBattery -> decision.reason
+                            is PolicyDecision.WaitingForRoaming -> decision.reason
+                            else -> "NETWORK_POLICY"
+                        }
+                        transition(transfer, leaseOwner, TransferState.RUNNING, TransferState.WAITING_FOR_NETWORK, "PENDING", "NETWORK_POLICY", reason)
+                        processed++
+                        continue
+                    }
+                    is PolicyDecision.WaitingForAuth -> {
+                        transition(transfer, leaseOwner, TransferState.RUNNING, TransferState.WAITING_FOR_AUTH, "PENDING", "AUTH_REQUIRED", decision.reason)
+                        processed++
+                        continue
+                    }
+                    PolicyDecision.Allowed, null -> Unit
+                }
                 val outcome = coroutineScope {
                     val heartbeat = launch {
                         while (true) {
