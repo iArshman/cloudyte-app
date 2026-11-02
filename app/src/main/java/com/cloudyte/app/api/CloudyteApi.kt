@@ -87,6 +87,9 @@ interface CloudyteApi {
         @Body request: UploadSessionRequest
     ): Response<UploadSessionResponse>
 
+    @GET("/api/upload-sessions/{sessionId}")
+    suspend fun getUploadSession(@Path("sessionId") sessionId: String): Response<UploadSessionResponse>
+
     @Multipart
     @PUT("/api/upload-sessions/{sessionId}/chunks")
     suspend fun uploadChunk(
@@ -98,13 +101,17 @@ interface CloudyteApi {
     @POST("/api/upload-sessions/{sessionId}/complete")
     suspend fun completeUploadSession(@Path("sessionId") sessionId: String): Response<UploadCompleteResponse>
 
+    @DELETE("/api/upload-sessions/{sessionId}")
+    suspend fun cancelUploadSession(@Path("sessionId") sessionId: String): Response<Unit>
+
     @Streaming
     @GET("/api/download/{accountId}/{fileId}")
     suspend fun downloadFile(
         @Path("accountId") accountId: String,
         @Path("fileId") fileId: String,
-        @Query("preview") preview: Int? = null
-    ): ResponseBody
+        @Query("preview") preview: Int? = null,
+        @Header("Range") range: String? = null
+    ): Response<ResponseBody>
 
     @PATCH("/api/files/{fileId}")
     suspend fun renameFile(

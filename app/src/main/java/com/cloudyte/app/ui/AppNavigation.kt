@@ -24,16 +24,29 @@ fun openFileInViewer(
 ) {
     val fid = file.effectiveId
     if (fid.isEmpty()) return
+    val resolvedAccountId = when {
+        file.effectiveAccountId.isNotBlank() -> file.effectiveAccountId
+        accountId.isNotBlank() && accountId != "all" && accountId != "root" -> accountId
+        else -> {
+            val db = com.cloudyte.app.db.AppDatabase.getInstance()
+            runCatching {
+                kotlinx.coroutines.runBlocking {
+                    db?.cloudFileDao()?.getFileById(fid)?.accountId
+                        ?: db?.accountDao()?.getAllAccounts()?.firstOrNull()?.id
+                }
+            }.getOrNull()?.takeIf { it.isNotBlank() && it != "all" && it != "root" } ?: accountId
+        }
+    }
     if (currentList != null && currentList.isNotEmpty()) {
-        FileRepository.setActiveList(currentList, accountId)
+        FileRepository.setActiveList(currentList, resolvedAccountId)
     }
     when {
-        file.isVideo -> navController.navigateOnce("video_player/$accountId/$fid")
-        file.isImage -> navController.navigateOnce("image_viewer/$accountId/$fid")
-        file.isAudio -> navController.navigateOnce("audio_player/$accountId/$fid")
-        file.isTextOrCode -> navController.navigateOnce("text_editor/$accountId/$fid")
-        file.isPdf -> navController.navigateOnce("pdf_viewer/$accountId/$fid")
-        else -> navController.navigateOnce("file_detail/$accountId/$fid")
+        file.isVideo -> navController.navigateOnce("video_player/$resolvedAccountId/$fid")
+        file.isImage -> navController.navigateOnce("image_viewer/$resolvedAccountId/$fid")
+        file.isAudio -> navController.navigateOnce("audio_player/$resolvedAccountId/$fid")
+        file.isTextOrCode -> navController.navigateOnce("text_editor/$resolvedAccountId/$fid")
+        file.isPdf -> navController.navigateOnce("pdf_viewer/$resolvedAccountId/$fid")
+        else -> navController.navigateOnce("file_detail/$resolvedAccountId/$fid")
     }
 }
 

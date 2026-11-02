@@ -5,18 +5,13 @@ import com.cloudyte.app.domain.model.Transfer
 import com.cloudyte.app.domain.repository.TransferRepository
 import kotlinx.coroutines.flow.Flow
 
-/**
- * Single command boundary for transfer lifecycle operations.
- *
- * The current scheduler still executes the durable backup batch through
- * BackupWorker. This coordinator gives features one stable API while the
- * per-transfer worker implementation is introduced incrementally.
- */
+/** Command boundary for lifecycle actions; background execution is delegated to the durable queue scheduler. */
 class TransferCoordinator(
     context: Context,
     private val repository: TransferRepository,
     private val scheduleBackgroundWork: (Context) -> Unit,
-    private val diagnostics: TransferDiagnostics = TransferDiagnostics()
+    val diagnostics: TransferDiagnostics = TransferDiagnostics(),
+    private val scheduler: TransferSchedulerContract? = null
 ) : TransferEngine {
     private val appContext = context.applicationContext
 
@@ -27,35 +22,41 @@ class TransferCoordinator(
         execute(command)
     }
 
-    override suspend fun execute(command: TransferCommand): TransferState {
+    override suspend fun execute(command: TransferCommand): TransferExecutionState {
         diagnostics.record(command)
-        when (command) {
+        return when (command) {
             is TransferCommand.Start -> {
+                ActiveTransferSignalRegistry.clear(command.transferId)
                 schedule()
-                return TransferState.Pending
+                TransferExecutionState.Pending
             }
             is TransferCommand.Retry -> {
+                ActiveTransferSignalRegistry.clear(command.transferId)
                 repository.retry(command.transferId)
                 schedule()
-                return TransferState.Pending
+                TransferExecutionState.Pending
             }
             is TransferCommand.Pause -> {
+                ActiveTransferSignalRegistry.signalPause(command.transferId)
+                scheduler?.pauseActiveTransfer(command.transferId)
                 repository.pause(command.transferId)
-                return TransferState.Paused
+                TransferExecutionState.Paused
             }
             is TransferCommand.Resume -> {
+                ActiveTransferSignalRegistry.clear(command.transferId)
                 repository.resume(command.transferId)
                 schedule()
-                return TransferState.Pending
+                TransferExecutionState.Pending
             }
             is TransferCommand.Cancel -> {
+                ActiveTransferSignalRegistry.signalCancel(command.transferId)
+                scheduler?.cancelQueuedTransfer(command.transferId)
                 repository.cancel(command.transferId)
-                return TransferState.Cancelled
+                TransferExecutionState.Cancelled
             }
         }
     }
 
-    private fun schedule() {
-        scheduleBackgroundWork(appContext)
-    }
+    private fun schedule() = scheduleBackgroundWork(appContext)
 }
+

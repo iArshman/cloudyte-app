@@ -84,6 +84,7 @@ data class UserPreferencesState(
     val transferConcurrency: Int = 3,
     val transferRetryCount: Int = 3,
     val allowMeteredTransfers: Boolean = false,
+    val allowRoaming: Boolean = false,
     val debugLogging: Boolean = false,
     val updateCheckEnabled: Boolean = true,
     val lastUpdateCheckAt: Long = 0L,
@@ -133,6 +134,7 @@ object UserPreferences {
     private val KEY_TRANSFER_CONCURRENCY = intPreferencesKey("transfer_concurrency")
     private val KEY_TRANSFER_RETRY_COUNT = intPreferencesKey("transfer_retry_count")
     private val KEY_ALLOW_METERED_TRANSFERS = booleanPreferencesKey("allow_metered_transfers")
+    private val KEY_ALLOW_ROAMING = booleanPreferencesKey("allow_roaming")
     private val KEY_DEBUG_LOGGING = booleanPreferencesKey("debug_logging")
     private val KEY_UPDATE_CHECK_ENABLED = booleanPreferencesKey("update_check_enabled")
     private val KEY_LAST_UPDATE_CHECK_AT = longPreferencesKey("last_update_check_at")
@@ -238,6 +240,7 @@ object UserPreferences {
                 transferConcurrency = (prefs[KEY_TRANSFER_CONCURRENCY] ?: 3).coerceIn(1, 5),
                 transferRetryCount = (prefs[KEY_TRANSFER_RETRY_COUNT] ?: 3).coerceIn(1, 10),
                 allowMeteredTransfers = prefs[KEY_ALLOW_METERED_TRANSFERS] ?: false,
+                allowRoaming = prefs[KEY_ALLOW_ROAMING] ?: false,
                 debugLogging = prefs[KEY_DEBUG_LOGGING] ?: false,
                 updateCheckEnabled = prefs[KEY_UPDATE_CHECK_ENABLED] ?: true,
                 lastUpdateCheckAt = prefs[KEY_LAST_UPDATE_CHECK_AT] ?: 0L,
@@ -411,6 +414,10 @@ object UserPreferences {
 
     suspend fun setAllowMeteredTransfers(context: Context, allow: Boolean) {
         context.userPreferencesDataStore.edit { it[KEY_ALLOW_METERED_TRANSFERS] = allow }
+    }
+
+    suspend fun setAllowRoaming(context: Context, allow: Boolean) {
+        context.userPreferencesDataStore.edit { it[KEY_ALLOW_ROAMING] = allow }
     }
 
     suspend fun setDebugLogging(context: Context, enabled: Boolean) {

@@ -21,10 +21,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -37,14 +37,24 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImagePainter
 import coil.compose.rememberAsyncImagePainter
-import coil.request.ImageRequest
+import com.cloudyte.app.CloudyteApplication
 import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.api.CloudFile
+import com.cloudyte.app.api.OfflineFileManager
+import com.cloudyte.app.core.cache.CacheKeyFactory
 import com.cloudyte.app.ui.theme.FileAudio
 import com.cloudyte.app.ui.theme.FileCode
 import com.cloudyte.app.ui.theme.FileDoc
 import com.cloudyte.app.ui.theme.FilePdf
 import com.cloudyte.app.ui.theme.FileVideo
+import java.io.File
+
+import android.net.Uri
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.LaunchedEffect
+import coil.compose.SubcomposeAsyncImage
+import coil.compose.SubcomposeAsyncImageContent
 
 @Composable
 fun FileThumb(
@@ -53,89 +63,105 @@ fun FileThumb(
     sizeDp: Dp = 48.dp,
     modifier: Modifier = Modifier,
     cornerRadius: Dp = 12.dp,
-    showTypeBadgeInGrid: Boolean = false
+    showTypeBadgeInGrid: Boolean = false,
+    localSource: File? = null
 ) {
     val context = LocalContext.current
-    val validAccount = accountId.isNotBlank() && accountId != "root" && accountId != "all"
+    val app = context.applicationContext as? CloudyteApplication
+    val downloadedFiles by OfflineFileManager.downloadedFiles.collectAsState()
+    val isDownloadedOffline = file.effectiveId in downloadedFiles
+
+    var dbAccountId by remember(file.effectiveId) { mutableStateOf("") }
+    LaunchedEffect(file.effectiveId, accountId) {
+        if (file.effectiveAccountId.isBlank() && (accountId.isBlank() || accountId == "all" || accountId == "root") && app != null) {
+            val local = app.container.database.cloudFileDao().getFileById(file.effectiveId)
+            val accId = local?.accountId?.takeIf { it.isNotBlank() && it != "all" && it != "root" }
+                ?: app.container.database.accountDao().getAllAccounts().firstOrNull()?.id
+            if (!accId.isNullOrBlank()) {
+                dbAccountId = accId
+            }
+        }
+    }
+
+    val effectiveAccountId = remember(accountId, file.effectiveAccountId, dbAccountId) {
+        when {
+            file.effectiveAccountId.isNotBlank() -> file.effectiveAccountId
+            accountId.isNotBlank() && accountId != "root" && accountId != "all" -> accountId
+            dbAccountId.isNotBlank() -> dbAccountId
+            else -> ""
+        }
+    }
+
     val isPreviewable = (file.isImage || file.isVideo || !file.thumbUrl.isNullOrBlank()) &&
-        file.effectiveId.isNotBlank() &&
-        (validAccount || !file.thumbUrl.isNullOrBlank())
+        file.effectiveId.isNotBlank() && !file.isFolderItem
 
-    val fallbackPreviewUrl = remember(file.effectiveId, accountId, validAccount) {
-        if (validAccount && file.effectiveId.isNotBlank()) {
-            ApiClient.getFileUrl(accountId = accountId, fileId = file.effectiveId, preview = true)
-        } else {
-            null
-        }
+    var cachedThumbFile by remember(file.effectiveId) {
+        mutableStateOf<File?>(localSource?.takeIf { it.isFile && it.length() > 0L })
     }
 
-    val generatedThumbUrl = remember(file.effectiveId, accountId, file.isImage, file.isVideo, validAccount) {
-        if (validAccount && file.effectiveId.isNotBlank() && (file.isImage || file.isVideo)) {
-            ApiClient.getThumbUrl(accountId, file.effectiveId)
-        } else {
-            null
-        }
-    }
+    LaunchedEffect(effectiveAccountId, file.effectiveId, isPreviewable, isDownloadedOffline, localSource?.absolutePath) {
+        if (isPreviewable && app != null) {
+            val resolvedAccId = effectiveAccountId.ifBlank {
+                app.container.database.accountDao().getAllAccounts().firstOrNull()?.id.orEmpty()
+            }
+            if (resolvedAccId.isBlank()) return@LaunchedEffect
+            val account = app.container.database.accountDao().getAccountById(resolvedAccId)
+            val providerType = account?.accountType ?: "tgdrive"
+            val previewRevision = file.updatedAt?.toString() ?: file.time?.toString()
+            val resolvedLocalSource = localSource?.takeIf { it.isFile && it.length() > 0L }
+                ?: OfflineFileManager.findOfflineFile(context, resolvedAccId, file.effectiveId)
+                ?: app.container.previewStore.get(
+                    CacheKeyFactory.preview(resolvedAccId, providerType, file.effectiveId, previewRevision)
+                )
+                ?: file.path?.takeIf { it.isNotBlank() }?.let(::File)?.takeIf { it.isFile && it.length() > 0L }
+                ?: file.location?.takeIf { it.isNotBlank() }?.let(::File)?.takeIf { it.isFile && it.length() > 0L }
 
-    val primaryThumbUrl = remember(file.effectiveId, file.thumbUrl, generatedThumbUrl, fallbackPreviewUrl, isPreviewable) {
-        if (!isPreviewable) {
-            null
-        } else if (generatedThumbUrl != null) {
-            generatedThumbUrl
-        } else {
-            val raw = file.thumbUrl
-            if (!raw.isNullOrBlank()) {
-                val fullUrl = if (raw.startsWith("http://") || raw.startsWith("https://")) {
-                    raw
-                } else {
-                    val path = if (raw.startsWith("/")) raw else "/$raw"
-                    "${ApiClient.API_BASE_URL}$path"
+            val resolvedPath = app.container.thumbnailStore.resolve(
+                accountId = resolvedAccId,
+                providerType = providerType,
+                file = file,
+                sizePx = (sizeDp.value * 4).toInt().coerceIn(64, 512),
+                localSource = resolvedLocalSource
+            )
+            if (!resolvedPath.isNullOrBlank() && resolvedPath.startsWith("/")) {
+                val f = File(resolvedPath)
+                if (f.isFile && f.length() > 0L) {
+                    cachedThumbFile = f
                 }
-                val token = ApiClient.getToken()
-                if (!token.isNullOrEmpty() && fullUrl.startsWith(ApiClient.API_BASE_URL) && !fullUrl.contains("token=")) {
-                    val sep = if (fullUrl.contains("?")) "&" else "?"
-                    "$fullUrl${sep}token=$token"
-                } else {
-                    fullUrl
-                }
-            } else {
-                fallbackPreviewUrl
             }
         }
     }
 
-    var useFallbackUrl by remember(primaryThumbUrl, generatedThumbUrl) { mutableStateOf(false) }
-    val activeUrl = if (useFallbackUrl && fallbackPreviewUrl != null && fallbackPreviewUrl != primaryThumbUrl) {
-        fallbackPreviewUrl
-    } else {
-        primaryThumbUrl
-    }
-
-    val cacheKey = remember(file.effectiveId, file.updatedAt, useFallbackUrl) {
-        "thumb:${file.effectiveId}:${file.updatedAt}:$useFallbackUrl"
-    }
-
-    val imageRequest = remember(context, activeUrl, cacheKey) {
-        activeUrl?.let { url ->
-            val builder = ImageRequest.Builder(context)
-                .data(url)
-                .memoryCacheKey(cacheKey)
-                .diskCacheKey(cacheKey)
-                .crossfade(true)
-            val token = ApiClient.getToken()
-            if (!token.isNullOrEmpty()) {
-                builder.addHeader("Authorization", "Bearer $token")
+    val remoteThumbUrl = remember(file.thumbUrl, effectiveAccountId, file.effectiveId, sizeDp) {
+        val raw = file.thumbUrl
+        val token = ApiClient.getToken()
+        when {
+            !raw.isNullOrBlank() -> {
+                val full = if (raw.startsWith("http://") || raw.startsWith("https://")) raw else "${ApiClient.API_BASE_URL}/${raw.trimStart('/')}"
+                if (!token.isNullOrBlank() && !full.contains("token=")) {
+                    val sep = if (full.contains("?")) "&" else "?"
+                    "$full${sep}token=${Uri.encode(token.orEmpty())}"
+                } else {
+                    full
+                }
             }
-            builder.build()
+            effectiveAccountId.isNotBlank() && file.effectiveId.isNotBlank() -> {
+                ApiClient.getThumbUrl(effectiveAccountId, file.effectiveId, (sizeDp.value * 4).toInt().coerceIn(64, 512))
+            }
+            else -> null
         }
     }
 
-    val containerModifier = if (modifier == Modifier) {
-        Modifier.size(sizeDp)
-    } else {
-        modifier.heightIn(min = sizeDp)
+    val imageModel: Any? = remember(cachedThumbFile, localSource, remoteThumbUrl) {
+        when {
+            cachedThumbFile != null && cachedThumbFile!!.isFile && cachedThumbFile!!.length() > 0L -> cachedThumbFile
+            localSource != null && localSource.isFile && localSource.length() > 0L -> localSource
+            !remoteThumbUrl.isNullOrBlank() -> remoteThumbUrl
+            else -> null
+        }
     }
 
+    val containerModifier = if (modifier == Modifier) Modifier.size(sizeDp) else modifier.heightIn(min = sizeDp)
     val iconSize = (sizeDp * 0.52f).coerceIn(22.dp, 64.dp)
     val badgeSize = (sizeDp * 0.42f).coerceIn(20.dp, 48.dp)
     val playIconSize = (badgeSize * 0.62f).coerceIn(12.dp, 28.dp)
@@ -146,78 +172,49 @@ fun FileThumb(
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)),
         contentAlignment = Alignment.Center
     ) {
-        if (imageRequest != null) {
-            val painter = rememberAsyncImagePainter(model = imageRequest)
-            val state = painter.state
-
-            when (state) {
-                is AsyncImagePainter.State.Loading,
-                is AsyncImagePainter.State.Empty -> {
-                    FileTypeFallbackContent(
-                        file = file,
-                        iconSize = iconSize,
-                        showTypeBadgeInGrid = showTypeBadgeInGrid
-                    )
-                }
-                is AsyncImagePainter.State.Error -> {
-                    if (!useFallbackUrl && fallbackPreviewUrl != null && fallbackPreviewUrl != primaryThumbUrl) {
-                        useFallbackUrl = true
+        if (isPreviewable && imageModel != null) {
+            val imageRequest = remember(imageModel, context) {
+                coil.request.ImageRequest.Builder(context)
+                    .data(imageModel)
+                    .crossfade(150)
+                    .build()
+            }
+            SubcomposeAsyncImage(
+                model = imageRequest,
+                contentDescription = file.effectiveName,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            ) {
+                val state = painter.state
+                when (state) {
+                    is AsyncImagePainter.State.Success -> {
+                        SubcomposeAsyncImageContent()
                     }
-                    FileTypeFallbackContent(
-                        file = file,
-                        iconSize = iconSize,
-                        showTypeBadgeInGrid = showTypeBadgeInGrid
-                    )
-                }
-                is AsyncImagePainter.State.Success -> {
-                    Image(
-                        painter = painter,
-                        contentDescription = file.effectiveName,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
-                    )
+                    else -> {
+                        FileTypeFallbackContent(file, iconSize, showTypeBadgeInGrid)
+                    }
                 }
             }
 
-            if (file.isVideo && state is AsyncImagePainter.State.Success) {
+            if (file.isVideo) {
                 Box(
-                    modifier = Modifier
-                        .size(badgeSize)
-                        .background(Color.Black.copy(alpha = 0.6f), CircleShape),
+                    Modifier.size(badgeSize).background(Color.Black.copy(alpha = 0.6f), CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = "Video",
-                        tint = Color.White,
-                        modifier = Modifier.size(playIconSize)
-                    )
+                    Icon(Icons.Default.PlayArrow, "Video", tint = Color.White, modifier = Modifier.size(playIconSize))
                 }
             }
         } else {
-            FileTypeFallbackContent(
-                file = file,
-                iconSize = iconSize,
-                showTypeBadgeInGrid = showTypeBadgeInGrid
-            )
+            FileTypeFallbackContent(file, iconSize, showTypeBadgeInGrid)
         }
     }
 }
 
 @Composable
-private fun FileTypeFallbackContent(
-    file: CloudFile,
-    iconSize: Dp,
-    showTypeBadgeInGrid: Boolean
-) {
+private fun FileTypeFallbackContent(file: CloudFile, iconSize: Dp, showTypeBadgeInGrid: Boolean) {
     if (showTypeBadgeInGrid && !file.isFolderItem && !file.isImage && !file.isVideo) {
         val rawLabel = (file.type ?: file.effectiveType).uppercase().take(4).ifBlank { "FILE" }
-        Text(
-            text = rawLabel,
-            color = MaterialTheme.colorScheme.onSurface,
-            fontWeight = FontWeight.Bold,
-            fontSize = 18.sp
-        )
+        Text(rawLabel, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 18.sp)
     } else {
         val (icon, tint) = when {
             file.isFolderItem -> Icons.Default.Folder to MaterialTheme.colorScheme.primary
@@ -228,11 +225,6 @@ private fun FileTypeFallbackContent(
             file.isTextOrCode -> Icons.Default.Code to FileCode
             else -> Icons.Default.Description to MaterialTheme.colorScheme.onSurfaceVariant
         }
-        Icon(
-            imageVector = icon,
-            contentDescription = file.effectiveName,
-            tint = tint,
-            modifier = Modifier.size(iconSize)
-        )
+        Icon(icon, file.effectiveName, tint = tint, modifier = Modifier.size(iconSize))
     }
 }

@@ -1,23 +1,32 @@
 package com.cloudyte.app.data.providers
 
 import com.cloudyte.app.api.CloudyteApi
+import java.util.Locale
 
-/** Resolves a stable provider adapter from the account type returned by the server. */
+/** Resolves an adapter only from the selected account's declared provider identity. */
 class ProviderRegistry(api: CloudyteApi) {
-    private val providers = listOf(
-        TelegramProvider(api),
-        GoogleDriveProvider(api),
-        OneDriveProvider(api),
-        CloudyteProvider(api)
+    private val providers: Map<String, CloudProvider> = listOf(
+        TelegramProvider(api), GoogleDriveProvider(api), OneDriveProvider(api), CloudyteProvider(api)
     ).associateBy { it.type }
 
     fun forAccountType(accountType: String?): CloudProvider {
-        val normalized = accountType.orEmpty().lowercase()
-        return when {
-            normalized.contains("google") || normalized.contains("gdrive") -> providers.getValue("google_drive")
-            normalized.contains("one") -> providers.getValue("onedrive")
-            normalized.contains("tg") || normalized.contains("telegram") -> providers.getValue("telegram")
-            else -> providers.getValue("cloudyte")
+        val normalized = normalize(accountType)
+        return providers[normalized]
+            ?: throw UnsupportedProviderOperation(normalized.ifBlank { "unknown" }, "account provider resolution")
+    }
+
+    fun byProviderType(providerType: String?): CloudProvider = forAccountType(providerType)
+
+    companion object {
+        fun normalize(value: String?): String {
+            val normalized = value.orEmpty().trim().lowercase(Locale.ROOT).replace('-', '_').replace(' ', '_')
+            return when (normalized) {
+                "tg", "tgdrive", "tg_drive", "telegram_drive", "telegram" -> "telegram"
+                "google", "gdrive", "google_drive", "googledrive" -> "google_drive"
+                "onedrive", "one_drive", "microsoft_onedrive" -> "onedrive"
+                "cloudyte", "cloudyte_drive" -> "cloudyte"
+                else -> normalized
+            }
         }
     }
 }
