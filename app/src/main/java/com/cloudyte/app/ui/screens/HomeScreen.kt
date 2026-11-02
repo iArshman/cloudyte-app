@@ -608,7 +608,9 @@ fun HomeScreen(
                         FileListItem(
                             file = file,
                             navController = rootNavController,
-                            accountId = currentAccountId ?: accounts.firstOrNull()?.effectiveId.orEmpty(),
+                            accountId = file.accountId?.takeIf { it.isNotBlank() && it != "all" && it != "root" }
+                                ?: currentAccountId?.takeIf { it.isNotBlank() && it != "all" && it != "root" }
+                                ?: accounts.firstOrNull()?.effectiveId.orEmpty(),
                             files = recentFiles
                         )
                     }

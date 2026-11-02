@@ -21,7 +21,7 @@ class TransferProgressCalculator(
         val duration = if (first == null) 0L else current.at - first.at
         val delta = if (first == null) 0L else (current.bytes - first.bytes).coerceAtLeast(0L)
         val speed = if (duration >= minimumSampleMs && delta > 0L) (delta * 1000L) / duration else 0L
-        val stable = samples.size >= 2 && duration >= minimumSampleMs && speed > 0L && !isOutlier(speed)
+        val stable = samples.size >= 3 && duration >= minimumSampleMs && speed > 0L && !isOutlier(speed)
         val eta = if (stable && totalBytes > current.bytes) (totalBytes - current.bytes) / speed else null
         return TransferProgressMetrics(
             bytesPerSecond = if (stable) speed else 0L,

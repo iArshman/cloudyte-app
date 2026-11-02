@@ -16,6 +16,8 @@ abstract class TransferQueueDao {
     @Query("SELECT * FROM transfers WHERE id=:id")
     protected abstract suspend fun row(id: String): LocalTransfer?
 
+    open suspend fun currentRow(id: String): LocalTransfer? = row(id)
+
     @Transaction
     open suspend fun acquireNextRunnableLease(ownerId: String, now: Long, leaseUntil: Long): LocalTransfer? {
         repeat(4) {
@@ -39,6 +41,9 @@ abstract class TransferQueueDao {
 
     @Query("UPDATE transfers SET state=:nextState, status=:legacyStatus, lastErrorCode=:errorCode, lastErrorMessage=:errorMessage, lastHttpStatus=:httpStatus, errorMessage=:errorMessage, nextAttemptAt=:nextAttemptAt, leaseOwner=CASE WHEN :keepLease THEN leaseOwner ELSE NULL END, leaseExpiresAt=CASE WHEN :keepLease THEN leaseExpiresAt ELSE NULL END, updatedAt=:now WHERE id=:id AND state=:expectedState AND leaseOwner=:ownerId AND leaseExpiresAt > :now")
     abstract suspend fun transitionOwned(id: String, ownerId: String, expectedState: String, nextState: String, legacyStatus: String, errorCode: String?, errorMessage: String?, nextAttemptAt: Long?, httpStatus: Int?, keepLease: Boolean, now: Long): Int
+
+    @Query("UPDATE transfers SET state=:finalState, status=:legacyStatus, lastErrorCode=:errorCode, lastErrorMessage=:errorMessage, errorMessage=:errorMessage, leaseOwner=NULL, leaseExpiresAt=NULL, updatedAt=:now WHERE id=:id AND (leaseOwner=:ownerId OR leaseOwner IS NULL)")
+    abstract suspend fun finalizeInterrupted(id: String, ownerId: String, finalState: String, legacyStatus: String, errorCode: String?, errorMessage: String?, now: Long): Int
 
     @Query("UPDATE transfers SET state='QUEUED', status='PENDING', leaseOwner=NULL, leaseExpiresAt=NULL, lastErrorCode='WORKER_INTERRUPTED', lastErrorMessage='Recovered after execution lease expired', errorMessage='Recovered after execution lease expired', updatedAt=:now WHERE state='RUNNING' AND leaseExpiresAt IS NOT NULL AND leaseExpiresAt <= :now")
     abstract suspend fun recoverExpiredLeases(now: Long): Int

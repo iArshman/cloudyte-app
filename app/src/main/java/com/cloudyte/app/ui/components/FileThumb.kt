@@ -21,8 +21,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -36,12 +38,23 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImagePainter
 import coil.compose.rememberAsyncImagePainter
 import com.cloudyte.app.CloudyteApplication
+import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.api.CloudFile
+import com.cloudyte.app.api.OfflineFileManager
+import com.cloudyte.app.core.cache.CacheKeyFactory
 import com.cloudyte.app.ui.theme.FileAudio
 import com.cloudyte.app.ui.theme.FileCode
 import com.cloudyte.app.ui.theme.FileDoc
 import com.cloudyte.app.ui.theme.FilePdf
 import com.cloudyte.app.ui.theme.FileVideo
+import java.io.File
+
+import android.net.Uri
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.LaunchedEffect
+import coil.compose.SubcomposeAsyncImage
+import coil.compose.SubcomposeAsyncImageContent
 
 @Composable
 fun FileThumb(
@@ -50,21 +63,101 @@ fun FileThumb(
     sizeDp: Dp = 48.dp,
     modifier: Modifier = Modifier,
     cornerRadius: Dp = 12.dp,
-    showTypeBadgeInGrid: Boolean = false
+    showTypeBadgeInGrid: Boolean = false,
+    localSource: File? = null
 ) {
     val context = LocalContext.current
     val app = context.applicationContext as? CloudyteApplication
+    val downloadedFiles by OfflineFileManager.downloadedFiles.collectAsState()
+    val isDownloadedOffline = file.effectiveId in downloadedFiles
+
+    var dbAccountId by remember(file.effectiveId) { mutableStateOf("") }
+    LaunchedEffect(file.effectiveId, accountId) {
+        if (file.effectiveAccountId.isBlank() && (accountId.isBlank() || accountId == "all" || accountId == "root") && app != null) {
+            val local = app.container.database.cloudFileDao().getFileById(file.effectiveId)
+            val accId = local?.accountId?.takeIf { it.isNotBlank() && it != "all" && it != "root" }
+                ?: app.container.database.accountDao().getAllAccounts().firstOrNull()?.id
+            if (!accId.isNullOrBlank()) {
+                dbAccountId = accId
+            }
+        }
+    }
+
+    val effectiveAccountId = remember(accountId, file.effectiveAccountId, dbAccountId) {
+        when {
+            file.effectiveAccountId.isNotBlank() -> file.effectiveAccountId
+            accountId.isNotBlank() && accountId != "root" && accountId != "all" -> accountId
+            dbAccountId.isNotBlank() -> dbAccountId
+            else -> ""
+        }
+    }
+
     val isPreviewable = (file.isImage || file.isVideo || !file.thumbUrl.isNullOrBlank()) &&
-        file.effectiveId.isNotBlank() && accountId.isNotBlank() && accountId != "root" && accountId != "all"
-    val thumbnailPath by produceState<String?>(null, accountId, file.effectiveId, file.updatedAt, sizeDp, isPreviewable) {
+        file.effectiveId.isNotBlank() && !file.isFolderItem
+
+    var cachedThumbFile by remember(file.effectiveId) {
+        mutableStateOf<File?>(localSource?.takeIf { it.isFile && it.length() > 0L })
+    }
+
+    LaunchedEffect(effectiveAccountId, file.effectiveId, isPreviewable, isDownloadedOffline, localSource?.absolutePath) {
         if (isPreviewable && app != null) {
-            val account = app.container.database.accountDao().getAccountById(accountId)
-            value = app.container.thumbnailStore.resolve(
-                accountId = accountId,
-                providerType = account?.accountType ?: "unknown",
+            val resolvedAccId = effectiveAccountId.ifBlank {
+                app.container.database.accountDao().getAllAccounts().firstOrNull()?.id.orEmpty()
+            }
+            if (resolvedAccId.isBlank()) return@LaunchedEffect
+            val account = app.container.database.accountDao().getAccountById(resolvedAccId)
+            val providerType = account?.accountType ?: "tgdrive"
+            val previewRevision = file.updatedAt?.toString() ?: file.time?.toString()
+            val resolvedLocalSource = localSource?.takeIf { it.isFile && it.length() > 0L }
+                ?: OfflineFileManager.findOfflineFile(context, resolvedAccId, file.effectiveId)
+                ?: app.container.previewStore.get(
+                    CacheKeyFactory.preview(resolvedAccId, providerType, file.effectiveId, previewRevision)
+                )
+                ?: file.path?.takeIf { it.isNotBlank() }?.let(::File)?.takeIf { it.isFile && it.length() > 0L }
+                ?: file.location?.takeIf { it.isNotBlank() }?.let(::File)?.takeIf { it.isFile && it.length() > 0L }
+
+            val resolvedPath = app.container.thumbnailStore.resolve(
+                accountId = resolvedAccId,
+                providerType = providerType,
                 file = file,
-                sizePx = (sizeDp.value * 4).toInt().coerceIn(64, 512)
+                sizePx = (sizeDp.value * 4).toInt().coerceIn(64, 512),
+                localSource = resolvedLocalSource
             )
+            if (!resolvedPath.isNullOrBlank() && resolvedPath.startsWith("/")) {
+                val f = File(resolvedPath)
+                if (f.isFile && f.length() > 0L) {
+                    cachedThumbFile = f
+                }
+            }
+        }
+    }
+
+    val remoteThumbUrl = remember(file.thumbUrl, effectiveAccountId, file.effectiveId, sizeDp) {
+        val raw = file.thumbUrl
+        val token = ApiClient.getToken()
+        when {
+            !raw.isNullOrBlank() -> {
+                val full = if (raw.startsWith("http://") || raw.startsWith("https://")) raw else "${ApiClient.API_BASE_URL}/${raw.trimStart('/')}"
+                if (!token.isNullOrBlank() && !full.contains("token=")) {
+                    val sep = if (full.contains("?")) "&" else "?"
+                    "$full${sep}token=${Uri.encode(token.orEmpty())}"
+                } else {
+                    full
+                }
+            }
+            effectiveAccountId.isNotBlank() && file.effectiveId.isNotBlank() -> {
+                ApiClient.getThumbUrl(effectiveAccountId, file.effectiveId, (sizeDp.value * 4).toInt().coerceIn(64, 512))
+            }
+            else -> null
+        }
+    }
+
+    val imageModel: Any? = remember(cachedThumbFile, localSource, remoteThumbUrl) {
+        when {
+            cachedThumbFile != null && cachedThumbFile!!.isFile && cachedThumbFile!!.length() > 0L -> cachedThumbFile
+            localSource != null && localSource.isFile && localSource.length() > 0L -> localSource
+            !remoteThumbUrl.isNullOrBlank() -> remoteThumbUrl
+            else -> null
         }
     }
 
@@ -74,27 +167,40 @@ fun FileThumb(
     val playIconSize = (badgeSize * 0.62f).coerceIn(12.dp, 28.dp)
 
     Box(
-        modifier = containerModifier.clip(RoundedCornerShape(cornerRadius)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)),
+        modifier = containerModifier
+            .clip(RoundedCornerShape(cornerRadius))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)),
         contentAlignment = Alignment.Center
     ) {
-        if (thumbnailPath != null) {
-            val painter = rememberAsyncImagePainter(model = thumbnailPath)
-            val state = painter.state
-            when (state) {
-                is AsyncImagePainter.State.Loading, is AsyncImagePainter.State.Empty ->
-                    FileTypeFallbackContent(file, iconSize, showTypeBadgeInGrid)
-                is AsyncImagePainter.State.Error ->
-                    FileTypeFallbackContent(file, iconSize, showTypeBadgeInGrid)
-                is AsyncImagePainter.State.Success ->
-                    Image(
-                        painter = painter,
-                        contentDescription = file.effectiveName,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
-                    )
+        if (isPreviewable && imageModel != null) {
+            val imageRequest = remember(imageModel, context) {
+                coil.request.ImageRequest.Builder(context)
+                    .data(imageModel)
+                    .crossfade(150)
+                    .build()
             }
-            if (file.isVideo && state is AsyncImagePainter.State.Success) {
-                Box(Modifier.size(badgeSize).background(Color.Black.copy(alpha = 0.6f), CircleShape), contentAlignment = Alignment.Center) {
+            SubcomposeAsyncImage(
+                model = imageRequest,
+                contentDescription = file.effectiveName,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            ) {
+                val state = painter.state
+                when (state) {
+                    is AsyncImagePainter.State.Success -> {
+                        SubcomposeAsyncImageContent()
+                    }
+                    else -> {
+                        FileTypeFallbackContent(file, iconSize, showTypeBadgeInGrid)
+                    }
+                }
+            }
+
+            if (file.isVideo) {
+                Box(
+                    Modifier.size(badgeSize).background(Color.Black.copy(alpha = 0.6f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
                     Icon(Icons.Default.PlayArrow, "Video", tint = Color.White, modifier = Modifier.size(playIconSize))
                 }
             }

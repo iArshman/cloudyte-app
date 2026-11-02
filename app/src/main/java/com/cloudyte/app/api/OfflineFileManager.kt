@@ -61,7 +61,9 @@ object OfflineFileManager {
         val safeFid = sanitizeFileName(fileId)
         val prefix = "${safeAcc}_${safeFid}_"
         val dir = getVaultDir(context)
-        val matches = dir.listFiles { _, name -> name.startsWith(prefix) && !name.endsWith(".tmp") }
+        val matches = dir.listFiles { _, name ->
+            name.startsWith(prefix) && !name.endsWith(".tmp") && !name.endsWith(".part")
+        }
         val found = matches?.firstOrNull { it.exists() && it.length() > 0 }
         return found
     }
@@ -86,7 +88,7 @@ object OfflineFileManager {
 
     fun refreshDownloadedSet(context: Context) {
         val dir = getVaultDir(context)
-        val files = dir.listFiles { _, name -> !name.endsWith(".tmp") } ?: emptyArray()
+        val files = dir.listFiles { _, name -> !name.endsWith(".tmp") && !name.endsWith(".part") } ?: emptyArray()
         val set = mutableSetOf<String>()
         for (f in files) {
             if (f.length() > 0) {

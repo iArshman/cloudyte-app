@@ -47,7 +47,7 @@ object ApiClient {
         val requestBuilder = request.newBuilder()
         val token = getToken()
         if (!token.isNullOrEmpty() && !path.endsWith("/login") && !path.endsWith("/register")) {
-            requestBuilder.addHeader("Authorization", "Bearer $token")
+            requestBuilder.header("Authorization", "Bearer $token")
         }
         chain.proceed(requestBuilder.build())
     }
@@ -170,9 +170,9 @@ object ApiClient {
         val token = getToken()
         val base = "$API_BASE_URL/api/download/${Uri.encode(accountId)}/${Uri.encode(fileId)}"
         return when {
-            preview && !token.isNullOrEmpty() -> "$base?preview=1&token=$token"
+            preview && !token.isNullOrEmpty() -> "$base?preview=1&token=${Uri.encode(token)}"
             preview -> "$base?preview=1"
-            !token.isNullOrEmpty() -> "$base?token=$token"
+            !token.isNullOrEmpty() -> "$base?token=${Uri.encode(token)}"
             else -> base
         }
     }

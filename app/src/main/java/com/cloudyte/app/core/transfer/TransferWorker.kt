@@ -1,16 +1,28 @@
 package com.cloudyte.app.core.transfer
 
 import android.content.Context
+import android.util.Log
 import androidx.work.CoroutineWorker
-import androidx.work.WorkerParameters
 import androidx.work.Data
+import androidx.work.ForegroundInfo
+import androidx.work.WorkerParameters
 import com.cloudyte.app.CloudyteApplication
 import com.cloudyte.app.core.transfer.notification.TransferNotification
+import kotlinx.coroutines.CancellationException
 
 class TransferWorker(
     appContext: Context,
     workerParams: WorkerParameters
 ) : CoroutineWorker(appContext, workerParams) {
+
+    override suspend fun getForegroundInfo(): ForegroundInfo {
+        val application = applicationContext as? CloudyteApplication
+        val queueDao = application?.container?.database?.transferQueueDao()
+        val transferred = runCatching { queueDao?.aggregateBytesTransferred() ?: 0L }.getOrDefault(0L)
+        val total = runCatching { queueDao?.aggregateTotalBytes() ?: 0L }.getOrDefault(0L)
+        return TransferNotification.foregroundInfo(applicationContext, transferred, total)
+    }
+
     override suspend fun doWork(): Result {
         val application = applicationContext as? CloudyteApplication
             ?: return Result.failure()
@@ -29,6 +41,8 @@ class TransferWorker(
         return try {
             application.container.transferCoordinator.dispatch(command)
             Result.success()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (error: Throwable) {
             // Scheduling can fail transiently during process recreation or network recovery.
             // Let WorkManager apply its configured backoff instead of losing the command.
@@ -49,14 +63,21 @@ class TransferWorker(
             )
             return Result.success()
         }
+        val queueDao = container.database.transferQueueDao()
         val now = System.currentTimeMillis()
-        container.database.transferQueueDao().recoverExpiredLeases(now)
-        container.database.transferQueueDao().requeueNetworkWaiters(now)
-        setForeground(
+        queueDao.recoverExpiredLeases(now)
+        queueDao.requeueNetworkWaiters(now)
+
+        if (!queueDao.hasRunnableTransfers(now)) {
+            scheduleFollowUpWork(container)
+            return Result.success()
+        }
+
+        trySetForeground(
             TransferNotification.foregroundInfo(
                 applicationContext,
-                container.database.transferQueueDao().aggregateBytesTransferred(),
-                container.database.transferQueueDao().aggregateTotalBytes()
+                queueDao.aggregateBytesTransferred(),
+                queueDao.aggregateTotalBytes()
             )
         )
         val trigger = runCatching { DrainTrigger.valueOf(inputData.getString(KEY_TRIGGER) ?: "APP_START") }
@@ -72,23 +93,39 @@ class TransferWorker(
                     .putLong("eta_seconds", snapshot.etaSeconds ?: -1L)
                     .build()
             )
-            setForeground(
+            trySetForeground(
                 TransferNotification.foregroundInfo(
                     applicationContext,
-                    container.database.transferQueueDao().aggregateBytesTransferred(),
-                    container.database.transferQueueDao().aggregateTotalBytes(),
+                    queueDao.aggregateBytesTransferred(),
+                    queueDao.aggregateTotalBytes(),
                     snapshot.transferId
                 )
             )
         }
-        val retryAt = container.database.transferQueueDao().nextRetryAt(System.currentTimeMillis())
-        if (retryAt != null) container.transferScheduler.scheduleRetryAt(retryAt)
-        val leaseExpiry = container.database.transferQueueDao().nextLeaseExpiry(System.currentTimeMillis())
-        if (leaseExpiry != null) container.transferScheduler.scheduleLeaseRecoveryAt(leaseExpiry)
-        if (container.database.transferQueueDao().hasNetworkWaiters()) container.transferScheduler.scheduleNetworkRecovery()
+        scheduleFollowUpWork(container)
         return when (drained) {
             is DrainResult.Drained -> if (drained.hasMore) Result.retry() else Result.success()
             DrainResult.Stopped -> Result.retry()
+        }
+    }
+
+    private suspend fun scheduleFollowUpWork(container: com.cloudyte.app.AppContainer) {
+        val queueDao = container.database.transferQueueDao()
+        val currentNow = System.currentTimeMillis()
+        val retryAt = queueDao.nextRetryAt(currentNow)
+        if (retryAt != null) container.transferScheduler.scheduleRetryAt(retryAt)
+        val leaseExpiry = queueDao.nextLeaseExpiry(currentNow)
+        if (leaseExpiry != null) container.transferScheduler.scheduleLeaseRecoveryAt(leaseExpiry)
+        if (queueDao.hasNetworkWaiters()) container.transferScheduler.scheduleNetworkRecovery()
+    }
+
+    private suspend fun trySetForeground(info: ForegroundInfo) {
+        try {
+            setForeground(info)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            Log.w("TransferWorker", "Proceeding without foreground promotion: ${error.javaClass.simpleName}")
         }
     }
 
