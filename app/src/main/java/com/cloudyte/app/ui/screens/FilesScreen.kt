@@ -2,6 +2,7 @@ package com.cloudyte.app.ui.screens
 
 import android.app.Application
 import android.content.Context
+import android.net.Uri
 import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -109,6 +110,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
@@ -120,6 +122,8 @@ import com.cloudyte.app.api.CloudFile
 import com.cloudyte.app.api.CloudyteApi
 import com.cloudyte.app.api.FolderRequest
 import com.cloudyte.app.api.RenameRequest
+import com.cloudyte.app.CloudyteApplication
+import com.cloudyte.app.core.transfer.TransferCommand
 import com.cloudyte.app.data.CloudFileRepository
 import com.cloudyte.app.data.SortDirection
 import com.cloudyte.app.data.SortField
@@ -128,6 +132,7 @@ import com.cloudyte.app.data.UserPreferencesState
 import com.cloudyte.app.data.ViewMode
 import com.cloudyte.app.db.AppDatabase
 import com.cloudyte.app.db.LocalAccount
+import com.cloudyte.app.db.TransferDirection
 import com.cloudyte.app.ui.components.AppLoadingIndicator
 import com.cloudyte.app.ui.components.FileThumb
 import com.cloudyte.app.ui.components.LocalBottomBarInset
@@ -150,6 +155,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class BreadcrumbItem(val id: String?, val name: String)
 
@@ -445,6 +451,112 @@ class FilesViewModel(
         }
     }
 
+    fun enqueueFileUpload(uri: Uri) {
+        enqueueUploadUris(listOf(uri))
+    }
+
+    fun enqueueFolderUpload(treeUri: Uri) {
+        viewModelScope.launch {
+            try {
+                val context = getApplication<Application>()
+                runCatching {
+                    context.contentResolver.takePersistableUriPermission(
+                        treeUri,
+                        android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                }
+                val files = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val root = DocumentFile.fromTreeUri(context, treeUri)
+                    buildList {
+                        if (root != null) collectDocumentFiles(root, this)
+                    }
+                }
+                if (files.isEmpty()) {
+                    _userEvents.emit("No files found in selected folder")
+                } else {
+                    enqueueUploadUris(files.map { it.uri })
+                }
+            } catch (error: Exception) {
+                Log.e("FilesViewModel", "Folder upload queue failed", error)
+                _userEvents.emit(error.message ?: "Could not queue folder upload")
+            }
+        }
+    }
+
+    private fun collectDocumentFiles(file: DocumentFile, result: MutableList<DocumentFile>) {
+        if (file.isDirectory) {
+            file.listFiles().forEach { collectDocumentFiles(it, result) }
+        } else if (file.isFile) {
+            result += file
+        }
+    }
+
+    private fun enqueueUploadUris(uris: List<Uri>) {
+        viewModelScope.launch {
+            _isUploading.value = true
+            try {
+                val accountId = currentAccountId.value
+                    ?: accounts.value.firstOrNull { it.isDefault == true }?.effectiveId
+                    ?: accounts.value.firstOrNull()?.effectiveId
+                if (accountId.isNullOrBlank()) {
+                    _userEvents.emit("Select a drive before uploading")
+                    return@launch
+                }
+                val context = getApplication<Application>()
+                val app = context.applicationContext as CloudyteApplication
+                var queued = 0
+                withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    uris.forEach { uri ->
+                        runCatching {
+                            context.contentResolver.takePersistableUriPermission(
+                                uri,
+                                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                            )
+                        }
+                        val metadata = readUploadMetadata(context, uri)
+                        val transferId = app.container.transferRepository.enqueueTransfer(
+                            accountId = accountId,
+                            fileName = metadata.first,
+                            localPath = uri.toString(),
+                            remotePath = currentFolderId.value,
+                            direction = TransferDirection.UPLOAD,
+                            totalBytes = metadata.second
+                        )
+                        app.container.transferCoordinator.dispatch(TransferCommand.Start(transferId))
+                        queued++
+                    }
+                }
+                _userEvents.emit(if (queued == 1) "Upload added to transfers" else "$queued uploads added to transfers")
+                refresh(force = false)
+            } catch (error: Exception) {
+                Log.e("FilesViewModel", "Upload queue failed", error)
+                _userEvents.emit(error.message ?: "Could not queue upload")
+            } finally {
+                _isUploading.value = false
+            }
+        }
+    }
+
+    private fun readUploadMetadata(context: Context, uri: Uri): Pair<String, Long> {
+        var name = "upload_${System.currentTimeMillis()}"
+        var size = 0L
+        context.contentResolver.query(
+            uri,
+            arrayOf(android.provider.OpenableColumns.DISPLAY_NAME, android.provider.OpenableColumns.SIZE),
+            null,
+            null,
+            null
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (nameIndex >= 0 && !cursor.isNull(nameIndex)) cursor.getString(nameIndex)?.let { name = it }
+                val sizeIndex = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) size = cursor.getLong(sizeIndex)
+            }
+        }
+        return name to size
+    }
+
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -565,13 +677,11 @@ fun FilesScreen(
     var showAddAccountDialog by remember { mutableStateOf(false) }
     var isFabExpanded by remember { mutableStateOf(false) }
 
-    val filePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        uri?.let {
-            snackbarMessage = "Uploading file..."
-        }
+    val filePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let(viewModel::enqueueFileUpload)
     }
     val folderPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        uri?.let { snackbarMessage = "Uploading folder..." }
+        uri?.let(viewModel::enqueueFolderUpload)
     }
 
 
