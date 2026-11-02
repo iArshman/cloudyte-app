@@ -55,10 +55,24 @@ class BackupWorker(
     private var activeTransferId: String? = null
     private lateinit var transferRepository: TransferRepository
 
+    override suspend fun getForegroundInfo(): ForegroundInfo {
+        return createForegroundInfo(applicationContext, "Preparing backup…", 0, 0)
+    }
+
+    private suspend fun trySetForeground(info: ForegroundInfo) {
+        try {
+            setForeground(info)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            Log.w("BackupWorker", "Proceeding without foreground promotion: ${error.javaClass.simpleName}")
+        }
+    }
+
     override suspend fun doWork(): Result {
         val context = applicationContext
         SyncLogger.init(context)
-        setForeground(createForegroundInfo(context, "Preparing backup…", 0, 0))
+        trySetForeground(createForegroundInfo(context, "Preparing backup…", 0, 0))
 
         val isManual = inputData.getBoolean("is_manual", false)
         forceReupload = inputData.getBoolean("force_reupload", false)
@@ -120,7 +134,7 @@ class BackupWorker(
                 uploadedCount = 0,
                 totalCount = totalFilesToProcess
             )
-            setForeground(createForegroundInfo(context, "Syncing files…", 0, totalFilesToProcess))
+            trySetForeground(createForegroundInfo(context, "Syncing files…", 0, totalFilesToProcess))
 
             val db = AppDatabase.getDatabase(context)
             transferRepository = TransferRepository(db.transferDao())
@@ -409,7 +423,7 @@ class BackupWorker(
                         if (queued) {
                             queuedFilesCount++
                             SyncLogger.log("↗ [$processedFilesCount/$totalFilesToProcess] Queued '$fileName' ($sizeFormatted).", SyncLogLevel.INFO)
-                            setForeground(createForegroundInfo(context, "Queued $fileName", processedFilesCount, totalFilesToProcess))
+                            trySetForeground(createForegroundInfo(context, "Queued $fileName", processedFilesCount, totalFilesToProcess))
                         } else {
                             failedFilesCount++
                             SyncLogger.log("✗ Could not enqueue '$fileName' because its transfer is terminal.", SyncLogLevel.ERROR)

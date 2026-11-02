@@ -69,16 +69,32 @@ fun ImageViewerScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    // Retrieve active list from FileRepository or fallback
-    val initialFile = remember(fileId) { FileRepository.getFile(fileId) }
-    val allFilesInFolder = remember {
+    // Retrieve active list from FileRepository or fallback to Room database
+    val app = context.applicationContext as? com.cloudyte.app.CloudyteApplication
+    var dbFiles by remember(fileId) { mutableStateOf<List<CloudFile>>(emptyList()) }
+    LaunchedEffect(fileId, accountId) {
+        if (app != null) {
+            val dbFile = app.container.database.cloudFileDao().getFileById(fileId)?.toCloudFile()
+            if (dbFile != null) {
+                FileRepository.cacheFiles(listOf(dbFile))
+                val folderFiles = if (accountId.isNotBlank() && accountId != "all" && accountId != "root") {
+                    app.container.database.cloudFileDao().getFilesForAccount(accountId).map { it.toCloudFile() }.filter { !it.isFolderItem }
+                } else {
+                    app.container.database.cloudFileDao().getAllFiles().map { it.toCloudFile() }.filter { !it.isFolderItem }
+                }
+                dbFiles = folderFiles.ifEmpty { listOf(dbFile) }
+            }
+        }
+    }
+
+    val initialFile = remember(fileId, dbFiles) { FileRepository.getFile(fileId) ?: dbFiles.firstOrNull { it.effectiveId == fileId } }
+    val allFilesInFolder = remember(fileId, dbFiles) {
         val list = FileRepository.getActiveList().filter { it.isFolder != true }
-        if (list.any { it.effectiveId == fileId }) {
-            list
-        } else if (initialFile != null) {
-            listOf(initialFile)
-        } else {
-            emptyList()
+        when {
+            list.any { it.effectiveId == fileId } -> list
+            dbFiles.any { it.effectiveId == fileId } -> dbFiles
+            initialFile != null -> listOf(initialFile)
+            else -> dbFiles
         }
     }
 
@@ -259,7 +275,11 @@ fun ImageViewerScreen(
                 exit = fadeOut(),
                 modifier = Modifier.align(Alignment.TopCenter)
             ) {
-                val currentFileUrl = currentFile?.let { ApiClient.getFileUrl(accountId, it.effectiveId, preview = false) } ?: ""
+                val currentAccId = currentFile?.effectiveAccountId?.takeIf { it.isNotBlank() }
+                    ?: accountId.takeIf { it.isNotBlank() && it != "all" && it != "root" }.orEmpty()
+                val currentFileUrl = if (currentFile != null && currentAccId.isNotBlank()) {
+                    ApiClient.getFileUrl(currentAccId, currentFile.effectiveId, preview = false)
+                } else ""
 
                 Box(
                     modifier = Modifier
@@ -449,7 +469,10 @@ fun ImageViewerScreen(
                         ) {
                             itemsIndexed(displayedFiles) { index, file ->
                                 val isSelected = index == pagerState.currentPage
-                                val thumbUrl = ApiClient.getFileUrl(accountId, file.effectiveId, preview = true)
+                                val itemAccId = file.effectiveAccountId.ifBlank {
+                                    accountId.takeIf { it.isNotBlank() && it != "all" && it != "root" }.orEmpty()
+                                }
+                                val thumbUrl = if (itemAccId.isNotBlank()) ApiClient.getFileUrl(itemAccId, file.effectiveId, preview = true) else ""
 
                                 Box(
                                     modifier = Modifier
@@ -522,23 +545,44 @@ private fun MediaPageContent(
     navController: NavController
 ) {
     val context = LocalContext.current
-    val fileUrl = remember(accountId, file.effectiveId) {
-        ApiClient.getFileUrl(accountId, file.effectiveId, preview = false)
+    val effectiveAccId = remember(accountId, file.effectiveAccountId) {
+        when {
+            file.effectiveAccountId.isNotBlank() -> file.effectiveAccountId
+            accountId.isNotBlank() && accountId != "all" && accountId != "root" -> accountId
+            else -> ""
+        }
+    }
+    val fileUrl = remember(effectiveAccId, file.effectiveId) {
+        if (effectiveAccId.isNotBlank()) ApiClient.getFileUrl(effectiveAccId, file.effectiveId, preview = true) else ""
     }
 
     // Auto-cache file in background when viewed
-    LaunchedEffect(file.effectiveId) {
-        OfflineFileManager.autoCacheOnView(context, accountId, file)
+    LaunchedEffect(file.effectiveId, effectiveAccId) {
+        if (effectiveAccId.isNotBlank()) {
+            OfflineFileManager.autoCacheOnView(context, effectiveAccId, file)
+        }
     }
 
-    val offlineFile = remember(accountId, file.effectiveId) {
-        OfflineFileManager.findOfflineFile(context, accountId, file.effectiveId)
+    val offlineFile = remember(effectiveAccId, file.effectiveId) {
+        OfflineFileManager.findOfflineFile(context, effectiveAccId, file.effectiveId)
     }
-    val imageModel = remember(offlineFile, fileUrl) {
-        if (offlineFile != null && offlineFile.exists() && offlineFile.length() > 0) {
-            offlineFile
-        } else {
-            fileUrl
+    val app = context.applicationContext as? com.cloudyte.app.CloudyteApplication
+    var cachedPreviewFile by remember(effectiveAccId, file.effectiveId) { mutableStateOf<java.io.File?>(null) }
+    LaunchedEffect(effectiveAccId, file.effectiveId) {
+        if (app != null && effectiveAccId.isNotBlank()) {
+            val rev = file.updatedAt?.toString() ?: file.time?.toString()
+            val acc = app.container.database.accountDao().getAccountById(effectiveAccId)
+            val pType = acc?.accountType ?: "unknown"
+            cachedPreviewFile = app.container.previewStore.get(
+                com.cloudyte.app.core.cache.CacheKeyFactory.preview(effectiveAccId, pType, file.effectiveId, rev)
+            )
+        }
+    }
+    val imageModel: Any = remember(offlineFile, cachedPreviewFile, fileUrl) {
+        when {
+            offlineFile != null && offlineFile.exists() && offlineFile.length() > 0 -> offlineFile
+            cachedPreviewFile != null && cachedPreviewFile!!.exists() && cachedPreviewFile!!.length() > 0 -> cachedPreviewFile!!
+            else -> fileUrl
         }
     }
 
@@ -589,8 +633,14 @@ private fun MediaPageContent(
                     .transformable(state = transformState),
                 contentAlignment = Alignment.Center
             ) {
+                val imageRequest = remember(imageModel, context) {
+                    coil.request.ImageRequest.Builder(context)
+                        .data(imageModel)
+                        .crossfade(true)
+                        .build()
+                }
                 SubcomposeAsyncImage(
-                    model = imageModel,
+                    model = imageRequest,
                     contentDescription = file.effectiveName,
                     modifier = Modifier
                         .fillMaxSize()
