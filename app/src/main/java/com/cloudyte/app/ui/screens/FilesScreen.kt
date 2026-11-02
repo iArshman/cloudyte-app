@@ -947,7 +947,7 @@ fun FilesScreen(
                         contentColor = MaterialTheme.colorScheme.primary
                     ) { Icon(Icons.Default.CreateNewFolder, "New Folder") }
                     SmallFloatingActionButton(
-                        onClick = { isFabExpanded = false; filePickerLauncher.launch("*/*") },
+                        onClick = { isFabExpanded = false; filePickerLauncher.launch(arrayOf("*/*")) },
                         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                         contentColor = MaterialTheme.colorScheme.primary
                     ) { Icon(Icons.Default.FolderOpen, "Upload file") }
@@ -1145,7 +1145,7 @@ fun FilesScreen(
                                     FilesEmptyState(
                                         isSearch = searchQuery.isNotBlank(),
                                         onCreateFolder = { showCreateFolderDialog = true },
-                                        onUploadFile = { filePickerLauncher.launch("*/*") }
+                                        onUploadFile = { filePickerLauncher.launch(arrayOf("*/*")) }
                                     )
                                 }
                             }
@@ -1262,7 +1262,7 @@ fun FilesScreen(
                                     FilesEmptyState(
                                         isSearch = searchQuery.isNotBlank(),
                                         onCreateFolder = { showCreateFolderDialog = true },
-                                        onUploadFile = { filePickerLauncher.launch("*/*") }
+                                        onUploadFile = { filePickerLauncher.launch(arrayOf("*/*")) }
                                     )
                                 }
                             }
