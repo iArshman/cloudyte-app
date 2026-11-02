@@ -45,6 +45,7 @@ class BackupWorker(
     private var totalFilesToProcess = 0
     private var processedFilesCount = 0
     private var uploadedFilesCount = 0
+    private var queuedFilesCount = 0
     private var skippedFilesCount = 0
     private var failedFilesCount = 0
     private var forceReupload = false
@@ -54,10 +55,24 @@ class BackupWorker(
     private var activeTransferId: String? = null
     private lateinit var transferRepository: TransferRepository
 
+    override suspend fun getForegroundInfo(): ForegroundInfo {
+        return createForegroundInfo(applicationContext, "Preparing backup…", 0, 0)
+    }
+
+    private suspend fun trySetForeground(info: ForegroundInfo) {
+        try {
+            setForeground(info)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            Log.w("BackupWorker", "Proceeding without foreground promotion: ${error.javaClass.simpleName}")
+        }
+    }
+
     override suspend fun doWork(): Result {
         val context = applicationContext
         SyncLogger.init(context)
-        setForeground(createForegroundInfo(context, "Preparing backup…", 0, 0))
+        trySetForeground(createForegroundInfo(context, "Preparing backup…", 0, 0))
 
         val isManual = inputData.getBoolean("is_manual", false)
         forceReupload = inputData.getBoolean("force_reupload", false)
@@ -106,6 +121,7 @@ class BackupWorker(
             totalFilesToProcess = countFiles(rootDoc)
             processedFilesCount = 0
             uploadedFilesCount = 0
+            queuedFilesCount = 0
             skippedFilesCount = 0
             failedFilesCount = 0
             sawRetryableError = false
@@ -118,24 +134,29 @@ class BackupWorker(
                 uploadedCount = 0,
                 totalCount = totalFilesToProcess
             )
-            setForeground(createForegroundInfo(context, "Syncing files…", 0, totalFilesToProcess))
+            trySetForeground(createForegroundInfo(context, "Syncing files…", 0, totalFilesToProcess))
 
             val db = AppDatabase.getDatabase(context)
             transferRepository = TransferRepository(db.transferDao())
-            val recovered = transferRepository.recoverStaleTransfers()
+            val recovered = db.transferQueueDao().recoverExpiredLeases(System.currentTimeMillis())
             if (recovered > 0) {
                 SyncLogger.log("Recovered $recovered interrupted transfer(s).", SyncLogLevel.WARNING)
             }
 
             syncDirectory(context, db, accountId, null, rootDoc, "")
 
-            val summary = if (failedFilesCount == 0) {
-                "Completed: $uploadedFilesCount uploaded, $skippedFilesCount up-to-date/skipped"
-            } else {
-                "Finished with $failedFilesCount error(s). $uploadedFilesCount uploaded, $skippedFilesCount skipped"
+            if (queuedFilesCount > 0) {
+                (context.applicationContext as? com.cloudyte.app.CloudyteApplication)
+                    ?.container?.transferScheduler?.kick(com.cloudyte.app.core.transfer.ScheduleReason.USER_ENQUEUE, allowMetered = true)
             }
 
-            val finalState = if (failedFilesCount > 0 && uploadedFilesCount == 0 && skippedFilesCount == 0) {
+            val summary = if (failedFilesCount == 0) {
+                "Queued: $queuedFilesCount upload(s), $skippedFilesCount up-to-date/skipped"
+            } else {
+                "Queued $queuedFilesCount upload(s) with $failedFilesCount scan error(s); $skippedFilesCount skipped"
+            }
+
+            val finalState = if (failedFilesCount > 0 && uploadedFilesCount == 0 && queuedFilesCount == 0 && skippedFilesCount == 0) {
                 SyncState.ERROR
             } else {
                 SyncState.SUCCESS
@@ -146,7 +167,7 @@ class BackupWorker(
             SyncLogger.updateStatus(
                 state = finalState,
                 action = "Idle",
-                uploadedCount = uploadedFilesCount,
+                uploadedCount = queuedFilesCount,
                 totalCount = totalFilesToProcess,
                 summary = summary
             )
@@ -157,11 +178,6 @@ class BackupWorker(
                 else -> Result.success()
             }
         } catch (e: CancellationException) {
-            activeTransferId?.let { id ->
-                withContext(NonCancellable) {
-                    if (::transferRepository.isInitialized) transferRepository.markCancelled(id)
-                }
-            }
             activeTransferId = null
             throw e
         } catch (e: IOException) {
@@ -346,38 +362,41 @@ class BackupWorker(
                             totalCount = totalFilesToProcess
                         )
                     } else {
-                        val transferId = "backup:${accountId}:${safeFolderId}:${file.uri}"
+                        val forceToken = if (forceReupload) ":force:${System.currentTimeMillis()}" else ""
+                        val transferId = "backup:$accountId:$safeFolderId:${file.uri}:$lastModified:$fileSize$forceToken"
                         activeTransferId = transferId
                         val existingTransfer = db.transferDao().getById(transferId)
-                        if (existingTransfer?.status == com.cloudyte.app.db.TransferStatus.PAUSED.name ||
-                            existingTransfer?.status == com.cloudyte.app.db.TransferStatus.CANCELLED.name
+                        if (existingTransfer?.state == com.cloudyte.app.core.transfer.TransferState.PAUSED.name ||
+                            existingTransfer?.state == com.cloudyte.app.core.transfer.TransferState.CANCELLED.name
                         ) {
                             activeTransferId = null
                             continue
                         }
+                        if (existingTransfer?.state == com.cloudyte.app.core.transfer.TransferState.RUNNING.name) {
+                            queuedFilesCount++
+                            activeTransferId = null
+                            continue
+                        }
+                        val accountType = db.accountDao().getAccountById(accountId)?.accountType
                         if (existingTransfer == null) {
-                            db.transferDao().insert(
+                            db.transferDao().insertIfAbsent(
                                 LocalTransfer(
                                     id = transferId,
                                     accountId = accountId,
                                     fileName = fileName,
                                     localPath = file.uri.toString(),
+                                    localUri = file.uri.toString(),
                                     remotePath = currentCloudFolderId,
+                                    parentFolderId = currentCloudFolderId,
+                                    providerType = accountType,
                                     direction = TransferDirection.BACKUP.name,
+                                    operationType = "BACKUP",
                                     totalBytes = fileSize
                                 )
                             )
                         }
-                        val idempotencyKey = ResumableTransfer.newIdempotencyKey(
-                            "$transferId:$lastModified:$fileSize"
-                        )
-                        val existingTransferMatchesContent =
-                            existingTransfer?.idempotencyKey == idempotencyKey
-                        // Keep the durable idempotency/session record when WorkManager
-                        // re-runs a failed file. The server uses this key to recover the
-                        // existing provider upload session and return its current offset.
-                        // Resetting it here would turn a resumable retry into a restart.
-                        if (!existingTransferMatchesContent) {
+                        val idempotencyKey = ResumableTransfer.newIdempotencyKey("$transferId:$lastModified:$fileSize")
+                        if (existingTransfer?.idempotencyKey != idempotencyKey) {
                             transferRepository.saveResumeMetadata(
                                 id = transferId,
                                 sessionId = null,
@@ -386,123 +405,34 @@ class BackupWorker(
                                 checksum = null,
                                 idempotencyKey = idempotencyKey
                             )
-                            transferRepository.updateProgress(transferId, 0L, fileSize)
                         }
-                        transferRepository.markRunning(transferId, fileSize)
-                        SyncLogger.log("↑ [$processedFilesCount/$totalFilesToProcess] Uploading '$fileName' ($sizeFormatted)...", SyncLogLevel.INFO)
-                        SyncLogger.updateStatus(
-                            SyncState.SYNCING,
-                            action = "Uploading: $fileName ($sizeFormatted)",
-                            file = fileName,
-                            uploadedCount = uploadedFilesCount,
-                            totalCount = totalFilesToProcess
-                        )
-
-                        val uploadResult = if (fileSize >= ResumableTransfer.DEFAULT_CHUNK_SIZE) {
-                            UploadHelper.uploadFileResumable(
-                                context = context,
-                                accountId = accountId,
-                                folderId = currentCloudFolderId,
-                                uri = file.uri,
-                                explicitFileName = fileName,
-                                explicitMimeType = file.type ?: "application/octet-stream",
-                                explicitFileSize = fileSize,
-                                idempotencyKey = idempotencyKey,
-                                provider = AppContainer(context).providerRegistry.forAccountType(
-                                    db.accountDao().getAccountById(accountId)?.accountType
-                                ),
-                                knownChecksum = existingTransfer?.checksum
-                                    ?.takeIf { existingTransferMatchesContent },
-                                onSessionReady = { sessionId, chunkSize, checksum, bytesTransferred, nextChunkIndex ->
-                                    transferRepository.saveResumeMetadata(
-                                        id = transferId,
-                                        sessionId = sessionId,
-                                        chunkSize = chunkSize,
-                                        nextChunkIndex = nextChunkIndex,
-                                        checksum = checksum,
-                                        idempotencyKey = idempotencyKey
-                                    )
-                                    transferRepository.updateResumableProgress(
-                                        transferId,
-                                        bytesTransferred,
-                                        nextChunkIndex
-                                    )
-                                },
-                                onProgress = { bytesTransferred, nextChunkIndex ->
-                                    transferRepository.updateResumableProgress(
-                                        transferId,
-                                        bytesTransferred,
-                                        nextChunkIndex
-                                    )
-                                }
-                            )
-                        } else {
-                            UploadHelper.uploadFile(
-                                context = context,
-                                accountId = accountId,
-                                folderId = currentCloudFolderId,
-                                uri = file.uri,
-                                explicitFileName = fileName,
-                                explicitMimeType = file.type,
-                                explicitFileSize = fileSize,
-                                idempotencyKey = idempotencyKey
+                        val queued = when (existingTransfer?.state) {
+                            com.cloudyte.app.core.transfer.TransferState.FAILED_RETRYABLE.name,
+                            com.cloudyte.app.core.transfer.TransferState.WAITING_FOR_NETWORK.name,
+                            com.cloudyte.app.core.transfer.TransferState.WAITING_FOR_AUTH.name -> true
+                            else -> transferRepository.queueTransfer(
+                                id = transferId,
+                                direction = TransferDirection.BACKUP,
+                                localUri = file.uri.toString(),
+                                parentFolderId = currentCloudFolderId,
+                                providerType = accountType,
+                                totalBytes = fileSize
                             )
                         }
-
-                        if (uploadResult.isSuccess) {
-                            transferRepository.updateProgress(transferId, fileSize, fileSize)
-                            transferRepository.updateResumableProgress(
-                                transferId,
-                                fileSize,
-                                ((fileSize + ResumableTransfer.DEFAULT_CHUNK_SIZE - 1) / ResumableTransfer.DEFAULT_CHUNK_SIZE).toInt()
-                            )
-                            transferRepository.markCompleted(transferId)
-                            activeTransferId = null
-                            uploadedFilesCount++
-                            setForeground(createForegroundInfo(context, "Uploaded $fileName", processedFilesCount, totalFilesToProcess))
-                            SyncLogger.log("✓ Uploaded '$fileName' successfully", SyncLogLevel.SUCCESS)
-
-                            db.uploadRecordDao().insertRecord(
-                                LocalUploadRecord(
-                                    localUri = file.uri.toString(),
-                                    fileName = fileName,
-                                    fileSize = fileSize,
-                                    lastModified = lastModified,
-                                    targetAccountId = accountId,
-                                    targetFolderId = safeFolderId,
-                                    uploadedAt = System.currentTimeMillis(),
-                                    status = "SUCCESS"
-                                )
-                            )
+                        activeTransferId = null
+                        if (queued) {
+                            queuedFilesCount++
+                            SyncLogger.log("↗ [$processedFilesCount/$totalFilesToProcess] Queued '$fileName' ($sizeFormatted).", SyncLogLevel.INFO)
+                            trySetForeground(createForegroundInfo(context, "Queued $fileName", processedFilesCount, totalFilesToProcess))
                         } else {
-                            transferRepository.markFailed(transferId, uploadResult.errorMessage ?: "Upload failed")
-                            activeTransferId = null
                             failedFilesCount++
-                            if (uploadResult.isRetryable) {
-                                sawRetryableError = true
-                            } else if (uploadResult.isFatalClientError) {
-                                sawFatalClientError = true
-                            }
-                            SyncLogger.log("✗ Failed '$fileName': ${uploadResult.errorMessage ?: "Upload failed"}", SyncLogLevel.ERROR)
-                            db.uploadRecordDao().insertRecord(
-                                LocalUploadRecord(
-                                    localUri = file.uri.toString(),
-                                    fileName = fileName,
-                                    fileSize = fileSize,
-                                    lastModified = lastModified,
-                                    targetAccountId = accountId,
-                                    targetFolderId = safeFolderId,
-                                    uploadedAt = System.currentTimeMillis(),
-                                    status = "FAILED"
-                                )
-                            )
+                            SyncLogger.log("✗ Could not enqueue '$fileName' because its transfer is terminal.", SyncLogLevel.ERROR)
                         }
-
                         SyncLogger.updateStatus(
                             SyncState.SYNCING,
-                            action = "Syncing files...",
+                            action = "Queueing files...",
                             file = fileName,
-                            uploadedCount = uploadedFilesCount,
+                            uploadedCount = queuedFilesCount,
                             totalCount = totalFilesToProcess
                         )
                     }

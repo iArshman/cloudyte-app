@@ -61,24 +61,36 @@ fun TextEditorScreen(
     var showSearchBar by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
 
-    val fileUrl = remember(accountId, fileId) {
-        ApiClient.getFileUrl(accountId, fileId, preview = false)
+    val effectiveAccId = remember(accountId, file?.effectiveAccountId) {
+        when {
+            file?.effectiveAccountId?.isNotBlank() == true -> file.effectiveAccountId
+            accountId.isNotBlank() && accountId != "all" && accountId != "root" -> accountId
+            else -> ""
+        }
+    }
+
+    val fileUrl = remember(effectiveAccId, fileId) {
+        val acc = effectiveAccId.ifBlank { accountId }
+        ApiClient.getFileUrl(acc, fileId, preview = false)
     }
 
     // Load file content
-    LaunchedEffect(fileId) {
+    LaunchedEffect(fileId, effectiveAccId) {
         isLoading = true
         errorMessage = null
         try {
             val content = withContext(Dispatchers.IO) {
-                val offlineFile = OfflineFileManager.findOfflineFile(context, accountId, fileId)
+                val acc = effectiveAccId.ifBlank { accountId }
+                val offlineFile = if (acc.isNotBlank() && acc != "all" && acc != "root") {
+                    OfflineFileManager.findOfflineFile(context, acc, fileId)
+                } else null
                 if (offlineFile != null && offlineFile.exists() && offlineFile.length() > 0) {
                     offlineFile.readText()
                 } else {
                     val token = ApiClient.getToken()
                     val requestBuilder = Request.Builder().url(fileUrl)
                     if (!token.isNullOrEmpty()) {
-                        requestBuilder.addHeader("Authorization", "Bearer $token")
+                        requestBuilder.header("Authorization", "Bearer $token")
                     }
                     val response = ApiClient.okHttpClient.newCall(requestBuilder.build()).execute()
                     if (response.isSuccessful) {
@@ -106,20 +118,26 @@ fun TextEditorScreen(
         if (isSaving) return
         isSaving = true
         coroutineScope.launch {
-            val success = UploadHelper.uploadTextContent(
-                context = context,
-                accountId = accountId,
-                folderId = null,
-                fileName = fileName,
-                content = textContent
-            )
-            isSaving = false
-            if (success) {
+            try {
+                val queueDirectory = java.io.File(context.filesDir, "queued-text").apply { mkdirs() }
+                val stagedFile = java.io.File.createTempFile("cloudyte-queued-text-", ".txt", queueDirectory)
+                stagedFile.writeText(textContent)
+                val app = context.applicationContext as com.cloudyte.app.CloudyteApplication
+                val transferId = app.container.transferRepository.enqueueTransfer(
+                    accountId = accountId,
+                    fileName = fileName,
+                    localPath = Uri.fromFile(stagedFile).toString(),
+                    direction = com.cloudyte.app.db.TransferDirection.UPLOAD,
+                    totalBytes = stagedFile.length()
+                )
+                app.container.transferCoordinator.dispatch(com.cloudyte.app.core.transfer.TransferCommand.Start(transferId))
                 originalContent = textContent
                 isEditMode = false
-                Toast.makeText(context, "File saved successfully!", Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(context, "Failed to save file. Please check connection.", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "Save queued for upload", Toast.LENGTH_SHORT).show()
+            } catch (error: Exception) {
+                Toast.makeText(context, error.message ?: "Failed to queue save", Toast.LENGTH_LONG).show()
+            } finally {
+                isSaving = false
             }
         }
     }

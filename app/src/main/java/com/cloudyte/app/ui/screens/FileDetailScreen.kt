@@ -272,15 +272,18 @@ fun FileDetailScreen(
                 .padding(horizontal = 20.dp)
         ) {
             // Media Preview Area using FileThumb
+            val detailAccId = nonNullFile.effectiveAccountId.ifBlank {
+                accountId.takeIf { it.isNotBlank() && it != "all" && it != "root" }.orEmpty()
+            }
             FileThumb(
                 file = nonNullFile,
-                accountId = accountId,
+                accountId = detailAccId,
                 sizeDp = 200.dp,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(200.dp)
                     .clickable {
-                        openFileInViewer(nonNullFile, accountId, navController)
+                        openFileInViewer(nonNullFile, detailAccId, navController)
                     },
                 cornerRadius = 16.dp
             )

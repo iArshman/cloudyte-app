@@ -205,11 +205,27 @@ data class CloudFile(
     val resolution: String? = null,
     val isFolder: Boolean? = false,
     val is_dir: Boolean? = false,
-    val isDirectory: Boolean? = false
+    val isDirectory: Boolean? = false,
+    val accountId: String? = null
 ) {
     val effectiveId: String get() = id ?: _id ?: fileId ?: ""
     val effectiveName: String get() = name ?: fileName ?: title ?: "Unnamed File"
     val isFolderItem: Boolean get() = isFolder == true || is_dir == true || isDirectory == true || type.equals("folder", ignoreCase = true)
+    
+    val effectiveAccountId: String
+        get() {
+            if (!accountId.isNullOrBlank() && accountId != "all" && accountId != "root") {
+                return accountId
+            }
+            if (!thumbUrl.isNullOrBlank()) {
+                val match = Regex("""/api/(?:thumb|download)/([^/?#]+)""").find(thumbUrl)
+                val extracted = match?.groupValues?.getOrNull(1)
+                if (!extracted.isNullOrBlank() && extracted != "all" && extracted != "root") {
+                    return extracted
+                }
+            }
+            return ""
+        }
     
     val fileExtension: String
         get() = effectiveName.substringAfterLast('.', "").lowercase(Locale.US)
@@ -302,7 +318,9 @@ data class UploadSessionRequest(
     val size: Long,
     val folderId: String? = null,
     val checksum: String? = null,
-    val idempotencyKey: String
+    val idempotencyKey: String,
+    val providerType: String? = null,
+    val desiredChunkSize: Long? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -312,7 +330,10 @@ data class UploadSessionResponse(
     val receivedBytes: Long = 0L,
     val totalBytes: Long = 0L,
     val chunkSize: Long = 8L * 1024L * 1024L,
-    val checksum: String? = null
+    val checksum: String? = null,
+    val providerType: String? = null,
+    val providerResumable: Boolean? = null,
+    val providerCancellable: Boolean? = null
 )
 
 @JsonClass(generateAdapter = true)

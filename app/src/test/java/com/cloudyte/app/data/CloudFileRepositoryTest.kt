@@ -19,6 +19,10 @@ import com.cloudyte.app.api.ShareResponse
 import com.cloudyte.app.api.StorageCategories
 import com.cloudyte.app.api.StorageSummary
 import com.cloudyte.app.api.TgDriveRegisterRequest
+import com.cloudyte.app.api.UploadChunkResponse
+import com.cloudyte.app.api.UploadCompleteResponse
+import com.cloudyte.app.api.UploadSessionRequest
+import com.cloudyte.app.api.UploadSessionResponse
 import com.cloudyte.app.api.UserProfile
 import com.cloudyte.app.api.UserSettingsRequest
 import com.cloudyte.app.db.AppDatabase
@@ -126,11 +130,44 @@ class FakeCloudyteApi : CloudyteApi {
         folderIdQuery: String?,
         file: MultipartBody.Part,
         folderIdPart: RequestBody?,
-        parentIdPart: RequestBody?
+        parentIdPart: RequestBody?,
+        idempotencyKey: String?,
+        checksum: String?,
+        uploadSession: String?
     ): Response<ResponseBody> = Response.success("{}".toResponseBody("application/json".toMediaType()))
 
-    override suspend fun downloadFile(accountId: String, fileId: String, preview: Int?): ResponseBody =
-        "".toResponseBody("application/octet-stream".toMediaType())
+    override suspend fun createUploadSession(
+        accountId: String,
+        request: UploadSessionRequest
+    ): Response<UploadSessionResponse> = Response.success(
+        UploadSessionResponse(sessionId = "test-session", status = "active", totalBytes = request.size)
+    )
+
+    override suspend fun getUploadSession(sessionId: String): Response<UploadSessionResponse> = Response.success(
+        UploadSessionResponse(sessionId = sessionId, status = "active", totalBytes = 0L)
+    )
+
+    override suspend fun uploadChunk(
+        sessionId: String,
+        contentRange: String,
+        chunk: MultipartBody.Part
+    ): Response<UploadChunkResponse> = Response.success(
+        UploadChunkResponse(sessionId = sessionId, receivedBytes = 0L, totalBytes = 0L, nextOffset = 0L)
+    )
+
+    override suspend fun completeUploadSession(sessionId: String): Response<UploadCompleteResponse> = Response.success(
+        UploadCompleteResponse(success = true, sessionId = sessionId)
+    )
+
+    override suspend fun cancelUploadSession(sessionId: String): Response<Unit> = Response.success(Unit)
+
+    override suspend fun downloadFile(
+        accountId: String,
+        fileId: String,
+        preview: Int?,
+        range: String?
+    ): Response<ResponseBody> =
+        Response.success("".toResponseBody("application/octet-stream".toMediaType()))
 
     override suspend fun renameFile(
         fileId: String,
@@ -436,7 +473,7 @@ class CloudFileRepositoryTest {
         assertTrue(repository.refresh("acc1", "root", force = true).isSuccess)
 
         val rows = db.cloudFileDao().getFilesForFolder("acc1", "root")
-        assertEquals(setOf("keep", "Queued folder"), rows.map { it.name }.toSet())
+        assertEquals(setOf("After.txt", "Queued folder"), rows.map { it.name }.toSet())
         assertEquals("After.txt", rows.single { it.id == "keep" }.name)
         assertTrue(rows.single { it.name == "Queued folder" }.id.startsWith("temp_"))
     }
@@ -556,5 +593,66 @@ class CloudFileRepositoryTest {
         assertEquals(2, apiCalls)
         assertEquals(1502L, thirdEmissions.last()?.usedBytes)
         job3.cancel()
+    }
+
+    @Test
+    fun partialPaginationPersistsContinuationTokenAndDoesNotDeleteCachedRowsUntilComplete() = runTest {
+        // Seed existing cached file that will be absent from remote snapshot
+        val staleLocal = CloudFile(id = "stale_1", name = "StaleFile.txt", type = "file")
+        db.cloudFileDao().insertFiles(listOf(LocalCloudFile.fromCloudFile(staleLocal, "acc1", "root")))
+
+        val seenCursors = mutableListOf<String?>()
+        fakeApi.getFilesHandler = { _, _, _, cursor, _, _ ->
+            seenCursors += cursor
+            if (cursor == null) {
+                Response.success(
+                    listOf(CloudFile(id = "page_1_file", name = "Page1.txt", type = "file")),
+                    Headers.headersOf("X-Next-Cursor", "cursor_page_2")
+                )
+            } else {
+                Response.success(
+                    listOf(CloudFile(id = "page_2_file", name = "Page2.txt", type = "file")),
+                    Headers.headersOf("ETag", "\"etag-complete\"")
+                )
+            }
+        }
+
+        // First run with maxPages = 1: stops after page 1, persists continuationToken = "cursor_page_2",
+        // and MUST NOT delete stale_1 because isCompleteSnapshot == false
+        val run1 = repository.refresh("acc1", "root", force = true, maxPages = 1)
+        assertTrue(run1.isSuccess)
+        val metaAfterRun1 = db.folderSyncMetaDao().getMeta("acc1", "root")!!
+        assertEquals("cursor_page_2", metaAfterRun1.continuationToken)
+        assertFalse(metaAfterRun1.isCompleteSnapshot)
+        assertEquals("PARTIAL", metaAfterRun1.syncState)
+        val idsAfterRun1 = db.cloudFileDao().getFilesForFolder("acc1", "root").map { it.id }.toSet()
+        assertTrue("Partial sync must never delete cached rows", idsAfterRun1.contains("stale_1"))
+        assertTrue(idsAfterRun1.contains("page_1_file"))
+
+        // Second run with maxPages = 1: resumes from persisted "cursor_page_2", reaches end of snapshot
+        val run2 = repository.refresh("acc1", "root", force = true, maxPages = 1)
+        assertTrue(run2.isSuccess)
+        assertEquals(listOf(null, "cursor_page_2"), seenCursors)
+        val metaAfterRun2 = db.folderSyncMetaDao().getMeta("acc1", "root")!!
+        assertEquals(null, metaAfterRun2.continuationToken)
+        assertTrue(metaAfterRun2.isCompleteSnapshot)
+        assertEquals("SUCCESS", metaAfterRun2.syncState)
+
+        // Full snapshot across page 1 + page 2 in a single complete run reconciles stale_1 and writes tombstones
+        val run3 = repository.refresh("acc1", "root", force = true)
+        assertTrue(run3.isSuccess)
+        val finalIds = db.cloudFileDao().getFilesForFolder("acc1", "root").map { it.id }.toSet()
+        assertEquals(setOf("page_1_file", "page_2_file"), finalIds)
+        val tombstones = db.fileTombstoneDao().forFolder("acc1", "root")
+        assertTrue(tombstones.any { it.remoteId == "stale_1" })
+    }
+
+    @Test
+    fun folderSyncWorkerUniqueNameIncludesProviderType() {
+        val gdriveWork = com.cloudyte.app.core.sync.FolderSyncWorker.uniqueWorkName("acc1", "Google Drive", "root")
+        val tgWork = com.cloudyte.app.core.sync.FolderSyncWorker.uniqueWorkName("acc1", "telegram", "root")
+        assertEquals("cloudyte_folder_sync_acc1:google_drive:root", gdriveWork)
+        assertEquals("cloudyte_folder_sync_acc1:telegram:root", tgWork)
+        assertFalse(gdriveWork == tgWork)
     }
 }
