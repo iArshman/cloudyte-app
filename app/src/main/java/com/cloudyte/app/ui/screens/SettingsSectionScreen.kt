@@ -494,14 +494,6 @@ fun SettingsSectionScreen(
                                 onChange = { scope.launch { UserPreferences.setDynamicColor(context, it) } }
                             )
                         },
-                        GroupedListItem(key = "show_nav_text") {
-                            SettingsSwitchRow(
-                                title = "Show Navigation Text",
-                                subtitle = "Display labels below bottom navigation icons",
-                                checked = prefsState.showNavText,
-                                onChange = { scope.launch { UserPreferences.setShowNavText(context, it) } }
-                            )
-                        },
                         GroupedListItem(key = "view_mode") {
                             SettingsClickRow(
                                 title = stringResource(R.string.settings_view_mode),
