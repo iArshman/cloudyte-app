@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -99,6 +100,7 @@ import com.cloudyte.app.data.ALL_ACCOUNTS_STORAGE_ID
 import com.cloudyte.app.data.CloudFileRepository
 import com.cloudyte.app.data.StorageCategoryType
 import com.cloudyte.app.data.UserPreferences
+import com.cloudyte.app.data.UserPreferencesState
 import com.cloudyte.app.data.aggregateStorageSummaries
 import com.cloudyte.app.data.calculateSegmentProportions
 import com.cloudyte.app.data.formatStorageSize
@@ -300,6 +302,7 @@ fun HomeScreen(
     val storageRefreshError by viewModel.storageRefreshError.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
+    val prefsState by UserPreferences.observe(context).collectAsState(initial = UserPreferencesState())
     val coroutineScope = rememberCoroutineScope()
     var isUploading by remember { mutableStateOf(false) }
     var showCreateFolderDialog by remember { mutableStateOf(false) }
@@ -504,21 +507,41 @@ fun HomeScreen(
                             fontSize = 14.sp
                         )
                     }
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.surfaceContainer,
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(CircleShape)
-                            .clickable { viewModel.loadData(forceStorageRefresh = true) }
-                            .testTag("home_refresh_button")
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Default.Refresh,
-                                contentDescription = stringResource(R.string.action_refresh),
-                                tint = MaterialTheme.colorScheme.onSurface
-                            )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceContainer,
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(CircleShape)
+                                .clickable { viewModel.loadData(forceStorageRefresh = true) }
+                                .testTag("home_refresh_button")
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = stringResource(R.string.action_refresh),
+                                    tint = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(CircleShape)
+                                .clickable { navController.navigateSingleTopRestore("settings") }
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Settings,
+                                    contentDescription = "Settings",
+                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -591,7 +614,7 @@ fun HomeScreen(
                 )
             }
 
-            if (recentFiles.isNotEmpty()) {
+            if (prefsState.showRecentFiles && recentFiles.isNotEmpty()) {
                 item {
                     Spacer(modifier = Modifier.height(28.dp))
                     Text(
@@ -752,11 +775,19 @@ fun StorageOverviewCard(
                 }
 
                 if (defaultAccount != null) {
+                    var accountsExpanded by remember { mutableStateOf(false) }
                     Spacer(modifier = Modifier.height(10.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Tappable default account row — expands chip row
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable { accountsExpanded = !accountsExpanded }
+                            .padding(vertical = 4.dp)
+                    ) {
                         Box(
                             modifier = Modifier
-                                .size(24.dp)
+                                .size(26.dp)
                                 .clip(CircleShape)
                                 .background(MaterialTheme.colorScheme.primaryContainer),
                             contentAlignment = Alignment.Center
@@ -770,29 +801,31 @@ fun StorageOverviewCard(
                         }
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Default: ${defaultAccount.effectiveName}",
+                            text = defaultAccount.effectiveName,
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f)
                         )
-                        Text(
-                            text = "${accounts.size} linked",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary
+                        if (accounts.size > 1) {
+                            Text(
+                                text = if (accountsExpanded) "▲" else "${accounts.size} accounts ▼",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+
+                    // Account Switcher Chip Row (shown on tap when user has multiple drives)
+                    if (accountsExpanded && accounts.size > 1) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        StorageAccountChipRow(
+                            accounts = accounts,
+                            selectedAccountId = selectedAccountId,
+                            onSelectAccount = onSelectAccount
                         )
                     }
-                }
-
-                // Account Switcher Chip Row (shown when user has multiple drives)
-                if (accounts.size > 1) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    StorageAccountChipRow(
-                        accounts = accounts,
-                        selectedAccountId = selectedAccountId,
-                        onSelectAccount = onSelectAccount
-                    )
                 }
 
                 val effectiveCategories = activeSummary.categories ?: deriveCategoriesFromFiles(emptyList(), activeSummary.usedBytes)
