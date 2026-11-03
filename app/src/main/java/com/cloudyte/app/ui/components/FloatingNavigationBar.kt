@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
@@ -97,26 +98,28 @@ fun FloatingNavigationBar(
             ) {
                 val totalWidth = maxWidth
                 val slotWidth = totalWidth / items.size
-                val pillSize = if (showNavText) 52.dp else 46.dp
-                val targetX = (slotWidth * selectedIndex) + ((slotWidth - pillSize) / 2)
+                // Pill spans the full slot width minus a small gutter
+                val pillWidth = slotWidth - 8.dp
+                val pillHeight = if (showNavText) 44.dp else 40.dp
+                val targetX = (slotWidth * selectedIndex) + 4.dp
                 val pillX by animateDpAsState(
                     targetValue = targetX,
                     animationSpec = spring(
-                        dampingRatio = 0.82f,
+                        dampingRatio = 0.75f,
                         stiffness = Spring.StiffnessMediumLow
                     ),
                     label = "pillX"
                 )
 
-                // Animated sliding background pill behind active item
+                // Animated sliding wide pill behind active item
                 Box(
                     modifier = Modifier
                         .offset(x = pillX)
-                        .size(pillSize)
+                        .size(width = pillWidth, height = pillHeight)
                         .align(Alignment.CenterStart)
                         .background(
                             color = MaterialTheme.colorScheme.primary,
-                            shape = CircleShape
+                            shape = RoundedCornerShape(50)
                         )
                 )
 
@@ -132,10 +135,10 @@ fun FloatingNavigationBar(
                                 .weight(1f)
                                 .fillMaxHeight()
                                 .testTag("nav_item_${item.route}")
-                                .clip(CircleShape)
+                                .clip(RoundedCornerShape(50))
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(bounded = false, radius = 26.dp),
+                                    indication = ripple(bounded = true, radius = 40.dp),
                                     role = Role.Tab
                                 ) {
                                     if (!isSelected) {
@@ -156,7 +159,7 @@ fun FloatingNavigationBar(
                                         modifier = Modifier.size(20.dp)
                                     )
                                     if (showNavText) {
-                                        Spacer(modifier = Modifier.height(1.dp))
+                                        Spacer(modifier = Modifier.height(2.dp))
                                         Text(
                                             text = item.label,
                                             color = MaterialTheme.colorScheme.onPrimary,
@@ -167,12 +170,27 @@ fun FloatingNavigationBar(
                                     }
                                 }
                             } else {
-                                Icon(
-                                    imageVector = item.icon,
-                                    contentDescription = item.label,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                    modifier = Modifier.size(22.dp)
-                                )
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
+                                ) {
+                                    Icon(
+                                        imageVector = item.icon,
+                                        contentDescription = item.label,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                    if (showNavText) {
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = item.label,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                            fontSize = 10.5.sp,
+                                            fontWeight = FontWeight.Normal,
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
                             }
                         }
                     }

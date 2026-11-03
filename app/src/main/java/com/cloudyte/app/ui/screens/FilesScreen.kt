@@ -151,6 +151,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -314,6 +315,22 @@ class FilesViewModel(
                     currentAccountId.value = defaultAcc.effectiveId
                 }
             }
+        }
+        // Refresh the current folder whenever one of our queued uploads completes.
+        viewModelScope.launch {
+            val app = getApplication<CloudyteApplication>()
+            app.container.transferRepository
+                .observeByStatus(com.cloudyte.app.db.TransferStatus.COMPLETED.name)
+                .map { list ->
+                    list.filter { it.direction == TransferDirection.UPLOAD.name }
+                        .mapTo(mutableSetOf()) { it.id }
+                }
+                .distinctUntilChanged()
+                .collect { completedIds ->
+                    if (completedIds.isNotEmpty()) {
+                        refresh(force = true)
+                    }
+                }
         }
     }
 
@@ -527,7 +544,6 @@ class FilesViewModel(
                     }
                 }
                 _userEvents.emit(if (queued == 1) "Upload added to transfers" else "$queued uploads added to transfers")
-                refresh(force = false)
             } catch (error: Exception) {
                 Log.e("FilesViewModel", "Upload queue failed", error)
                 _userEvents.emit(error.message ?: "Could not queue upload")
