@@ -310,6 +310,7 @@ fun HomeScreen(
     val context = LocalContext.current
     val prefsState by UserPreferences.observe(context).collectAsState(initial = UserPreferencesState())
     val coroutineScope = rememberCoroutineScope()
+    val snackbarHostState = remember { androidx.compose.material3.SnackbarHostState() }
     var isUploading by remember { mutableStateOf(false) }
     var showCreateFolderDialog by remember { mutableStateOf(false) }
     var folderNameInput by remember { mutableStateOf("") }
@@ -349,9 +350,9 @@ fun HomeScreen(
                             totalBytes = size
                         )
                         app.container.transferCoordinator.dispatch(com.cloudyte.app.core.transfer.TransferCommand.Start(transferId))
-                        android.widget.Toast.makeText(context, "$name added to transfers", android.widget.Toast.LENGTH_SHORT).show()
+                        snackbarHostState.showSnackbar("$name added to transfers")
                     } catch (error: Exception) {
-                        android.widget.Toast.makeText(context, error.message ?: "Could not queue upload", android.widget.Toast.LENGTH_LONG).show()
+                        snackbarHostState.showSnackbar(error.message ?: "Could not queue upload")
                     } finally {
                         isUploading = false
                     }
@@ -435,66 +436,7 @@ fun HomeScreen(
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        floatingActionButton = {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier.padding(bottom = LocalBottomBarInset.current)
-            ) {
-                // Pulsing ring shown when uploading
-                if (isUploading) {
-                    val infiniteTransition = rememberInfiniteTransition(label = "fab_pulse")
-                    val pulseScale by infiniteTransition.animateFloat(
-                        initialValue = 1f,
-                        targetValue = 1.6f,
-                        animationSpec = infiniteRepeatable(
-                            animation = tween(900, easing = LinearEasing),
-                            repeatMode = RepeatMode.Restart
-                        ),
-                        label = "fab_pulse_scale"
-                    )
-                    val pulseAlpha by infiniteTransition.animateFloat(
-                        initialValue = 0.5f,
-                        targetValue = 0f,
-                        animationSpec = infiniteRepeatable(
-                            animation = tween(900, easing = LinearEasing),
-                            repeatMode = RepeatMode.Restart
-                        ),
-                        label = "fab_pulse_alpha"
-                    )
-                    Box(
-                        modifier = Modifier
-                            .size(56.dp)
-                            .scale(pulseScale)
-                            .background(
-                                color = MaterialTheme.colorScheme.primary.copy(alpha = pulseAlpha),
-                                shape = RoundedCornerShape(18.dp)
-                            )
-                    )
-                }
-                FloatingActionButton(
-                    onClick = { if (!isUploading) filePickerLauncher.launch(arrayOf("*/*")) },
-                    shape = RoundedCornerShape(18.dp),
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier
-                        .size(56.dp)
-                        .testTag("home_upload_fab")
-                ) {
-                    if (isUploading) {
-                        AppLoadingIndicator(
-                            color = MaterialTheme.colorScheme.onPrimary,
-                            size = 24.dp
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.Upload,
-                            contentDescription = stringResource(R.string.action_upload_file),
-                            modifier = Modifier.size(26.dp)
-                        )
-                    }
-                }
-            }
-        }
+        snackbarHost = { androidx.compose.material3.SnackbarHost(snackbarHostState) }
     ) { innerPadding ->
         // Loading indicator pinned just below top bar
         AnimatedVisibility(
@@ -552,41 +494,21 @@ fun HomeScreen(
                             fontSize = 14.sp
                         )
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.surfaceContainer,
-                            modifier = Modifier
-                                .size(42.dp)
-                                .clip(CircleShape)
-                                .clickable { viewModel.loadData(forceStorageRefresh = true) }
-                                .testTag("home_refresh_button")
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.Refresh,
-                                    contentDescription = stringResource(R.string.action_refresh),
-                                    tint = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            modifier = Modifier
-                                .size(42.dp)
-                                .clip(CircleShape)
-                                .clickable { navController.navigateSingleTopRestore("settings") }
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.Settings,
-                                    contentDescription = "Settings",
-                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .clickable { navController.navigateSingleTopRestore("settings") }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "Settings",
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.size(20.dp)
+                            )
                         }
                     }
                 }

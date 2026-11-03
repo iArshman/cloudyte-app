@@ -1,9 +1,6 @@
 package com.cloudyte.app.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -13,15 +10,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -61,7 +53,7 @@ data class FloatingNavItem(val route: String, val label: String, val icon: Image
 fun FloatingNavigationBar(
     navController: NavController,
     visible: Boolean = true,
-    showNavText: Boolean = true,
+    showNavText: Boolean = true, // kept for API compat, no longer used
     modifier: Modifier = Modifier,
     onNavigate: ((String) -> Unit)? = null
 ) {
@@ -90,108 +82,71 @@ fun FloatingNavigationBar(
             tonalElevation = 4.dp,
             shadowElevation = 12.dp
         ) {
-            BoxWithConstraints(
+            // The bar is a fixed-height Row. Each inactive slot is a small fixed-width
+            // circle that holds only the icon. The active slot expands to fill the
+            // remaining space and shows icon + label inside a colored pill.
+            Row(
                 modifier = Modifier
                     .height(60.dp)
-                    .padding(horizontal = 6.dp),
-                contentAlignment = Alignment.CenterStart
+                    .padding(horizontal = 6.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                val totalWidth = maxWidth
-                val slotWidth = totalWidth / items.size
-                // Pill spans the full slot width minus a small gutter
-                val pillWidth = slotWidth - 8.dp
-                val pillHeight = if (showNavText) 44.dp else 40.dp
-                val targetX = (slotWidth * selectedIndex) + 4.dp
-                val pillX by animateDpAsState(
-                    targetValue = targetX,
-                    animationSpec = spring(
-                        dampingRatio = 0.75f,
-                        stiffness = Spring.StiffnessMediumLow
-                    ),
-                    label = "pillX"
-                )
-
-                // Animated sliding wide pill behind active item
-                Box(
-                    modifier = Modifier
-                        .offset(x = pillX)
-                        .size(width = pillWidth, height = pillHeight)
-                        .align(Alignment.CenterStart)
-                        .background(
-                            color = MaterialTheme.colorScheme.primary,
-                            shape = RoundedCornerShape(50)
-                        )
-                )
-
-                // Row of primary navigation items
-                Row(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    items.forEachIndexed { index, item ->
-                        val isSelected = index == selectedIndex
+                items.forEachIndexed { index, item ->
+                    val isSelected = index == selectedIndex
+                    if (isSelected) {
+                        // Active: animated wide pill — icon + label, fills remaining space
                         Box(
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxHeight()
-                                .testTag("nav_item_${item.route}")
-                                .clip(RoundedCornerShape(50))
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(bounded = true, radius = 40.dp),
-                                    role = Role.Tab
-                                ) {
-                                    if (!isSelected) {
-                                        onNavigate?.invoke(item.route)
-                                    }
-                                },
+                                .background(
+                                    color = MaterialTheme.colorScheme.primary,
+                                    shape = RoundedCornerShape(50)
+                                )
+                                .testTag("nav_item_${item.route}"),
                             contentAlignment = Alignment.Center
                         ) {
-                            if (isSelected) {
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.Center
-                                ) {
-                                    Icon(
-                                        imageVector = item.icon,
-                                        contentDescription = item.label,
-                                        tint = MaterialTheme.colorScheme.onPrimary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                    if (showNavText) {
-                                        Spacer(modifier = Modifier.height(2.dp))
-                                        Text(
-                                            text = item.label,
-                                            color = MaterialTheme.colorScheme.onPrimary,
-                                            fontSize = 10.5.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            maxLines = 1
-                                        )
-                                    }
-                                }
-                            } else {
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.Center
-                                ) {
-                                    Icon(
-                                        imageVector = item.icon,
-                                        contentDescription = item.label,
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                    if (showNavText) {
-                                        Spacer(modifier = Modifier.height(2.dp))
-                                        Text(
-                                            text = item.label,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                                            fontSize = 10.5.sp,
-                                            fontWeight = FontWeight.Normal,
-                                            maxLines = 1
-                                        )
-                                    }
-                                }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.padding(horizontal = 16.dp)
+                            ) {
+                                Icon(
+                                    imageVector = item.icon,
+                                    contentDescription = item.label,
+                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Text(
+                                    text = item.label,
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1
+                                )
                             }
+                        }
+                    } else {
+                        // Inactive: small fixed-size circle, icon only
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = ripple(bounded = true, radius = 22.dp),
+                                    role = Role.Tab
+                                ) { onNavigate?.invoke(item.route) }
+                                .testTag("nav_item_${item.route}"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = item.icon,
+                                contentDescription = item.label,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+                                modifier = Modifier.size(22.dp)
+                            )
                         }
                     }
                 }

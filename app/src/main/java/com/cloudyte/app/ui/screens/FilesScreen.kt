@@ -1066,7 +1066,8 @@ fun FilesScreen(
             onRefresh = { viewModel.refresh(force = true) },
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
+                .padding(innerPadding),
+            indicator = {}
         ) {
             val currentPane = FolderPane(
                 folderId = currentFolderId,
