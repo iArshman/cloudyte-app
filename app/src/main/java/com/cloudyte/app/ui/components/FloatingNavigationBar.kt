@@ -28,7 +28,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -68,8 +67,7 @@ fun FloatingNavigationBar(
     val items = listOf(
         FloatingNavItem("home", stringResource(R.string.nav_home), Icons.Default.Home),
         FloatingNavItem("files", stringResource(R.string.nav_files), Icons.Default.Folder),
-        FloatingNavItem("transfers", stringResource(R.string.nav_transfers), Icons.Default.SwapVert),
-        FloatingNavItem("settings", stringResource(R.string.nav_settings), Icons.Default.Settings)
+        FloatingNavItem("transfers", stringResource(R.string.nav_transfers), Icons.Default.SwapVert)
     )
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -84,18 +82,16 @@ fun FloatingNavigationBar(
     ) {
         Surface(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .padding(horizontal = 48.dp, vertical = 8.dp)
                 .testTag("floating_bottom_bar"),
             shape = CircleShape,
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
             tonalElevation = 4.dp,
-            shadowElevation = 8.dp
+            shadowElevation = 12.dp
         ) {
             BoxWithConstraints(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(64.dp)
+                    .height(60.dp)
                     .padding(horizontal = 6.dp),
                 contentAlignment = Alignment.CenterStart
             ) {

@@ -4,10 +4,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.ui.Alignment
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
@@ -52,48 +54,51 @@ fun MainScreen(rootNavController: NavController) {
     val filesViewModel: FilesViewModel = viewModel()
     val prefsState by UserPreferences.observe(context).collectAsState(initial = UserPreferencesState())
 
-    CompositionLocalProvider(LocalBottomBarInset provides 16.dp) {
-        Scaffold(
-            bottomBar = {
-                FloatingNavigationBar(
-                    navController = bottomNavController,
-                    showNavText = prefsState.showNavText,
-                    onNavigate = { route ->
-                        bottomNavController.navigateSingleTopRestore(route)
-                    }
-                )
-            },
-            containerColor = MaterialTheme.colorScheme.background,
+    // Navbar height + bottom inset so screens can pad their own content correctly
+    CompositionLocalProvider(LocalBottomBarInset provides 80.dp) {
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.navigationBars)
-        ) { innerPadding ->
-            Box(modifier = Modifier.padding(innerPadding)) {
-                NavHost(
-                    navController = bottomNavController,
-                    startDestination = "home",
-                    enterTransition = {
-                        val initialRoute = initialState.destination.route ?: "home"
-                        val targetRoute = targetState.destination.route ?: "home"
-                        val fromIndex = tabOrder.indexOf(initialRoute).coerceAtLeast(0)
-                        val toIndex = tabOrder.indexOf(targetRoute).coerceAtLeast(0)
-                        NavigationTransitions.tabEnter(toIndex >= fromIndex)
-                    },
-                    exitTransition = {
-                        val initialRoute = initialState.destination.route ?: "home"
-                        val targetRoute = targetState.destination.route ?: "home"
-                        val fromIndex = tabOrder.indexOf(initialRoute).coerceAtLeast(0)
-                        val toIndex = tabOrder.indexOf(targetRoute).coerceAtLeast(0)
-                        NavigationTransitions.tabExit(toIndex >= fromIndex)
-                    }
-                ) {
-                    composable("home") { FeatureHomeScreen(bottomNavController, rootNavController) }
-                    composable("files") { FeatureFilesScreen(bottomNavController, rootNavController, filesViewModel) }
-                    composable("transfers") { FeatureTransfersScreen(onBack = { bottomNavController.navigateSingleTopRestore("home") }) }
-                    composable("accounts") { FeatureAccountsScreen(bottomNavController, rootNavController) }
-                    composable("settings") { FeatureSettingsScreen(bottomNavController, rootNavController) }
+        ) {
+            // Screens fill the whole Box — navbar floats on top
+            NavHost(
+                navController = bottomNavController,
+                startDestination = "home",
+                modifier = Modifier.fillMaxSize(),
+                enterTransition = {
+                    val initialRoute = initialState.destination.route ?: "home"
+                    val targetRoute = targetState.destination.route ?: "home"
+                    val fromIndex = tabOrder.indexOf(initialRoute).coerceAtLeast(0)
+                    val toIndex = tabOrder.indexOf(targetRoute).coerceAtLeast(0)
+                    NavigationTransitions.tabEnter(toIndex >= fromIndex)
+                },
+                exitTransition = {
+                    val initialRoute = initialState.destination.route ?: "home"
+                    val targetRoute = targetState.destination.route ?: "home"
+                    val fromIndex = tabOrder.indexOf(initialRoute).coerceAtLeast(0)
+                    val toIndex = tabOrder.indexOf(targetRoute).coerceAtLeast(0)
+                    NavigationTransitions.tabExit(toIndex >= fromIndex)
                 }
+            ) {
+                composable("home") { FeatureHomeScreen(bottomNavController, rootNavController) }
+                composable("files") { FeatureFilesScreen(bottomNavController, rootNavController, filesViewModel) }
+                composable("transfers") { FeatureTransfersScreen(onBack = { bottomNavController.navigateSingleTopRestore("home") }) }
+                composable("accounts") { FeatureAccountsScreen(bottomNavController, rootNavController) }
+                composable("settings") { FeatureSettingsScreen(bottomNavController, rootNavController) }
             }
+
+            // Floating navbar overlaid at the bottom, centered, narrower than screen
+            FloatingNavigationBar(
+                navController = bottomNavController,
+                showNavText = prefsState.showNavText,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth(),
+                onNavigate = { route ->
+                    bottomNavController.navigateSingleTopRestore(route)
+                }
+            )
         }
     }
 }
