@@ -4,13 +4,17 @@ import android.app.Application
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -51,6 +55,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -71,6 +76,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -430,40 +436,79 @@ fun HomeScreen(
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         floatingActionButton = {
-            if (isUploading) {
-                FloatingActionButton(
-                    onClick = { },
-                    shape = RoundedCornerShape(18.dp),
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .padding(bottom = LocalBottomBarInset.current)
-                        .size(56.dp)
-                ) {
-                    AppLoadingIndicator(
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        size = 24.dp
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.padding(bottom = LocalBottomBarInset.current)
+            ) {
+                // Pulsing ring shown when uploading
+                if (isUploading) {
+                    val infiniteTransition = rememberInfiniteTransition(label = "fab_pulse")
+                    val pulseScale by infiniteTransition.animateFloat(
+                        initialValue = 1f,
+                        targetValue = 1.6f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(900, easing = LinearEasing),
+                            repeatMode = RepeatMode.Restart
+                        ),
+                        label = "fab_pulse_scale"
+                    )
+                    val pulseAlpha by infiniteTransition.animateFloat(
+                        initialValue = 0.5f,
+                        targetValue = 0f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(900, easing = LinearEasing),
+                            repeatMode = RepeatMode.Restart
+                        ),
+                        label = "fab_pulse_alpha"
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .scale(pulseScale)
+                            .background(
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = pulseAlpha),
+                                shape = RoundedCornerShape(18.dp)
+                            )
                     )
                 }
-            } else {
                 FloatingActionButton(
-                    onClick = { filePickerLauncher.launch(arrayOf("*/*")) },
+                    onClick = { if (!isUploading) filePickerLauncher.launch(arrayOf("*/*")) },
                     shape = RoundedCornerShape(18.dp),
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier
-                        .padding(bottom = LocalBottomBarInset.current)
                         .size(56.dp)
                         .testTag("home_upload_fab")
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = stringResource(R.string.action_upload_file),
-                        modifier = Modifier.size(28.dp)
-                    )
+                    if (isUploading) {
+                        AppLoadingIndicator(
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            size = 24.dp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Upload,
+                            contentDescription = stringResource(R.string.action_upload_file),
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
                 }
             }
         }
     ) { innerPadding ->
+        // Loading indicator pinned just below top bar
+        AnimatedVisibility(
+            visible = isLoading,
+            enter = expandVertically(),
+            exit = shrinkVertically(),
+            modifier = Modifier.padding(top = innerPadding.calculateTopPadding())
+        ) {
+            LinearProgressIndicator(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        }
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()

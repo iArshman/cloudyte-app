@@ -8,7 +8,16 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -89,6 +98,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -101,6 +111,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
@@ -849,6 +860,7 @@ fun FilesScreen(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
+            Column {
             if (isSelectionMode) {
                 TopAppBar(
                     title = {
@@ -949,6 +961,19 @@ fun FilesScreen(
                     }
                 )
             }
+            // M3 LinearProgressIndicator below header when refreshing or uploading
+            AnimatedVisibility(
+                visible = isRefreshing || isUploading,
+                enter = expandVertically(),
+                exit = shrinkVertically()
+            ) {
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            }
+            } // end Column topBar
         },
         floatingActionButton = {
             Column(
@@ -957,37 +982,80 @@ fun FilesScreen(
                 modifier = Modifier.padding(bottom = LocalBottomBarInset.current)
             ) {
                 if (isFabExpanded) {
-                    SmallFloatingActionButton(
-                        onClick = { isFabExpanded = false; showCreateFolderDialog = true },
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        contentColor = MaterialTheme.colorScheme.primary
-                    ) { Icon(Icons.Default.CreateNewFolder, "New Folder") }
-                    SmallFloatingActionButton(
-                        onClick = { isFabExpanded = false; filePickerLauncher.launch(arrayOf("*/*")) },
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        contentColor = MaterialTheme.colorScheme.primary
-                    ) { Icon(Icons.Default.FolderOpen, "Upload file") }
-                    SmallFloatingActionButton(
-                        onClick = { isFabExpanded = false; folderPickerLauncher.launch(null) },
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        contentColor = MaterialTheme.colorScheme.primary
-                    ) { Icon(Icons.Default.Folder, "Upload folder") }
+                    // Small FABs with text labels
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("New Folder", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
+                        SmallFloatingActionButton(
+                            onClick = { isFabExpanded = false; showCreateFolderDialog = true },
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            contentColor = MaterialTheme.colorScheme.primary
+                        ) { Icon(Icons.Default.CreateNewFolder, "New Folder") }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Upload File", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
+                        SmallFloatingActionButton(
+                            onClick = { isFabExpanded = false; filePickerLauncher.launch(arrayOf("*/*")) },
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            contentColor = MaterialTheme.colorScheme.primary
+                        ) { Icon(Icons.Default.FolderOpen, "Upload file") }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Upload Folder", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
+                        SmallFloatingActionButton(
+                            onClick = { isFabExpanded = false; folderPickerLauncher.launch(null) },
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            contentColor = MaterialTheme.colorScheme.primary
+                        ) { Icon(Icons.Default.Folder, "Upload folder") }
+                    }
                 }
-                FloatingActionButton(
-                    onClick = { if (!isUploading) isFabExpanded = !isFabExpanded },
-                    shape = RoundedCornerShape(18.dp),
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.size(56.dp)
-                ) {
+                // Main FAB with pulsing ring animation when uploading
+                Box(contentAlignment = Alignment.Center) {
                     if (isUploading) {
-                        AppLoadingIndicator(color = MaterialTheme.colorScheme.onPrimary, size = 24.dp)
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = if (isFabExpanded) "Close actions" else "Add",
-                            modifier = Modifier.size(26.dp)
+                        val infiniteTransition = rememberInfiniteTransition(label = "fab_pulse")
+                        val pulseScale by infiniteTransition.animateFloat(
+                            initialValue = 1f,
+                            targetValue = 1.6f,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(900, easing = LinearEasing),
+                                repeatMode = RepeatMode.Restart
+                            ),
+                            label = "fab_pulse_scale"
                         )
+                        val pulseAlpha by infiniteTransition.animateFloat(
+                            initialValue = 0.5f,
+                            targetValue = 0f,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(900, easing = LinearEasing),
+                                repeatMode = RepeatMode.Restart
+                            ),
+                            label = "fab_pulse_alpha"
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .scale(pulseScale)
+                                .background(
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = pulseAlpha),
+                                    shape = RoundedCornerShape(18.dp)
+                                )
+                        )
+                    }
+                    FloatingActionButton(
+                        onClick = { if (!isUploading) isFabExpanded = !isFabExpanded },
+                        shape = RoundedCornerShape(18.dp),
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.size(56.dp)
+                    ) {
+                        if (isUploading) {
+                            AppLoadingIndicator(color = MaterialTheme.colorScheme.onPrimary, size = 24.dp)
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = if (isFabExpanded) "Close actions" else "Add",
+                                modifier = Modifier.size(26.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -998,8 +1066,7 @@ fun FilesScreen(
             onRefresh = { viewModel.refresh(force = true) },
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding),
-            indicator = {}
+                .padding(innerPadding)
         ) {
             val currentPane = FolderPane(
                 folderId = currentFolderId,
