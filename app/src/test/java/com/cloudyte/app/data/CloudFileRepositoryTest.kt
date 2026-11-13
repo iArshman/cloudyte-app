@@ -103,6 +103,10 @@ class FakeCloudyteApi : CloudyteApi {
     override suspend fun logout(): Response<Unit> = Response.success(Unit)
     override suspend fun getProfile(): UserProfile = UserProfile(id = "u1", username = "tester")
     override suspend fun updateSettings(request: UserSettingsRequest): Response<Unit> = Response.success(Unit)
+    override suspend fun putEncryptionKeyBackup(accountId: String, backup: com.cloudyte.app.api.EncryptionKeyBackup): Response<Unit> = Response.success(Unit)
+    override suspend fun getEncryptionKeyBackup(accountId: String): Response<com.cloudyte.app.api.EncryptionKeyBackup> =
+        Response.error(404, "{}".toResponseBody("application/json".toMediaType()))
+    override suspend fun deleteEncryptionKeyBackup(accountId: String): Response<Unit> = Response.success(Unit)
     override suspend fun getAccounts(): List<Account> = accountsList
     override suspend fun deleteAccount(id: String): Response<Unit> = Response.success(Unit)
     override suspend fun getGoogleDriveLink(): OAuthLinkResponse = OAuthLinkResponse()

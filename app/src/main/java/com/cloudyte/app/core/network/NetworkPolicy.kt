@@ -98,8 +98,9 @@ class ConnectivityNetworkMonitor(private val context: Context) : NetworkMonitor 
     override fun current(): NetworkStatus = readStatus()
 
     override fun snapshot(preferences: UserPreferencesState): NetworkPolicySnapshot {
-        val active = connectivity.activeNetwork
-        val capabilities = active?.let { connectivity.getNetworkCapabilities(it) }
+        val capabilities = runCatching {
+            connectivity?.activeNetwork?.let { connectivity.getNetworkCapabilities(it) }
+        }.getOrNull()
         val power = context.getSystemService(PowerManager::class.java)
         val battery = context.getSystemService(BatteryManager::class.java)
         val batteryLevel = battery?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: 100
@@ -117,13 +118,17 @@ class ConnectivityNetworkMonitor(private val context: Context) : NetworkMonitor 
 
     private fun publish() { _status.value = readStatus() }
 
-    private fun readStatus(): NetworkStatus = readStatus(connectivity.activeNetwork?.let { connectivity.getNetworkCapabilities(it) })
+    private fun readStatus(): NetworkStatus = readStatus(
+        runCatching {
+            connectivity?.activeNetwork?.let { connectivity.getNetworkCapabilities(it) }
+        }.getOrNull()
+    )
 
     private fun readStatus(capabilities: NetworkCapabilities?): NetworkStatus {
         if (capabilities == null || !capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
             return NetworkStatus.UNAVAILABLE
         }
-        if (!capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+        if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL)) {
             return NetworkStatus.CAPTIVE_PORTAL
         }
         return if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)) {

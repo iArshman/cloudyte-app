@@ -228,7 +228,8 @@ class FilesViewModel(
         application = application,
         db = AppDatabase.getDatabase(application),
         api = ApiClient.apiService,
-        repo = CloudFileRepository(AppDatabase.getDatabase(application), ApiClient.apiService)
+        repo = (application as? CloudyteApplication)?.container?.cloudFileRepository
+            ?: CloudFileRepository(AppDatabase.getDatabase(application), ApiClient.apiService)
     )
 
     private val prefs = application.getSharedPreferences("cloudyte_drive_state", Context.MODE_PRIVATE)
@@ -305,14 +306,18 @@ class FilesViewModel(
         viewModelScope.launch {
             try {
                 val cached = db.accountDao().getAllAccounts()
-                if (currentAccountId.value == null && cached.isNotEmpty()) {
-                    val def = cached.find { it.isDefault == true } ?: cached.first()
-                    currentAccountId.value = def.id
+                if (cached.isNotEmpty()) {
+                    val current = currentAccountId.value
+                    if (current == null || cached.none { it.id == current }) {
+                        val def = cached.find { it.isDefault == true } ?: cached.first()
+                        currentAccountId.value = def.id
+                    }
                 }
                 val fetched = api.getAccounts()
                 if (fetched.isNotEmpty()) {
                     db.accountDao().insertAccounts(fetched.map { LocalAccount.fromAccount(it) })
-                    if (currentAccountId.value == null) {
+                    val current = currentAccountId.value
+                    if (current == null || fetched.none { it.effectiveId == current }) {
                         val def = fetched.find { it.isDefault == true } ?: fetched.first()
                         currentAccountId.value = def.effectiveId
                     }
@@ -322,7 +327,8 @@ class FilesViewModel(
         }
         viewModelScope.launch {
             accounts.collect { accs ->
-                if (currentAccountId.value == null && accs.isNotEmpty()) {
+                val current = currentAccountId.value
+                if (accs.isNotEmpty() && (current == null || accs.none { it.effectiveId == current })) {
                     val defaultAcc = accs.find { it.isDefault == true } ?: accs.first()
                     currentAccountId.value = defaultAcc.effectiveId
                 }
@@ -700,9 +706,25 @@ fun FilesScreen(
         viewModel.userEvents.collect { message -> snackbarMessage = message }
     }
 
-    LaunchedEffect(Unit) {
-        // Room renders immediately; revalidate the visible folder when this screen is entered.
-        viewModel.refresh(force = false)
+    LaunchedEffect(currentAccountId) {
+        // Room renders immediately; revalidate the visible folder once the active account is resolved.
+        if (currentAccountId != null) {
+            viewModel.refresh(force = false)
+        }
+    }
+
+    val networkStatus by remember(context) {
+        (context.applicationContext as? CloudyteApplication)?.container?.networkMonitor?.status
+            ?: kotlinx.coroutines.flow.flowOf(com.cloudyte.app.core.network.NetworkStatus.VALIDATED_UNMETERED)
+    }.collectAsStateWithLifecycle(initialValue = com.cloudyte.app.core.network.NetworkStatus.VALIDATED_UNMETERED)
+
+    LaunchedEffect(networkStatus) {
+        if (isOffline &&
+            networkStatus != com.cloudyte.app.core.network.NetworkStatus.UNAVAILABLE &&
+            networkStatus != com.cloudyte.app.core.network.NetworkStatus.CAPTIVE_PORTAL
+        ) {
+            viewModel.refresh(force = true)
+        }
     }
 
     var fileForRename by remember { mutableStateOf<CloudFile?>(null) }
