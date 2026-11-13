@@ -244,6 +244,7 @@ object UploadHelper {
             val effectiveSessionMimeType = if (isEncrypted) "application/octet-stream" else explicitMimeType
             val sessionRequest = UploadSessionRequest(
                 fileName = explicitFileName,
+                opaqueRemoteName = if (isEncrypted) explicitFileName else null,
                 mimeType = effectiveSessionMimeType,
                 size = totalBytes,
                 folderId = folderId,

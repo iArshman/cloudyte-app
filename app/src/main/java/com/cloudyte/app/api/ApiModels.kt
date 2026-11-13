@@ -363,6 +363,7 @@ fun parseBytes(value: Any?): Long {
 @JsonClass(generateAdapter = true)
 data class UploadSessionRequest(
     val fileName: String,
+    val opaqueRemoteName: String? = null,
     val mimeType: String,
     val size: Long,
     val folderId: String? = null,
@@ -387,7 +388,25 @@ data class UploadSessionResponse(
     val checksum: String? = null,
     val providerType: String? = null,
     val providerResumable: Boolean? = null,
-    val providerCancellable: Boolean? = null
+    val providerCancellable: Boolean? = null,
+    val isEncrypted: Boolean = false,
+    val encryptionFormatVersion: Int? = null,
+    val encryptionKeyId: String? = null,
+    val encryptedMetadata: EncryptedMetadataEnvelope? = null,
+    val encryptedSizeBytes: Long? = null,
+    val opaqueRemoteName: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class EncryptionKeyBackup(
+    val backupVersion: Int,
+    val keyId: String,
+    val kdfAlgorithm: String,
+    val kdfIterations: Int,
+    val salt: String,
+    val wrapAlgorithm: String,
+    val nonce: String,
+    val wrappedKey: String
 )
 
 @JsonClass(generateAdapter = true)
