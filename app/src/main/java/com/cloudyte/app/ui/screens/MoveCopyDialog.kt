@@ -26,7 +26,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.cloudyte.app.api.Account
 import com.cloudyte.app.api.ApiClient
@@ -119,7 +118,7 @@ fun MoveCopyDialog(
                             modifier = Modifier
                                 .size(36.dp)
                                 .background(
-                                    if (isMove) AccentBlue.copy(alpha = 0.2f) else AccentBlue.copy(alpha = 0.2f),
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
                                     CircleShape
                                 ),
                             contentAlignment = Alignment.Center
@@ -127,22 +126,22 @@ fun MoveCopyDialog(
                             Icon(
                                 imageVector = if (isMove) Icons.Default.DriveFileMove else Icons.Default.ContentCopy,
                                 contentDescription = null,
-                                tint = if (isMove) AccentBlue else AccentBlue,
+                                tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
-                        Spacer(modifier = Modifier.width(10.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
                         Column {
                             Text(
                                 text = if (isMove) "Move File" else "Copy File",
-                                color = TextPrimary,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 17.sp
+                                color = MaterialTheme.colorScheme.onSurface,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
                             )
                             Text(
                                 text = file.effectiveName,
-                                color = TextSecondary,
-                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -151,9 +150,13 @@ fun MoveCopyDialog(
                     IconButton(
                         onClick = onDismiss,
                         enabled = !isExecuting,
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(48.dp)
                     ) {
-                        Icon(Icons.Default.Close, contentDescription = "Close", tint = TextSecondary)
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Close",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
 
@@ -162,11 +165,11 @@ fun MoveCopyDialog(
                 // Target Drive Selector
                 Text(
                     text = "Destination Drive",
-                    color = TextSecondary,
-                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.SemiBold
                 )
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
                 if (accounts.isNotEmpty()) {
                     LazyRow(
@@ -179,15 +182,17 @@ fun MoveCopyDialog(
                                 shape = MaterialTheme.shapes.medium,
                                 color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
                                 border = if (isSelected) androidx.compose.foundation.BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
-                                modifier = Modifier.clickable {
-                                    if (!isExecuting && selectedAccountId != acc.effectiveId) {
-                                        selectedAccountId = acc.effectiveId
-                                        targetFolderBreadcrumbs = listOf(BreadcrumbItem(null, "Root"))
+                                modifier = Modifier
+                                    .heightIn(min = 48.dp)
+                                    .clickable {
+                                        if (!isExecuting && selectedAccountId != acc.effectiveId) {
+                                            selectedAccountId = acc.effectiveId
+                                            targetFolderBreadcrumbs = listOf(BreadcrumbItem(null, "Root"))
+                                        }
                                     }
-                                }
                             ) {
                                 Row(
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Icon(
@@ -197,22 +202,22 @@ fun MoveCopyDialog(
                                             else -> Icons.Default.Send
                                         },
                                         contentDescription = null,
-                                        tint = if (isSelected) AccentBlue else TextSecondary,
+                                        tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.size(16.dp)
                                     )
-                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
                                     Text(
                                         text = acc.effectiveName,
-                                        color = if (isSelected) TextPrimary else TextSecondary,
-                                        fontSize = 12.sp,
+                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        style = MaterialTheme.typography.labelMedium,
                                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                                     )
                                     if (acc.effectiveId == sourceAccountId) {
                                         Spacer(modifier = Modifier.width(4.dp))
                                         Text(
                                             text = "(Current)",
-                                            color = TextSecondary.copy(alpha = 0.6f),
-                                            fontSize = 10.sp
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                            style = MaterialTheme.typography.labelSmall
                                         )
                                     }
                                 }
@@ -221,7 +226,7 @@ fun MoveCopyDialog(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
                 // Target Folder Navigation & Header
                 Row(
@@ -231,19 +236,24 @@ fun MoveCopyDialog(
                 ) {
                     Text(
                         text = "Destination Directory",
-                        color = TextSecondary,
-                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.SemiBold
                     )
                     IconButton(
                         onClick = { showNewFolderInput = !showNewFolderInput },
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(48.dp)
                     ) {
-                        Icon(Icons.Default.CreateNewFolder, contentDescription = "New Folder", tint = AccentBlue, modifier = Modifier.size(18.dp))
+                        Icon(
+                            Icons.Default.CreateNewFolder,
+                            contentDescription = "New Folder",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(4.dp))
 
                 // Breadcrumbs inside Dialog
                 LazyRow(
@@ -251,29 +261,32 @@ fun MoveCopyDialog(
                         .fillMaxWidth()
                         .clip(MaterialTheme.shapes.small)
                         .background(MaterialTheme.colorScheme.surfaceContainerLow)
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     itemsIndexed(targetFolderBreadcrumbs) { index, crumb ->
                         val isLast = index == targetFolderBreadcrumbs.size - 1
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .clickable(enabled = !isLast) {
+                                    targetFolderBreadcrumbs = targetFolderBreadcrumbs.take(index + 1)
+                                }
+                                .padding(horizontal = 4.dp)
+                        ) {
                             Text(
                                 text = crumb.name,
-                                color = if (isLast) AccentBlue else TextSecondary,
-                                fontWeight = if (isLast) FontWeight.Bold else FontWeight.Normal,
-                                fontSize = 12.sp,
-                                modifier = Modifier.clickable {
-                                    if (index < targetFolderBreadcrumbs.size - 1) {
-                                        targetFolderBreadcrumbs = targetFolderBreadcrumbs.take(index + 1)
-                                    }
-                                }
+                                color = if (isLast) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = if (isLast) FontWeight.Bold else FontWeight.Normal
                             )
                             if (!isLast) {
                                 Icon(
                                     Icons.AutoMirrored.Filled.KeyboardArrowRight,
                                     contentDescription = null,
-                                    tint = TextSecondary.copy(alpha = 0.5f),
-                                    modifier = Modifier.size(14.dp).padding(horizontal = 2.dp)
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                    modifier = Modifier.size(16.dp)
                                 )
                             }
                         }
@@ -291,17 +304,23 @@ fun MoveCopyDialog(
                         OutlinedTextField(
                             value = newFolderName,
                             onValueChange = { newFolderName = it },
-                            placeholder = { Text("Folder Name", color = TextSecondary, fontSize = 12.sp) },
+                            placeholder = {
+                                Text(
+                                    "Folder Name",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            },
                             singleLine = true,
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = TextPrimary,
-                                unfocusedTextColor = TextPrimary,
-                                focusedBorderColor = AccentBlue,
-                                unfocusedBorderColor = TextSecondary
+                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outline
                             ),
-                            modifier = Modifier.weight(1f).height(48.dp)
+                            modifier = Modifier.weight(1f)
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
                         Button(
                             onClick = {
                                 if (newFolderName.isNotBlank()) {
@@ -322,10 +341,10 @@ fun MoveCopyDialog(
                                     }
                                 }
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
-                            contentPadding = PaddingValues(horizontal = 12.dp)
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            contentPadding = PaddingValues(horizontal = 16.dp)
                         ) {
-                            Text("Create", fontSize = 12.sp)
+                            Text("Create", style = MaterialTheme.typography.labelMedium)
                         }
                     }
                 }
@@ -348,10 +367,23 @@ fun MoveCopyDialog(
                     } else if (folderItems.isEmpty()) {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(Icons.Default.FolderOpen, contentDescription = null, tint = TextSecondary.copy(alpha = 0.5f), modifier = Modifier.size(32.dp))
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text("No subfolders here", color = TextSecondary.copy(alpha = 0.7f), fontSize = 12.sp)
-                                Text("Item will be placed directly in '${targetFolderBreadcrumbs.lastOrNull()?.name}'", color = TextSecondary.copy(alpha = 0.5f), fontSize = 10.sp)
+                                Icon(
+                                    Icons.Default.FolderOpen,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                    modifier = Modifier.size(32.dp)
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    "No subfolders here",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Text(
+                                    "Item will be placed directly in '${targetFolderBreadcrumbs.lastOrNull()?.name}'",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                    style = MaterialTheme.typography.labelSmall
+                                )
                             }
                         }
                     } else {
@@ -360,25 +392,36 @@ fun MoveCopyDialog(
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
+                                        .heightIn(min = 48.dp)
                                         .clip(MaterialTheme.shapes.small)
                                         .clickable {
                                             targetFolderBreadcrumbs = targetFolderBreadcrumbs + BreadcrumbItem(folder.effectiveId, folder.effectiveName)
                                         }
-                                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                                        .padding(horizontal = 12.dp, vertical = 12.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(Icons.Default.Folder, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(20.dp))
+                                    Icon(
+                                        Icons.Default.Folder,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
                                         text = folder.effectiveName,
-                                        color = TextPrimary,
-                                        fontSize = 13.sp,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        style = MaterialTheme.typography.bodyMedium,
                                         fontWeight = FontWeight.Medium,
                                         modifier = Modifier.weight(1f),
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
-                                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(16.dp))
+                                    Icon(
+                                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(16.dp)
+                                    )
                                 }
                             }
                         }
@@ -386,11 +429,15 @@ fun MoveCopyDialog(
                 }
 
                 if (errorMessage != null) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(errorMessage!!, color = Color.Red, fontSize = 11.sp)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = errorMessage!!,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
                 // Confirmation / Action Buttons
                 Row(
@@ -402,7 +449,7 @@ fun MoveCopyDialog(
                         onClick = onDismiss,
                         enabled = !isExecuting
                     ) {
-                        Text("Cancel", color = TextSecondary)
+                        Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
 
                     Button(
@@ -446,19 +493,23 @@ fun MoveCopyDialog(
                         if (isExecuting) {
                             com.cloudyte.app.ui.components.AppLoadingIndicator(size = 18.dp, color = MaterialTheme.colorScheme.onPrimary)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text(if (isMove) "Moving..." else "Copying...", color = MaterialTheme.colorScheme.onPrimary, fontSize = 13.sp)
+                            Text(
+                                text = if (isMove) "Moving..." else "Copying...",
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                style = MaterialTheme.typography.labelLarge
+                            )
                         } else {
                             Icon(
                                 imageVector = if (isMove) Icons.Default.DriveFileMove else Icons.Default.ContentCopy,
                                 contentDescription = null,
                                 modifier = Modifier.size(16.dp)
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = if (isMove) "Move Here" else "Copy Here",
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold
                             )
                         }
                     }

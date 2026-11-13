@@ -166,28 +166,28 @@ fun TextEditorScreen(
     val charCount = textContent.length
 
     Scaffold(
-        containerColor = Color(0xFF12121A),
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = {
                     Column {
                         Text(
                             text = fileName,
-                            color = TextPrimary,
-                            fontSize = 16.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1
                         )
                         Text(
                             text = if (isEditMode) "Editing mode" else "View mode",
-                            color = if (isEditMode) AccentBlue else TextSecondary,
-                            fontSize = 11.sp
+                            color = if (isEditMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.labelSmall
                         )
                     }
                 },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextPrimary)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.onSurface)
                     }
                 },
                 actions = {
@@ -196,18 +196,18 @@ fun TextEditorScreen(
                         Icon(
                             Icons.Default.Search,
                             contentDescription = "Search",
-                            tint = if (showSearchBar) AccentBlue else TextPrimary
+                            tint = if (showSearchBar) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                         )
                     }
 
                     // Font size down
                     IconButton(onClick = { if (fontSize > 9f) fontSize -= 2f }) {
-                        Text("A-", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        Text("A-", color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
                     }
 
                     // Font size up
                     IconButton(onClick = { if (fontSize < 24f) fontSize += 2f }) {
-                        Text("A+", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        Text("A+", color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
                     }
 
                     // Mode Toggle (View / Edit)
@@ -215,7 +215,7 @@ fun TextEditorScreen(
                         Icon(
                             imageVector = if (isEditMode) Icons.Default.Visibility else Icons.Default.Edit,
                             contentDescription = "Toggle Edit",
-                            tint = if (isEditMode) AccentBlue else TextPrimary
+                            tint = if (isEditMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                         )
                     }
 
@@ -264,7 +264,7 @@ fun TextEditorScreen(
                         OutlinedTextField(
                             value = searchQuery,
                             onValueChange = { searchQuery = it },
-                            placeholder = { Text("Find in document...", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp) },
+                            placeholder = { Text("Find in document...", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) },
                             singleLine = true,
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = MaterialTheme.colorScheme.primary,
@@ -283,7 +283,7 @@ fun TextEditorScreen(
                             Text(
                                 "$matches lines",
                                 color = MaterialTheme.colorScheme.primary,
-                                fontSize = 12.sp,
+                                style = MetricLabelTextStyle,
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
@@ -301,20 +301,21 @@ fun TextEditorScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = Color.Red, modifier = Modifier.size(48.dp))
+                        Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(48.dp))
                         Spacer(modifier = Modifier.height(16.dp))
-                        Text("Unable to display document", color = TextPrimary, fontWeight = FontWeight.Bold)
+                        Text("Unable to display document", color = MaterialTheme.colorScheme.onBackground, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         Spacer(modifier = Modifier.height(8.dp))
-                        Text(errorMessage ?: "", color = TextSecondary, fontSize = 13.sp)
+                        Text(errorMessage ?: "", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                         Spacer(modifier = Modifier.height(16.dp))
                         Button(
                             onClick = {
                                 val intent = Intent(Intent.ACTION_VIEW, Uri.parse(fileUrl))
                                 context.startActivity(intent)
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
+                            modifier = Modifier.heightIn(min = 48.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                         ) {
-                            Text("Download File", color = Color.White)
+                            Text("Download File", color = MaterialTheme.colorScheme.onPrimary)
                         }
                     }
                 }
@@ -336,16 +337,16 @@ fun TextEditorScreen(
                         // Line numbers gutter
                         Column(
                             modifier = Modifier
-                                .background(Color(0xFF0D0D14))
+                                .background(MaterialTheme.colorScheme.surfaceContainerLow)
                                 .padding(horizontal = 8.dp, vertical = 12.dp),
                             horizontalAlignment = Alignment.End
                         ) {
                             for (i in 1..lineCount) {
                                 Text(
                                     text = "$i",
-                                    color = Color.Gray.copy(alpha = 0.6f),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
                                     fontSize = fontSize.sp,
-                                    fontFamily = FontFamily.Monospace,
+                                    fontFamily = JetBrainsMonoFontFamily,
                                     lineHeight = (fontSize * 1.4f).sp
                                 )
                             }
@@ -363,20 +364,20 @@ fun TextEditorScreen(
                                     value = textContent,
                                     onValueChange = { textContent = it },
                                     textStyle = TextStyle(
-                                        color = TextPrimary,
+                                        color = MaterialTheme.colorScheme.onBackground,
                                         fontSize = fontSize.sp,
-                                        fontFamily = FontFamily.Monospace,
+                                        fontFamily = JetBrainsMonoFontFamily,
                                         lineHeight = (fontSize * 1.4f).sp
                                     ),
-                                    cursorBrush = SolidColor(AccentBlue),
+                                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                                     modifier = Modifier.fillMaxWidth()
                                 )
                             } else {
                                 Text(
                                     text = textContent,
-                                    color = TextPrimary,
+                                    color = MaterialTheme.colorScheme.onBackground,
                                     fontSize = fontSize.sp,
-                                    fontFamily = FontFamily.Monospace,
+                                    fontFamily = JetBrainsMonoFontFamily,
                                     lineHeight = (fontSize * 1.4f).sp
                                 )
                             }
@@ -386,25 +387,26 @@ fun TextEditorScreen(
 
                 // Bottom Status Bar
                 Surface(
-                    color = Color(0xFF161622),
+                    color = MaterialTheme.colorScheme.surfaceContainer,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .navigationBarsPadding()
                             .padding(horizontal = 16.dp, vertical = 8.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
                             text = "Lines: $lineCount • Words: $wordCount • Chars: $charCount",
-                            color = TextSecondary,
-                            fontSize = 11.sp
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MetricLabelTextStyle
                         )
                         Text(
                             text = file?.effectiveType?.uppercase() ?: "TEXT",
-                            color = AccentBlue,
-                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                            style = MetricLabelTextStyle,
                             fontWeight = FontWeight.Bold
                         )
                     }

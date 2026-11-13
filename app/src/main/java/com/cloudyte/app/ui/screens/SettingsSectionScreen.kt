@@ -3,11 +3,11 @@ package com.cloudyte.app.ui.screens
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
 import android.widget.Toast
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,6 +17,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -26,6 +29,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -35,12 +39,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.cloudyte.app.BuildConfig
 import com.cloudyte.app.R
 import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.api.OfflineFileManager
@@ -48,6 +54,7 @@ import com.cloudyte.app.data.ColorTheme
 import com.cloudyte.app.data.ThemeMode
 import com.cloudyte.app.data.UserPreferences
 import com.cloudyte.app.data.ViewMode
+import com.cloudyte.app.sync.AutoSyncManager
 import com.cloudyte.app.ui.components.ChoiceDialog
 import com.cloudyte.app.ui.components.ConfirmDialog
 import com.cloudyte.app.ui.components.GroupedList
@@ -123,7 +130,12 @@ fun SettingsSectionScreen(
                 )
             )
         },
-        snackbarHost = { SnackbarHost(snackbarHostState) }
+        snackbarHost = {
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier.padding(bottom = com.cloudyte.app.ui.components.LocalBottomBarInset.current)
+            )
+        }
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -247,12 +259,22 @@ fun SettingsSectionScreen(
                                     title = "Linked Storage Drives (${accounts.size})",
                                     subtitle = if (drivesExpanded) "Tap to collapse connected drives" else "Tap to view connected drives",
                                     trailing = {
-                                        Text(
-                                            text = if (drivesExpanded) "Hide ▲" else "Show ▼",
-                                            style = MaterialTheme.typography.labelMedium,
-                                            color = MaterialTheme.colorScheme.primary,
-                                            fontWeight = FontWeight.Bold
-                                        )
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Text(
+                                                text = if (drivesExpanded) "Hide" else "Show",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            Icon(
+                                                imageVector = if (drivesExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                                contentDescription = if (drivesExpanded) "Collapse drives" else "Expand drives",
+                                                tint = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
                                     },
                                     onClick = { drivesExpanded = !drivesExpanded }
                                 )
@@ -319,13 +341,24 @@ fun SettingsSectionScreen(
                                 title = stringResource(R.string.settings_auto_backup),
                                 subtitle = stringResource(R.string.settings_auto_backup_sub),
                                 checked = prefsState.autoBackupEnabled,
-                                onChange = { scope.launch { UserPreferences.setAutoBackupEnabled(context, it) } }
+                                onChange = { enabled ->
+                                    scope.launch {
+                                        UserPreferences.setAutoBackupEnabled(context, enabled)
+                                        runCatching { AutoSyncManager.setAutoBackup(context, enabled) }
+                                    }
+                                }
                             )
                         },
                         GroupedListItem(key = "schedule") {
+                            val scheduleSubtitle = when {
+                                !prefsState.autoBackupEnabled -> schedules[0]
+                                prefsState.backupIntervalHours <= 1 -> schedules[1]
+                                prefsState.backupIntervalHours <= 24 -> schedules[2]
+                                else -> schedules[3]
+                            }
                             SettingsClickRow(
                                 title = stringResource(R.string.settings_backup_schedule),
-                                subtitle = schedules[0],
+                                subtitle = scheduleSubtitle,
                                 onClick = { activeDialogType = "SCHEDULE" }
                             )
                         },
@@ -927,8 +960,14 @@ fun SettingsSectionScreen(
                         GroupedListItem(key = "version") {
                             SettingsClickRow(
                                 title = stringResource(R.string.settings_app_version),
-                                subtitle = stringResource(R.string.settings_app_version_sub),
-                                onClick = {}
+                                subtitle = "v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})",
+                                onClick = {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    clipboard.setPrimaryClip(
+                                        ClipData.newPlainText("App Version", "Cloudyte v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+                                    )
+                                    Toast.makeText(context, "Version copied to clipboard", Toast.LENGTH_SHORT).show()
+                                }
                             )
                         },
                         GroupedListItem(key = "check_updates") {
@@ -942,27 +981,19 @@ fun SettingsSectionScreen(
                         GroupedListItem(key = "tos") {
                             SettingsClickRow(
                                 title = stringResource(R.string.settings_terms_of_service),
-                                onClick = {
-                                    runCatching {
-                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://cloudyte.example/tos")))
-                                    }
-                                }
+                                onClick = { activeDialogType = "TOS_INFO" }
                             )
                         },
                         GroupedListItem(key = "privacy") {
                             SettingsClickRow(
                                 title = stringResource(R.string.settings_privacy_policy),
-                                onClick = {
-                                    runCatching {
-                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://cloudyte.example/privacy")))
-                                    }
-                                }
+                                onClick = { activeDialogType = "PRIVACY_INFO" }
                             )
                         },
                         GroupedListItem(key = "licenses") {
                             SettingsClickRow(
                                 title = stringResource(R.string.settings_open_source_licenses),
-                                onClick = {}
+                                onClick = { activeDialogType = "LICENSES_INFO" }
                             )
                         }
                     )
@@ -977,12 +1008,109 @@ fun SettingsSectionScreen(
     when (activeDialogType) {
         "SCHEDULE" -> {
             val schedules = stringArrayResource(R.array.schedule_options)
+            val currentScheduleIndex = when {
+                !prefsState.autoBackupEnabled -> 0
+                prefsState.backupIntervalHours <= 1 -> 1
+                prefsState.backupIntervalHours <= 24 -> 2
+                else -> 3
+            }
             ChoiceDialog(
                 title = stringResource(R.string.settings_backup_schedule),
                 options = schedules.toList(),
-                selectedIndex = 0,
-                onSelect = {},
+                selectedIndex = currentScheduleIndex,
+                onSelect = { idx ->
+                    scope.launch {
+                        if (idx == 0) {
+                            UserPreferences.setAutoBackupEnabled(context, false)
+                            runCatching { AutoSyncManager.setAutoBackup(context, false) }
+                        } else {
+                            val hours = when (idx) {
+                                1 -> 1
+                                2 -> 24
+                                else -> 168
+                            }
+                            UserPreferences.setBackupIntervalHours(context, hours)
+                            UserPreferences.setAutoBackupEnabled(context, true)
+                            runCatching { AutoSyncManager.setAutoBackup(context, true) }
+                        }
+                    }
+                },
                 onDismiss = { activeDialogType = null }
+            )
+        }
+        "TOS_INFO" -> {
+            AlertDialog(
+                onDismissRequest = { activeDialogType = null },
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                title = {
+                    Text(
+                        text = stringResource(R.string.settings_terms_of_service),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                text = {
+                    Text(
+                        text = "Cloudyte is a client for managing your own connected cloud storage providers and self-hosted Cloudyte server. You are responsible for the credentials, keys, and content stored on your linked drives.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { activeDialogType = null }) {
+                        Text(stringResource(R.string.action_close))
+                    }
+                }
+            )
+        }
+        "PRIVACY_INFO" -> {
+            AlertDialog(
+                onDismissRequest = { activeDialogType = null },
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                title = {
+                    Text(
+                        text = stringResource(R.string.settings_privacy_policy),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                text = {
+                    Text(
+                        text = "End-to-end encryption keys are stored locally in Android Keystore and never transmitted to the server. Redacted diagnostics are only exported when you explicitly choose to copy or share them.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { activeDialogType = null }) {
+                        Text(stringResource(R.string.action_close))
+                    }
+                }
+            )
+        }
+        "LICENSES_INFO" -> {
+            AlertDialog(
+                onDismissRequest = { activeDialogType = null },
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                title = {
+                    Text(
+                        text = stringResource(R.string.settings_open_source_licenses),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                text = {
+                    Text(
+                        text = "Built with open-source software:\n• Jetpack Compose & Material 3 (Apache-2.0)\n• AndroidX Room, WorkManager & Security (Apache-2.0)\n• Retrofit & OkHttp (Apache-2.0)\n• AndroidX Media3 ExoPlayer (Apache-2.0)\n• Coil Image Loading (Apache-2.0)\n• Kotlinx Serialization & Coroutines (Apache-2.0)\n• Plus Jakarta Sans & JetBrains Mono (OFL-1.1)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { activeDialogType = null }) {
+                        Text(stringResource(R.string.action_close))
+                    }
+                }
             )
         }
         "NETWORK" -> {

@@ -35,7 +35,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImagePainter
 import coil.compose.rememberAsyncImagePainter
 import com.cloudyte.app.CloudyteApplication
@@ -228,7 +227,7 @@ private fun FileTypeFallbackContent(file: CloudFile, iconSize: Dp, showTypeBadge
         Icon(Icons.Default.Lock, file.effectiveName, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(iconSize))
     } else if (showTypeBadgeInGrid && !file.isFolderItem && !file.isImage && !file.isVideo) {
         val rawLabel = file.effectiveType.uppercase().take(4).ifBlank { "FILE" }
-        Text(rawLabel, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        Text(rawLabel, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
     } else {
         val (icon, tint) = when {
             file.isFolderItem -> Icons.Default.Folder to MaterialTheme.colorScheme.primary

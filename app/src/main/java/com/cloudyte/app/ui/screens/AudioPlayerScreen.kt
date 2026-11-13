@@ -23,7 +23,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -176,12 +175,13 @@ fun AudioPlayerScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .heightIn(min = 48.dp)
                                 .clickable {
                                     playbackSpeed = speed
                                     exoPlayer.setPlaybackSpeed(speed)
                                     showSpeedDialog = false
                                 }
-                                .padding(vertical = 12.dp),
+                                .padding(vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             RadioButton(
@@ -197,7 +197,7 @@ fun AudioPlayerScreen(
                             Text(
                                 text = if (speed == 1f) "Normal (1x)" else "${speed}x",
                                 color = MaterialTheme.colorScheme.onSurface,
-                                fontSize = 16.sp
+                                style = MaterialTheme.typography.bodyLarge
                             )
                         }
                     }
@@ -211,7 +211,7 @@ fun AudioPlayerScreen(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("Audio Player", color = MaterialTheme.colorScheme.onBackground, fontSize = 18.sp, fontWeight = FontWeight.SemiBold) },
+                title = { Text("Audio Player", color = MaterialTheme.colorScheme.onBackground, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.onBackground)
@@ -264,9 +264,9 @@ fun AudioPlayerScreen(
                     .background(
                         Brush.radialGradient(
                             listOf(
-                                AccentBlue.copy(alpha = 0.8f),
-                                Color(0xFF1E1B4B),
-                                Color(0xFF0F172A)
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
+                                MaterialTheme.colorScheme.primaryContainer,
+                                MaterialTheme.colorScheme.surfaceContainerHighest
                             )
                         )
                     )
@@ -278,31 +278,27 @@ fun AudioPlayerScreen(
                     modifier = Modifier
                         .size(210.dp)
                         .clip(CircleShape)
-                        .background(Color(0xFF1A1A24)),
+                        .background(MaterialTheme.colorScheme.surfaceContainer),
                     contentAlignment = Alignment.Center
                 ) {
                     Box(
                         modifier = Modifier
                             .size(150.dp)
                             .clip(CircleShape)
-                            .background(Color(0xFF242432)),
+                            .background(MaterialTheme.colorScheme.surfaceContainerHigh),
                         contentAlignment = Alignment.Center
                     ) {
                         Box(
                             modifier = Modifier
                                 .size(90.dp)
                                 .clip(CircleShape)
-                                .background(
-                                    Brush.linearGradient(
-                                        listOf(AccentBlue, AccentBlue)
-                                    )
-                                ),
+                                .background(MaterialTheme.colorScheme.primary),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 Icons.Default.MusicNote,
                                 contentDescription = null,
-                                tint = Color.White,
+                                tint = MaterialTheme.colorScheme.onPrimary,
                                 modifier = Modifier.size(44.dp)
                             )
                         }
@@ -317,17 +313,17 @@ fun AudioPlayerScreen(
             ) {
                 Text(
                     text = fileName,
-                    color = TextPrimary,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 20.sp,
                     textAlign = TextAlign.Center,
                     maxLines = 2
                 )
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     text = "${file?.formattedSize ?: ""} • ${file?.effectiveType?.uppercase() ?: "AUDIO"}",
-                    color = TextSecondary,
-                    fontSize = 14.sp
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MetricLabelTextStyle
                 )
             }
 
@@ -369,12 +365,12 @@ fun AudioPlayerScreen(
                     Text(
                         text = formatAudioTime(currentPosition),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 13.sp
+                        style = MetricLabelTextStyle
                     )
                     Text(
                         text = formatAudioTime(duration),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 13.sp
+                        style = MetricLabelTextStyle
                     )
                 }
             }
@@ -425,12 +421,12 @@ fun AudioPlayerScreen(
                         )
                 ) {
                     if (isBuffering) {
-                        com.cloudyte.app.ui.components.AppLoadingIndicator(size = 32.dp, color = Color.White)
+                        com.cloudyte.app.ui.components.AppLoadingIndicator(size = 32.dp, color = MaterialTheme.colorScheme.onPrimary)
                     } else {
                         Icon(
                             imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                             contentDescription = if (isPlaying) "Pause" else "Play",
-                            tint = Color.White,
+                            tint = MaterialTheme.colorScheme.onPrimary,
                             modifier = Modifier.size(40.dp)
                         )
                     }
@@ -444,15 +440,15 @@ fun AudioPlayerScreen(
                     },
                     modifier = Modifier.size(48.dp)
                 ) {
-                    Icon(Icons.Default.Forward10, contentDescription = "Forward 10s", tint = TextPrimary, modifier = Modifier.size(32.dp))
+                    Icon(Icons.Default.Forward10, contentDescription = "Forward 10s", tint = MaterialTheme.colorScheme.onBackground, modifier = Modifier.size(32.dp))
                 }
 
                 IconButton(onClick = { showSpeedDialog = true }) {
                     Text(
                         text = if (playbackSpeed == 1f) "1x" else "${playbackSpeed}x",
-                        color = TextPrimary,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp
+                        color = MaterialTheme.colorScheme.onBackground,
+                        style = MetricTextStyle,
+                        fontWeight = FontWeight.Bold
                     )
                 }
             }

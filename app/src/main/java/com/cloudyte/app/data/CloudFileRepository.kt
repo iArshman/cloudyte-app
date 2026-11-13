@@ -5,6 +5,7 @@ import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.api.CloudFile
 import com.cloudyte.app.api.CloudyteApi
 import com.cloudyte.app.api.FileRepository
+import com.cloudyte.app.api.FolderRequest
 import com.cloudyte.app.api.StorageSummary
 import com.cloudyte.app.api.formatByteCount
 import com.cloudyte.app.api.parseBytes
@@ -719,6 +720,66 @@ class CloudFileRepository @JvmOverloads constructor(
 
     suspend fun getFileById(id: String): CloudFile? {
         return db.cloudFileDao().getFileById(id)?.toCloudFile()
+    }
+
+    sealed interface StoredParentResult {
+        data class Found(val parentFolderId: String?) : StoredParentResult
+        data object NotFound : StoredParentResult
+    }
+
+    suspend fun resolveStoredParentFolderId(fileId: String): StoredParentResult {
+        val row = db.cloudFileDao().getFileById(fileId) ?: return StoredParentResult.NotFound
+        return StoredParentResult.Found(row.folderId.takeUnless { it.isBlank() || it == "root" })
+    }
+
+    suspend fun resolveUniqueChildFolderName(
+        baseName: String,
+        accountId: String?,
+        parentFolderId: String?
+    ): String {
+        val safeParent = safeFolderId(parentFolderId)
+        val normalizedAccount = if (accountId.isNullOrBlank() || accountId == "root") null else accountId
+        runCatching { refresh(normalizedAccount, safeParent, force = true) }
+        val existingNames = db.cloudFileDao().getFilesForFolder(normalizedAccount, safeParent)
+            .filter { it.isFolder }
+            .mapTo(mutableSetOf()) { it.name.lowercase(Locale.US) }
+        val primary = "$baseName (Encrypted)"
+        if (primary.lowercase(Locale.US) !in existingNames) return primary
+        var index = 2
+        while (true) {
+            val candidate = "$baseName (Encrypted $index)"
+            if (candidate.lowercase(Locale.US) !in existingNames) return candidate
+            index++
+        }
+    }
+
+    suspend fun createRemoteFolderAndResolve(
+        name: String,
+        accountId: String?,
+        parentFolderId: String?
+    ): Result<CloudFile> {
+        val safeParent = safeFolderId(parentFolderId)
+        val normalizedAccount = if (accountId.isNullOrBlank() || accountId == "root") null else accountId
+        val apiParentId = safeParent.takeUnless { it == "root" }
+        val existingIds = db.cloudFileDao().getFilesForFolder(normalizedAccount, safeParent)
+            .filter { it.isFolder }
+            .mapTo(mutableSetOf()) { it.id }
+
+        val response = api.createFolder(normalizedAccount, FolderRequest(name = name, parentId = apiParentId))
+        if (!response.isSuccessful) {
+            return Result.failure(Exception("Could not create folder '$name' (HTTP ${response.code()})"))
+        }
+        invalidateFolderCache(normalizedAccount, safeParent)
+        val refreshRes = refresh(normalizedAccount, safeParent, force = true)
+        if (refreshRes.isFailure) {
+            return Result.failure(refreshRes.exceptionOrNull() ?: Exception("Could not refresh folder '$name'"))
+        }
+        val matches = db.cloudFileDao().getFilesForFolder(normalizedAccount, safeParent)
+            .filter { it.isFolder && it.name == name }
+        val created = matches.firstOrNull { it.id !in existingIds }
+            ?: matches.maxByOrNull { it.time }
+            ?: return Result.failure(Exception("Created folder '$name' not found"))
+        return Result.success(created.toCloudFile())
     }
 
     private fun normalizeAccountId(accountId: String?): String {

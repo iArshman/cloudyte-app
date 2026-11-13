@@ -7,7 +7,12 @@ import com.cloudyte.app.ui.screens.AccountsScreen as LegacyAccountsScreen
 typealias AccountsViewModel = com.cloudyte.app.ui.screens.AccountsViewModel
 
 @Composable
-fun AccountsScreen(navController: NavController, rootNavController: NavController, viewModel: AccountsViewModel? = null) {
-    if (viewModel == null) LegacyAccountsScreen(navController, rootNavController)
-    else LegacyAccountsScreen(navController, rootNavController, viewModel)
+fun AccountsScreen(
+    navController: NavController,
+    rootNavController: NavController,
+    viewModel: AccountsViewModel? = null,
+    onBack: (() -> Unit)? = null
+) {
+    if (viewModel == null) LegacyAccountsScreen(navController, rootNavController, onBack = onBack)
+    else LegacyAccountsScreen(navController, rootNavController, viewModel, onBack = onBack)
 }

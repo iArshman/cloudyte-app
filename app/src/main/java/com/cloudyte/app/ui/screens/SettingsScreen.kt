@@ -32,7 +32,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.ui.components.GroupedList
@@ -79,7 +78,8 @@ fun SettingsScreen(
     if (currentSubScreen == "ACCOUNTS") {
         AccountsScreen(
             navController = bottomNavController ?: remember { androidx.navigation.NavHostController(context) },
-            rootNavController = rootNavController ?: remember { androidx.navigation.NavHostController(context) }
+            rootNavController = rootNavController ?: remember { androidx.navigation.NavHostController(context) },
+            onBack = { currentSubScreen = null }
         )
         return
     }
@@ -122,31 +122,28 @@ fun SettingsScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 20.dp, end = 16.dp, top = 20.dp, bottom = 8.dp),
+                    .padding(horizontal = 16.dp, vertical = 16.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.Top
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Settings",
-                        fontSize = 32.sp,
+                        style = MaterialTheme.typography.displayLarge,
                         fontWeight = FontWeight.Bold,
-                        lineHeight = 36.sp,
                         color = MaterialTheme.colorScheme.onBackground
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = "Appearance, language and more",
-                        fontSize = 13.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 Surface(
                     shape = CircleShape,
                     color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    modifier = Modifier
-                        .padding(top = 4.dp)
-                        .size(42.dp),
+                    modifier = Modifier.size(48.dp),
                     onClick = { currentSubScreen = "DIAGNOSTICS" }
                 ) {
                     Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
@@ -160,7 +157,7 @@ fun SettingsScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             val sectionItems = SettingsSectionType.entries.map { section ->
                 GroupedListItem(key = section.name) {

@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -59,6 +60,8 @@ import com.cloudyte.app.db.AppDatabase
 import com.cloudyte.app.db.TransferStatus
 import com.cloudyte.app.domain.model.Transfer
 import com.cloudyte.app.sync.AutoSyncManager
+import com.cloudyte.app.ui.components.EmptyState
+import com.cloudyte.app.ui.theme.MetricLabelTextStyle
 import kotlinx.coroutines.launch
 import kotlin.math.max
 
@@ -137,16 +140,20 @@ fun TransfersScreen(
                 .padding(innerPadding)
         ) {
             if (filteredTransfers.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = stringResource(R.string.transfers_empty),
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                val (emptyTitle, emptySubtitle) = when (selectedTab) {
+                    1 -> "No active transfers" to "Uploads and downloads currently running appear here"
+                    2 -> "No completed transfers" to "Finished uploads and downloads appear here"
+                    3 -> "No failed transfers" to "Interrupted or failed transfers can be retried here"
+                    else -> stringResource(R.string.transfers_empty) to "Upload or download files from Home or Files to track progress"
                 }
+                EmptyState(
+                    icon = Icons.Default.SwapVert,
+                    title = emptyTitle,
+                    subtitle = emptySubtitle,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(bottom = com.cloudyte.app.ui.components.LocalBottomBarInset.current)
+                )
             } else {
                 LazyColumn(
                     state = listState,
@@ -282,10 +289,10 @@ fun TransferItemCard(
                 if (speedBytesPerSecond > 0L) {
                     val remainingBytes = (transfer.totalBytes - transfer.bytesTransferred).coerceAtLeast(0L)
                     val etaSeconds = if (remainingBytes > 0L) remainingBytes / speedBytesPerSecond else 0L
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         text = "${formatTransferRate(speedBytesPerSecond)} • ${formatTransferEta(etaSeconds)} remaining",
-                        style = MaterialTheme.typography.labelMedium,
+                        style = MetricLabelTextStyle,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
