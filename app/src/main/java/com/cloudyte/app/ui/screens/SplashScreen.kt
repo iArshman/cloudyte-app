@@ -33,9 +33,19 @@ fun SplashScreen(navController: NavController) {
                 navController.navigate("main") {
                     popUpTo("splash") { inclusive = true }
                 }
+            } catch (e: retrofit2.HttpException) {
+                if (e.code() == 401 || e.code() == 403) {
+                    ApiClient.saveToken(null)
+                    navController.navigate("login") {
+                        popUpTo("splash") { inclusive = true }
+                    }
+                } else {
+                    navController.navigate("main") {
+                        popUpTo("splash") { inclusive = true }
+                    }
+                }
             } catch (e: Exception) {
-                ApiClient.saveToken(null)
-                navController.navigate("login") {
+                navController.navigate("main") {
                     popUpTo("splash") { inclusive = true }
                 }
             }

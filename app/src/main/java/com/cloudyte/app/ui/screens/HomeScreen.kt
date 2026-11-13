@@ -147,7 +147,8 @@ private val CardUnknownSlate = Color(0xFFB0B7D1)
 @OptIn(ExperimentalCoroutinesApi::class)
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private val db = AppDatabase.getDatabase(application)
-    private val repository = CloudFileRepository(db, ApiClient.apiService)
+    private val repository = (application as? com.cloudyte.app.CloudyteApplication)?.container?.cloudFileRepository
+        ?: CloudFileRepository(db, ApiClient.apiService)
 
     private val _profile = MutableStateFlow<UserProfile?>(null)
     val profile: StateFlow<UserProfile?> = _profile.asStateFlow()
