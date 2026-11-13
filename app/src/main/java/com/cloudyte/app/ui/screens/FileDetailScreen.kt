@@ -5,7 +5,9 @@ import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
@@ -19,13 +21,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.cloudyte.app.R
 import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.ui.components.FileThumb
+import com.cloudyte.app.ui.components.LocalBottomBarInset
 import com.cloudyte.app.ui.openFileInViewer
+import com.cloudyte.app.ui.theme.MetricLabelTextStyle
+import com.cloudyte.app.ui.theme.MetricTextStyle
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -181,13 +185,18 @@ fun FileDetailScreen(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        snackbarHost = {
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier.padding(bottom = LocalBottomBarInset.current)
+            )
+        },
         topBar = {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
-                    .statusBarsPadding(),
+                    .statusBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -201,8 +210,8 @@ fun FileDetailScreen(
                 Text(
                     text = stringResource(R.string.detail_title),
                     color = MaterialTheme.colorScheme.onBackground,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 17.sp
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
                 )
                 IconButton(
                     onClick = { showRenameDialog = true },
@@ -281,7 +290,8 @@ fun FileDetailScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 20.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
         ) {
             // Media Preview Area using FileThumb
             val detailAccId = nonNullFile.effectiveAccountId.ifBlank {
@@ -294,13 +304,13 @@ fun FileDetailScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(180.dp)
-                    .clickable(enabled = !nonNullFile.isEncrypted || nonNullFile.originalMetadataAvailable) {
+                    .clickable(enabled = !nonNullFile.isFolderItem && (!nonNullFile.isEncrypted || nonNullFile.originalMetadataAvailable)) {
                         openFileInViewer(nonNullFile, detailAccId, navController)
                     },
                 cornerRadius = 16.dp
             )
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
@@ -314,11 +324,11 @@ fun FileDetailScreen(
                 Text(
                     text = "${nonNullFile.formattedSize} • ${nonNullFile.effectiveType.uppercase()}",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 14.sp
+                    style = MetricLabelTextStyle
                 )
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             val dateFormat = SimpleDateFormat("MMM dd, yyyy hh:mm a", Locale.getDefault())
             val dateStr = nonNullFile.time?.let { dateFormat.format(Date(it)) }
@@ -334,10 +344,10 @@ fun FileDetailScreen(
                     Text(
                         text = stringResource(R.string.detail_section_title),
                         color = MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
                     )
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
                     DetailRow(
                         label = stringResource(R.string.detail_location),
                         value = nonNullFile.location ?: nonNullFile.path ?: stringResource(R.string.detail_location_root)
@@ -348,7 +358,8 @@ fun FileDetailScreen(
                     )
                     DetailRow(
                         label = stringResource(R.string.detail_size),
-                        value = nonNullFile.formattedSize
+                        value = nonNullFile.formattedSize,
+                        isMetric = true
                     )
                     DetailRow(
                         label = stringResource(R.string.detail_type),
@@ -366,28 +377,29 @@ fun FileDetailScreen(
                     if (nonNullFile.isEncrypted && !nonNullFile.encryptionKeyId.isNullOrBlank()) {
                         DetailRow(
                             label = "Key ID",
-                            value = nonNullFile.encryptionKeyId.take(16)
+                            value = nonNullFile.encryptionKeyId.take(16),
+                            isMetric = true
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.weight(1f))
+            Spacer(modifier = Modifier.height(24.dp))
 
             val primaryColor = MaterialTheme.colorScheme.primary
 
-            // Action button: Open in viewer / player / editor (or Decrypt / Export when metadata unavailable)
-            if (!nonNullFile.isEncrypted || nonNullFile.originalMetadataAvailable) {
+            // Action button: Open in viewer / player / editor (for non-folder items with available metadata)
+            if (!nonNullFile.isFolderItem && (!nonNullFile.isEncrypted || nonNullFile.originalMetadataAvailable)) {
                 Button(
                     onClick = {
                         openFileInViewer(nonNullFile, accountId, navController)
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp),
+                        .heightIn(min = 48.dp),
                     shape = MaterialTheme.shapes.medium,
                     colors = ButtonDefaults.buttonColors(containerColor = primaryColor),
-                    contentPadding = PaddingValues()
+                    contentPadding = PaddingValues(horizontal = 16.dp)
                 ) {
                     Icon(
                         imageVector = when {
@@ -412,8 +424,8 @@ fun FileDetailScreen(
                             else -> stringResource(R.string.detail_open_file)
                         },
                         color = MaterialTheme.colorScheme.onPrimary,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
                     )
                 }
                 Spacer(modifier = Modifier.height(8.dp))
@@ -433,7 +445,9 @@ fun FileDetailScreen(
                     }
                 },
                 enabled = !isProcessingCryptoAction,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp),
                 shape = MaterialTheme.shapes.medium,
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onBackground)
             ) {
@@ -447,24 +461,25 @@ fun FileDetailScreen(
                 Text(
                     text = when {
                         nonNullFile.isEncrypted -> "Decrypt / Export file"
-                        nonNullFile.isFolderItem -> "Encrypt all files in folder"
+                        nonNullFile.isFolderItem -> "Encrypt to new folder"
                         else -> "Create encrypted copy"
                     },
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold
+                    style = MaterialTheme.typography.labelLarge
                 )
             }
 
             Spacer(modifier = Modifier.height(8.dp))
 
             // Move & Copy actions
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = {
                         isMoveAction = true
                         showMoveCopyDialog = true
                     },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp),
                     shape = MaterialTheme.shapes.medium,
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onBackground)
                 ) {
@@ -474,8 +489,8 @@ fun FileDetailScreen(
                         modifier = Modifier.size(18.dp),
                         tint = MaterialTheme.colorScheme.primary
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = stringResource(R.string.action_move), fontSize = 13.sp)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = stringResource(R.string.action_move), style = MaterialTheme.typography.labelLarge)
                 }
 
                 OutlinedButton(
@@ -483,7 +498,9 @@ fun FileDetailScreen(
                         isMoveAction = false
                         showMoveCopyDialog = true
                     },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp),
                     shape = MaterialTheme.shapes.medium,
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onBackground)
                 ) {
@@ -493,14 +510,14 @@ fun FileDetailScreen(
                         modifier = Modifier.size(18.dp),
                         tint = MaterialTheme.colorScheme.primary
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = stringResource(R.string.action_copy), fontSize = 13.sp)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = stringResource(R.string.action_copy), style = MaterialTheme.typography.labelLarge)
                 }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = {
                         if (nonNullFile.isEncrypted) {
@@ -528,32 +545,33 @@ fun FileDetailScreen(
                             }
                         }
                     },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp),
                     shape = MaterialTheme.shapes.medium,
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onBackground)
                 ) {
                     Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = stringResource(R.string.action_download), fontSize = 13.sp)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = stringResource(R.string.action_download), style = MaterialTheme.typography.labelLarge)
                 }
-
-                Spacer(modifier = Modifier.width(10.dp))
 
                 OutlinedButton(
                     onClick = { viewModel.shareFile(accountId, nonNullFile.effectiveId) },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp),
                     shape = MaterialTheme.shapes.medium,
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onBackground)
                 ) {
                     Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = stringResource(R.string.action_share), fontSize = 13.sp)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = stringResource(R.string.action_share), style = MaterialTheme.typography.labelLarge)
                 }
-
-                Spacer(modifier = Modifier.width(10.dp))
 
                 OutlinedButton(
                     onClick = { showDeleteConfirm = true },
+                    modifier = Modifier.heightIn(min = 48.dp),
                     shape = MaterialTheme.shapes.medium,
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
                 ) {
@@ -572,20 +590,26 @@ fun FileDetailScreen(
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(20.dp + com.cloudyte.app.ui.components.LocalBottomBarInset.current))
+            Spacer(modifier = Modifier.height(24.dp + LocalBottomBarInset.current))
         }
     }
 }
 
 @Composable
-fun DetailRow(label: String, value: String) {
+fun DetailRow(label: String, value: String, isMetric: Boolean = false) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 6.dp),
+            .padding(vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
-        Text(value, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+        Spacer(modifier = Modifier.width(16.dp))
+        Text(
+            text = value,
+            color = MaterialTheme.colorScheme.onSurface,
+            style = if (isMetric) MetricTextStyle else MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.Medium
+        )
     }
 }

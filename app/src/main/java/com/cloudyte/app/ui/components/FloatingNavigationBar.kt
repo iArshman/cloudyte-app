@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -39,13 +38,13 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import androidx.navigation.compose.currentBackStackEntryAsState
 import com.cloudyte.app.R
 
-val LocalBottomBarInset = staticCompositionLocalOf { 80.dp }
+val LocalBottomBarInset = staticCompositionLocalOf { 0.dp }
 
 data class FloatingNavItem(val route: String, val label: String, val icon: ImageVector)
 
@@ -53,7 +52,7 @@ data class FloatingNavItem(val route: String, val label: String, val icon: Image
 fun FloatingNavigationBar(
     navController: NavController,
     visible: Boolean = true,
-    showNavText: Boolean = true, // kept for API compat, no longer used
+    showNavText: Boolean = true,
     modifier: Modifier = Modifier,
     onNavigate: ((String) -> Unit)? = null
 ) {
@@ -65,7 +64,7 @@ fun FloatingNavigationBar(
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route ?: "home"
-    val selectedIndex = items.indexOfFirst { it.route == currentRoute }.coerceAtLeast(0)
+    val selectedIndex = items.indexOfFirst { it.route == currentRoute }
 
     AnimatedVisibility(
         visible = visible,
@@ -75,27 +74,23 @@ fun FloatingNavigationBar(
     ) {
         Surface(
             modifier = Modifier
-                .padding(horizontal = 48.dp, vertical = 8.dp)
+                .padding(horizontal = 24.dp, vertical = 8.dp)
                 .testTag("floating_bottom_bar"),
             shape = CircleShape,
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
             tonalElevation = 4.dp,
             shadowElevation = 12.dp
         ) {
-            // The bar is a fixed-height Row. Each inactive slot is a small fixed-width
-            // circle that holds only the icon. The active slot expands to fill the
-            // remaining space and shows icon + label inside a colored pill.
             Row(
                 modifier = Modifier
-                    .height(60.dp)
-                    .padding(horizontal = 6.dp, vertical = 8.dp),
+                    .height(64.dp)
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 items.forEachIndexed { index, item ->
                     val isSelected = index == selectedIndex
                     if (isSelected) {
-                        // Active: animated wide pill — icon + label, fills remaining space
                         Box(
                             modifier = Modifier
                                 .weight(1f)
@@ -109,7 +104,7 @@ fun FloatingNavigationBar(
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 modifier = Modifier.padding(horizontal = 16.dp)
                             ) {
                                 Icon(
@@ -118,24 +113,26 @@ fun FloatingNavigationBar(
                                     tint = MaterialTheme.colorScheme.onPrimary,
                                     modifier = Modifier.size(20.dp)
                                 )
-                                Text(
-                                    text = item.label,
-                                    color = MaterialTheme.colorScheme.onPrimary,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1
-                                )
+                                if (showNavText) {
+                                    Text(
+                                        text = item.label,
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             }
                         }
                     } else {
-                        // Inactive: small fixed-size circle, icon only
                         Box(
                             modifier = Modifier
-                                .size(44.dp)
+                                .size(48.dp)
                                 .clip(CircleShape)
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(bounded = true, radius = 22.dp),
+                                    indication = ripple(bounded = true, radius = 24.dp),
                                     role = Role.Tab
                                 ) { onNavigate?.invoke(item.route) }
                                 .testTag("nav_item_${item.route}"),
@@ -144,7 +141,7 @@ fun FloatingNavigationBar(
                             Icon(
                                 imageVector = item.icon,
                                 contentDescription = item.label,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
                                 modifier = Modifier.size(22.dp)
                             )
                         }

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -34,8 +35,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.cloudyte.app.CloudyteApplication
+import com.cloudyte.app.ui.theme.MetricLabelTextStyle
+import com.cloudyte.app.ui.theme.MetricTextStyle
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -79,15 +81,20 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                start = 16.dp,
+                top = 16.dp,
+                end = 16.dp,
+                bottom = 16.dp + com.cloudyte.app.ui.components.LocalBottomBarInset.current
+            ),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             item {
                 Text("Diagnostics contain redacted state only. Credentials, raw file names, URLs, and file contents are excluded.", style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(8.dp))
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("Command summary", fontWeight = FontWeight.SemiBold)
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Command summary", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                         SummaryRow("Started", snapshot.started.toString())
                         SummaryRow("Retried", snapshot.retried.toString())
                         SummaryRow("Paused", snapshot.paused.toString())
@@ -98,28 +105,37 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                 }
             }
             if (snapshot.events.isEmpty()) {
-                item { Text("No transfer events recorded in this app session.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                item { Text("No transfer events recorded in this app session.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             } else {
-                item { Text("Recent events", fontWeight = FontWeight.SemiBold) }
+                item { Text("Recent events", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold) }
                 items(snapshot.events.asReversed(), key = { it.timestamp.toString() + it.correlationId }) { event ->
                     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
-                        Column(Modifier.padding(12.dp)) {
-                            Text(event.operationType, fontWeight = FontWeight.SemiBold)
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(event.operationType, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                             Text(
                                 "state=${event.state ?: "-"}  transfer=${event.transferId ?: "-"}  retry=${event.retryCount}",
-                                fontSize = 12.sp,
+                                style = MetricLabelTextStyle,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Text(
                                 "correlation=${event.correlationId}  account=${event.accountHash ?: "-"}",
-                                fontSize = 11.sp,
+                                style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
                 }
             }
-            item { Button(onClick = { clipboard.setText(AnnotatedString(report)) }, modifier = Modifier.fillMaxWidth()) { Text("Copy full report") } }
+            item {
+                Button(
+                    onClick = { clipboard.setText(AnnotatedString(report)) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                ) {
+                    Text("Copy full report")
+                }
+            }
         }
     }
 }
@@ -127,8 +143,8 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
 @Composable
 private fun SummaryRow(label: String, value: String) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, fontWeight = FontWeight.Medium)
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MetricTextStyle, fontWeight = FontWeight.Medium)
     }
 }
 

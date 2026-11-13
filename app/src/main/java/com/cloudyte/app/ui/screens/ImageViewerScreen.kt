@@ -44,7 +44,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
 import androidx.navigation.NavController
 import kotlin.math.absoluteValue
@@ -161,7 +160,12 @@ fun ImageViewerScreen(
 
     Scaffold(
         containerColor = Color.Black,
-        snackbarHost = { SnackbarHost(snackbarHostState) }
+        snackbarHost = {
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier.navigationBarsPadding()
+            )
+        }
     ) { paddingValues ->
         Box(
             modifier = Modifier
@@ -171,7 +175,11 @@ fun ImageViewerScreen(
         ) {
             if (displayedFiles.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("No media files available", color = TextSecondary, fontSize = 16.sp)
+                    Text(
+                        text = "No media files available",
+                        color = Color.White.copy(alpha = 0.7f),
+                        style = MaterialTheme.typography.bodyLarge
+                    )
                 }
             } else {
                 HorizontalPager(
@@ -304,42 +312,44 @@ fun ImageViewerScreen(
                             IconButton(
                                 onClick = { navController.popBackStack() },
                                 modifier = Modifier
-                                    .background(Color.Black.copy(alpha = 0.4f), CircleShape)
-                                    .size(40.dp)
+                                    .size(48.dp)
+                                    .background(Color.Black.copy(alpha = 0.45f), CircleShape)
                             ) {
                                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
                             }
-                            Spacer(modifier = Modifier.width(12.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
                             Column {
                                 Text(
                                     text = currentFile?.effectiveName ?: "Media Preview",
-                                    color = TextPrimary,
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.SemiBold,
-                                    fontSize = 15.sp,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 if (currentFile != null) {
                                     Text(
                                         text = "${currentFile.formattedSize} • ${currentFile.effectiveType.uppercase()} • ${pagerState.currentPage + 1} of ${displayedFiles.size}",
-                                        color = TextSecondary,
-                                        fontSize = 12.sp
+                                        color = Color.White.copy(alpha = 0.72f),
+                                        style = MetricLabelTextStyle
                                     )
                                 }
                             }
                         }
 
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
                             if (currentScale > 1.05f) {
                                 IconButton(
                                     onClick = { currentScale = 1f },
                                     modifier = Modifier
-                                        .background(Color.Black.copy(alpha = 0.4f), CircleShape)
-                                        .size(38.dp)
+                                        .size(48.dp)
+                                        .background(Color.Black.copy(alpha = 0.45f), CircleShape)
                                 ) {
                                     Icon(Icons.Default.ZoomOutMap, contentDescription = "Reset Zoom", tint = Color.White)
                                 }
-                                Spacer(modifier = Modifier.width(6.dp))
                             }
 
                             // Share Action
@@ -356,12 +366,11 @@ fun ImageViewerScreen(
                                     }
                                 },
                                 modifier = Modifier
-                                    .background(Color.Black.copy(alpha = 0.4f), CircleShape)
-                                    .size(38.dp)
+                                    .size(48.dp)
+                                    .background(Color.Black.copy(alpha = 0.45f), CircleShape)
                             ) {
                                 Icon(Icons.Default.Share, contentDescription = "Share", tint = Color.White)
                             }
-                            Spacer(modifier = Modifier.width(6.dp))
 
                             // Download Action
                             IconButton(
@@ -374,20 +383,19 @@ fun ImageViewerScreen(
                                     }
                                 },
                                 modifier = Modifier
-                                    .background(Color.Black.copy(alpha = 0.4f), CircleShape)
-                                    .size(38.dp)
+                                    .size(48.dp)
+                                    .background(Color.Black.copy(alpha = 0.45f), CircleShape)
                             ) {
                                 Icon(Icons.Default.Download, contentDescription = "Download", tint = Color.White)
                             }
-                            Spacer(modifier = Modifier.width(6.dp))
 
                             // More Menu
                             Box {
                                 IconButton(
                                     onClick = { showMoreMenu = true },
                                     modifier = Modifier
-                                        .background(Color.Black.copy(alpha = 0.4f), CircleShape)
-                                        .size(38.dp)
+                                        .size(48.dp)
+                                        .background(Color.Black.copy(alpha = 0.45f), CircleShape)
                                 ) {
                                     Icon(Icons.Default.MoreVert, contentDescription = "More Options", tint = Color.White)
                                 }
@@ -400,16 +408,16 @@ fun ImageViewerScreen(
                                     val cf = currentFile
                                     if (cf != null) {
                                         DropdownMenuItem(
-                                            text = { Text("Open in File Details", color = TextPrimary) },
-                                            leadingIcon = { Icon(Icons.Default.Info, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(18.dp)) },
+                                            text = { Text("Open in File Details", color = MaterialTheme.colorScheme.onSurface) },
+                                            leadingIcon = { Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) },
                                             onClick = {
                                                 showMoreMenu = false
                                                 navController.navigate("file_detail/$accountId/${cf.effectiveId}")
                                             }
                                         )
                                         DropdownMenuItem(
-                                            text = { Text("Move to...", color = TextPrimary) },
-                                            leadingIcon = { Icon(Icons.Default.DriveFileMove, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(18.dp)) },
+                                            text = { Text("Move to...", color = MaterialTheme.colorScheme.onSurface) },
+                                            leadingIcon = { Icon(Icons.Default.DriveFileMove, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) },
                                             onClick = {
                                                 showMoreMenu = false
                                                 isMoveAction = true
@@ -417,18 +425,18 @@ fun ImageViewerScreen(
                                             }
                                         )
                                         DropdownMenuItem(
-                                            text = { Text("Copy to...", color = TextPrimary) },
-                                            leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(18.dp)) },
+                                            text = { Text("Copy to...", color = MaterialTheme.colorScheme.onSurface) },
+                                            leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) },
                                             onClick = {
                                                 showMoreMenu = false
                                                 isMoveAction = false
                                                 showMoveCopyDialog = true
                                             }
                                         )
-                                        HorizontalDivider(color = Color(0xFF2C2C3E))
+                                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                                         DropdownMenuItem(
-                                            text = { Text(if (filterMediaOnly) "Show All Files (${allFilesInFolder.size})" else "Media Only Filter", color = TextSecondary) },
-                                            leadingIcon = { Icon(if (filterMediaOnly) Icons.Default.Folder else Icons.Default.Image, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(18.dp)) },
+                                            text = { Text(if (filterMediaOnly) "Show All Files (${allFilesInFolder.size})" else "Media Only Filter", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                            leadingIcon = { Icon(if (filterMediaOnly) Icons.Default.Folder else Icons.Default.Image, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp)) },
                                             onClick = {
                                                 showMoreMenu = false
                                                 filterMediaOnly = !filterMediaOnly
@@ -516,7 +524,7 @@ fun ImageViewerScreen(
                                                 else -> Icons.AutoMirrored.Filled.InsertDriveFile
                                             },
                                             contentDescription = null,
-                                            tint = if (isSelected) AccentBlue else TextSecondary,
+                                            tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                             modifier = Modifier.size(24.dp)
                                         )
                                     }
@@ -529,8 +537,8 @@ fun ImageViewerScreen(
                         // Page Counter Indicator
                         Text(
                             text = "${pagerState.currentPage + 1} / ${displayedFiles.size}",
-                            color = Color.White.copy(alpha = 0.7f),
-                            fontSize = 12.sp,
+                            color = Color.White.copy(alpha = 0.72f),
+                            style = MetricLabelTextStyle,
                             fontWeight = FontWeight.Medium
                         )
                     }
@@ -676,25 +684,26 @@ private fun MediaPageContent(
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     com.cloudyte.app.ui.components.AppLoadingIndicator(size = 32.dp, color = MaterialTheme.colorScheme.primary)
                                     Spacer(modifier = Modifier.height(12.dp))
-                                    Text("Loading image...", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                                    Text("Loading image...", color = Color.White.copy(alpha = 0.72f), style = MaterialTheme.typography.bodySmall)
                                 }
                             }
                         }
                         is AsyncImagePainter.State.Error -> {
                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
-                                    Icon(Icons.Default.BrokenImage, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(56.dp))
+                                    Icon(Icons.Default.BrokenImage, contentDescription = null, tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(56.dp))
                                     Spacer(modifier = Modifier.height(12.dp))
-                                    Text("Failed to load image preview", color = TextSecondary, fontSize = 14.sp)
+                                    Text("Failed to load image preview", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodyMedium)
                                     Spacer(modifier = Modifier.height(16.dp))
                                     Button(
                                         onClick = {
                                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(fileUrl))
                                             context.startActivity(intent)
                                         },
-                                        colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
+                                        modifier = Modifier.heightIn(min = 48.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                                     ) {
-                                        Text("Open in Browser", color = Color.White)
+                                        Text("Open in Browser", color = MaterialTheme.colorScheme.onPrimary)
                                     }
                                 }
                             }
@@ -732,7 +741,7 @@ private fun MediaPageContent(
                                 .fillMaxWidth()
                                 .height(200.dp)
                                 .clip(MaterialTheme.shapes.large)
-                                .background(Color(0xFF1E1E2E)),
+                                .background(MaterialTheme.colorScheme.surfaceContainerHighest),
                             contentAlignment = Alignment.Center
                         ) {
                             val videoThumbUrl = ApiClient.getFileUrl(accountId, file.effectiveId, preview = true)
@@ -745,39 +754,41 @@ private fun MediaPageContent(
                             Box(
                                 modifier = Modifier
                                     .size(68.dp)
-                                    .background(AccentBlue, CircleShape)
+                                    .background(MaterialTheme.colorScheme.primary, CircleShape)
                                     .clickable {
                                         navController.navigate("video_player/$accountId/${file.effectiveId}")
                                     },
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(Icons.Default.PlayArrow, contentDescription = "Play Video", tint = Color.White, modifier = Modifier.size(38.dp))
+                                Icon(Icons.Default.PlayArrow, contentDescription = "Play Video", tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(38.dp))
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(20.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
                         Text(
                             text = file.effectiveName,
-                            color = TextPrimary,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 17.sp,
                             textAlign = TextAlign.Center,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             text = "${file.formattedSize} • Video",
-                            color = TextSecondary,
-                            fontSize = 13.sp
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MetricLabelTextStyle
                         )
-                        Spacer(modifier = Modifier.height(20.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
 
                         Button(
                             onClick = { navController.navigate("video_player/$accountId/${file.effectiveId}") },
-                            colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                             shape = MaterialTheme.shapes.medium,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
                         ) {
                             Icon(Icons.Default.PlayCircle, contentDescription = null, modifier = Modifier.size(20.dp))
                             Spacer(modifier = Modifier.width(8.dp))
@@ -805,36 +816,33 @@ private fun MediaPageContent(
                         .fillMaxWidth(0.9f)
                 ) {
                     Column(
-                        modifier = Modifier.padding(28.dp),
+                        modifier = Modifier.padding(24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Box(
                             modifier = Modifier
                                 .size(110.dp)
-                                .background(
-                                    Brush.linearGradient(listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.primary)),
-                                    CircleShape
-                                ),
+                                .background(MaterialTheme.colorScheme.primary, CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Default.Audiotrack, contentDescription = null, tint = Color.White, modifier = Modifier.size(54.dp))
+                            Icon(Icons.Default.Audiotrack, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(54.dp))
                         }
 
-                        Spacer(modifier = Modifier.height(20.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
                         Text(
                             text = file.effectiveName,
-                            color = TextPrimary,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 17.sp,
                             textAlign = TextAlign.Center,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             text = "${file.formattedSize} • Audio Track",
-                            color = TextSecondary,
-                            fontSize = 13.sp
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MetricLabelTextStyle
                         )
                         Spacer(modifier = Modifier.height(24.dp))
 
@@ -842,7 +850,9 @@ private fun MediaPageContent(
                             onClick = { navController.navigate("audio_player/$accountId/${file.effectiveId}") },
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                             shape = MaterialTheme.shapes.medium,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
                         ) {
                             Icon(Icons.Default.PlayArrow, contentDescription = null)
                             Spacer(modifier = Modifier.width(8.dp))
@@ -870,44 +880,46 @@ private fun MediaPageContent(
                         .fillMaxWidth(0.9f)
                 ) {
                     Column(
-                        modifier = Modifier.padding(28.dp),
+                        modifier = Modifier.padding(24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Box(
                             modifier = Modifier
                                 .size(90.dp)
-                                .background(Color(0xFFE53935).copy(alpha = 0.15f), CircleShape),
+                                .background(FilePdf.copy(alpha = 0.15f), CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = Color(0xFFE53935), modifier = Modifier.size(46.dp))
+                            Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = FilePdf, modifier = Modifier.size(46.dp))
                         }
 
-                        Spacer(modifier = Modifier.height(20.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
                         Text(
                             text = file.effectiveName,
-                            color = TextPrimary,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 17.sp,
                             textAlign = TextAlign.Center,
                             maxLines = 2
                         )
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             text = "${file.formattedSize} • PDF Document",
-                            color = TextSecondary,
-                            fontSize = 13.sp
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MetricLabelTextStyle
                         )
                         Spacer(modifier = Modifier.height(24.dp))
 
                         Button(
                             onClick = { navController.navigate("pdf_viewer/$accountId/${file.effectiveId}") },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935)),
+                            colors = ButtonDefaults.buttonColors(containerColor = FilePdf, contentColor = Color.White),
                             shape = MaterialTheme.shapes.medium,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
                         ) {
                             Icon(Icons.Default.MenuBook, contentDescription = null)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Open in PDF Viewer", color = Color.White, fontWeight = FontWeight.SemiBold)
+                            Text("Open in PDF Viewer", fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }
@@ -931,7 +943,7 @@ private fun MediaPageContent(
                         .fillMaxWidth(0.9f)
                 ) {
                     Column(
-                        modifier = Modifier.padding(28.dp),
+                        modifier = Modifier.padding(24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Box(
@@ -943,20 +955,20 @@ private fun MediaPageContent(
                             Icon(Icons.Default.Code, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(46.dp))
                         }
 
-                        Spacer(modifier = Modifier.height(20.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
                         Text(
                             text = file.effectiveName,
-                            color = TextPrimary,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 17.sp,
                             textAlign = TextAlign.Center,
                             maxLines = 2
                         )
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             text = "${file.formattedSize} • Text / Code Document",
-                            color = TextSecondary,
-                            fontSize = 13.sp
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MetricLabelTextStyle
                         )
                         Spacer(modifier = Modifier.height(24.dp))
 
@@ -964,11 +976,13 @@ private fun MediaPageContent(
                             onClick = { navController.navigate("text_editor/$accountId/${file.effectiveId}") },
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                             shape = MaterialTheme.shapes.medium,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
                         ) {
                             Icon(Icons.Default.EditNote, contentDescription = null)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Open in Text Editor", color = Color.White, fontWeight = FontWeight.SemiBold)
+                            Text("Open in Text Editor", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }
@@ -992,7 +1006,7 @@ private fun MediaPageContent(
                         .fillMaxWidth(0.9f)
                 ) {
                     Column(
-                        modifier = Modifier.padding(28.dp),
+                        modifier = Modifier.padding(24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Box(
@@ -1001,23 +1015,23 @@ private fun MediaPageContent(
                                 .background(MaterialTheme.colorScheme.surfaceContainerHighest, CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.AutoMirrored.Filled.InsertDriveFile, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(46.dp))
+                            Icon(Icons.AutoMirrored.Filled.InsertDriveFile, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(46.dp))
                         }
 
-                        Spacer(modifier = Modifier.height(20.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
                         Text(
                             text = file.effectiveName,
-                            color = TextPrimary,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 17.sp,
                             textAlign = TextAlign.Center,
                             maxLines = 2
                         )
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             text = "${file.formattedSize} • ${file.effectiveType.uppercase()}",
-                            color = TextSecondary,
-                            fontSize = 13.sp
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MetricLabelTextStyle
                         )
                         Spacer(modifier = Modifier.height(24.dp))
 
@@ -1025,7 +1039,9 @@ private fun MediaPageContent(
                             onClick = { navController.navigate("file_detail/$accountId/${file.effectiveId}") },
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                             shape = MaterialTheme.shapes.medium,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
                         ) {
                             Icon(Icons.Default.Info, contentDescription = null)
                             Spacer(modifier = Modifier.width(8.dp))

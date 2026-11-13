@@ -27,7 +27,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -42,9 +41,7 @@ import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.api.CloudFile
 import com.cloudyte.app.api.FileRepository
 import com.cloudyte.app.api.OfflineFileManager
-import com.cloudyte.app.ui.theme.AccentBlue
-import com.cloudyte.app.ui.theme.TextPrimary
-import com.cloudyte.app.ui.theme.TextSecondary
+import com.cloudyte.app.ui.theme.MetricLabelTextStyle
 import kotlinx.coroutines.delay
 import java.util.Locale
 
@@ -212,12 +209,13 @@ fun VideoPlayerScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .heightIn(min = 48.dp)
                                 .clickable {
                                     playbackSpeed = speed
                                     exoPlayer.setPlaybackSpeed(speed)
                                     showSpeedDialog = false
                                 }
-                                .padding(vertical = 12.dp),
+                                .padding(vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             RadioButton(
@@ -227,13 +225,13 @@ fun VideoPlayerScreen(
                                     exoPlayer.setPlaybackSpeed(speed)
                                     showSpeedDialog = false
                                 },
-                                colors = RadioButtonDefaults.colors(selectedColor = AccentBlue)
+                                colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = if (speed == 1f) "Normal (1x)" else "${speed}x",
-                                color = TextPrimary,
-                                fontSize = 16.sp
+                                color = MaterialTheme.colorScheme.onSurface,
+                                style = MaterialTheme.typography.bodyLarge
                             )
                         }
                     }
@@ -338,41 +336,40 @@ fun VideoPlayerScreen(
                             IconButton(
                                 onClick = { navController.popBackStack() },
                                 modifier = Modifier
-                                    .background(Color.Black.copy(alpha = 0.4f), CircleShape)
-                                    .size(40.dp)
+                                    .size(48.dp)
+                                    .background(Color.Black.copy(alpha = 0.45f), CircleShape)
                             ) {
                                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
                             }
-                            Spacer(modifier = Modifier.width(12.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
                             Column {
                                 Text(
                                     text = fileName,
-                                    color = TextPrimary,
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.SemiBold,
-                                    fontSize = 15.sp,
                                     maxLines = 1
                                 )
                                 if (file != null) {
                                     val countStr = if (videoList.size > 1) " • (${currentVideoIndex + 1}/${videoList.size})" else ""
                                     Text(
                                         text = "${file.formattedSize}$countStr",
-                                        color = TextSecondary,
-                                        fontSize = 12.sp
+                                        color = Color.White.copy(alpha = 0.72f),
+                                        style = MetricLabelTextStyle
                                     )
                                 }
                             }
                         }
 
-                        Row {
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             IconButton(
                                 onClick = { showSpeedDialog = true },
                                 modifier = Modifier
-                                    .background(Color.Black.copy(alpha = 0.4f), CircleShape)
-                                    .size(40.dp)
+                                    .size(48.dp)
+                                    .background(Color.Black.copy(alpha = 0.45f), CircleShape)
                             ) {
                                 Icon(Icons.Default.Speed, contentDescription = "Speed", tint = Color.White)
                             }
-                            Spacer(modifier = Modifier.width(8.dp))
                             IconButton(
                                 onClick = {
                                     resizeMode = when (resizeMode) {
@@ -382,20 +379,19 @@ fun VideoPlayerScreen(
                                     }
                                 },
                                 modifier = Modifier
-                                    .background(Color.Black.copy(alpha = 0.4f), CircleShape)
-                                    .size(40.dp)
+                                    .size(48.dp)
+                                    .background(Color.Black.copy(alpha = 0.45f), CircleShape)
                             ) {
                                 Icon(Icons.Default.AspectRatio, contentDescription = "Aspect Ratio", tint = Color.White)
                             }
-                            Spacer(modifier = Modifier.width(8.dp))
                             IconButton(
                                 onClick = {
                                     val intent = Intent(Intent.ACTION_VIEW, Uri.parse(videoUrl))
                                     context.startActivity(intent)
                                 },
                                 modifier = Modifier
-                                    .background(Color.Black.copy(alpha = 0.4f), CircleShape)
-                                    .size(40.dp)
+                                    .size(48.dp)
+                                    .background(Color.Black.copy(alpha = 0.45f), CircleShape)
                             ) {
                                 Icon(Icons.Default.Download, contentDescription = "Download", tint = Color.White)
                             }
@@ -407,7 +403,7 @@ fun VideoPlayerScreen(
                 Row(
                     modifier = Modifier.align(Alignment.Center),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(20.dp)
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     if (videoList.size > 1) {
                         IconButton(
@@ -418,7 +414,7 @@ fun VideoPlayerScreen(
                             },
                             enabled = currentVideoIndex > 0,
                             modifier = Modifier
-                                .size(44.dp)
+                                .size(48.dp)
                                 .background(Color.Black.copy(alpha = if (currentVideoIndex > 0) 0.6f else 0.2f), CircleShape)
                         ) {
                             Icon(Icons.Default.SkipPrevious, contentDescription = "Previous Video", tint = if (currentVideoIndex > 0) Color.White else Color.Gray)
@@ -448,12 +444,12 @@ fun VideoPlayerScreen(
                         },
                         modifier = Modifier
                             .size(72.dp)
-                            .background(AccentBlue, CircleShape)
+                            .background(MaterialTheme.colorScheme.primary, CircleShape)
                     ) {
                         Icon(
                             imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                             contentDescription = if (isPlaying) "Pause" else "Play",
-                            tint = Color.White,
+                            tint = MaterialTheme.colorScheme.onPrimary,
                             modifier = Modifier.size(40.dp)
                         )
                     }
@@ -480,7 +476,7 @@ fun VideoPlayerScreen(
                             },
                             enabled = currentVideoIndex < videoList.size - 1,
                             modifier = Modifier
-                                .size(44.dp)
+                                .size(48.dp)
                                 .background(Color.Black.copy(alpha = if (currentVideoIndex < videoList.size - 1) 0.6f else 0.2f), CircleShape)
                         ) {
                             Icon(Icons.Default.SkipNext, contentDescription = "Next Video", tint = if (currentVideoIndex < videoList.size - 1) Color.White else Color.Gray)
@@ -524,8 +520,8 @@ fun VideoPlayerScreen(
                                 }
                             },
                             colors = SliderDefaults.colors(
-                                thumbColor = AccentBlue,
-                                activeTrackColor = AccentBlue,
+                                thumbColor = MaterialTheme.colorScheme.primary,
+                                activeTrackColor = MaterialTheme.colorScheme.primary,
                                 inactiveTrackColor = Color.White.copy(alpha = 0.3f)
                             ),
                             modifier = Modifier.fillMaxWidth()
@@ -538,13 +534,13 @@ fun VideoPlayerScreen(
                             Text(
                                 text = formatTime(currentPosition),
                                 color = Color.White,
-                                fontSize = 13.sp,
+                                style = MetricLabelTextStyle,
                                 fontWeight = FontWeight.Medium
                             )
                             Text(
                                 text = formatTime(duration),
-                                color = TextSecondary,
-                                fontSize = 13.sp,
+                                color = Color.White.copy(alpha = 0.72f),
+                                style = MetricLabelTextStyle,
                                 fontWeight = FontWeight.Medium
                             )
                         }

@@ -33,6 +33,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
@@ -95,7 +96,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -108,6 +108,8 @@ import com.cloudyte.app.db.AppDatabase
 import com.cloudyte.app.db.LocalAccount
 import com.cloudyte.app.ui.components.AppLoadingIndicator
 import com.cloudyte.app.ui.components.LocalBottomBarInset
+import com.cloudyte.app.ui.theme.MetricLabelTextStyle
+import com.cloudyte.app.ui.theme.MetricTextStyle
 import com.cloudyte.app.ui.theme.ProviderGoogle
 import com.cloudyte.app.ui.theme.ProviderOneDrive
 import com.cloudyte.app.ui.theme.ProviderTelegram
@@ -225,7 +227,8 @@ private sealed interface AccountsScreenUiState {
 fun AccountsScreen(
     navController: NavController,
     rootNavController: NavController,
-    viewModel: AccountsViewModel = viewModel()
+    viewModel: AccountsViewModel = viewModel(),
+    onBack: (() -> Unit)? = null
 ) {
     val accounts by viewModel.accounts.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
@@ -384,7 +387,12 @@ fun AccountsScreen(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        snackbarHost = {
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier.padding(bottom = LocalBottomBarInset.current)
+            )
+        },
         topBar = {
             TopAppBar(
                 title = {
@@ -395,7 +403,17 @@ fun AccountsScreen(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                 },
-                navigationIcon = { /* No back arrow on top-level tab */ },
+                navigationIcon = {
+                    if (onBack != null) {
+                        IconButton(onClick = onBack) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = stringResource(R.string.action_back),
+                                tint = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                },
                 actions = {
                     IconButton(onClick = { viewModel.loadAccounts() }) {
                         if (isRefreshing) {
@@ -419,6 +437,7 @@ fun AccountsScreen(
         floatingActionButton = {
             FloatingActionButtonMenu(
                 expanded = fabMenuExpanded,
+                modifier = Modifier.padding(bottom = LocalBottomBarInset.current),
                 button = {
                     ToggleFloatingActionButton(
                         checked = fabMenuExpanded,
@@ -641,7 +660,7 @@ fun AccountCard(
                             modifier = Modifier.weight(1f, fill = false)
                         )
                         if (account.isDefault == true) {
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
                             Surface(
                                 color = MaterialTheme.colorScheme.primaryContainer,
                                 shape = MaterialTheme.shapes.extraSmall
@@ -649,9 +668,9 @@ fun AccountCard(
                                 Text(
                                     text = "Default",
                                     color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    fontSize = 11.sp,
+                                    style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                                 )
                             }
                         }
@@ -727,70 +746,76 @@ fun AccountCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             // Storage Section
             if (isTelegram) {
-                // Telegram is unlimited storage
-                val usageFormatted = if (account.usageBytes > 0L) formatBytes(account.usageBytes) else "61.4 MB"
+                val usageFormatted = formatBytes(account.usageBytes)
                 Text(
                     text = "$usageFormatted used · Unlimited",
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MetricTextStyle,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             } else {
-                // Google Drive / OneDrive bounded storage
                 val usageText = formatBytes(account.usageBytes)
-                val totalText = if (account.totalBytes > 0L) formatBytes(account.totalBytes) else "10.0 TB"
-                val percentText = String.format(Locale.US, "%.1f%%", percent.coerceIn(0f, 100f))
+                if (account.totalBytes > 0L) {
+                    val totalText = formatBytes(account.totalBytes)
+                    val percentText = String.format(Locale.US, "%.1f%%", percent.coerceIn(0f, 100f))
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "$usageText used of $totalText",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "$usageText used of $totalText",
+                            style = MetricTextStyle,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = percentText,
+                            style = MetricLabelTextStyle,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    val indicatorColor = if (percent >= 90f) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    }
+
+                    LinearProgressIndicator(
+                        progress = { animatedProgress },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(CircleShape),
+                        color = indicatorColor,
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                        strokeCap = StrokeCap.Round
                     )
+                } else {
                     Text(
-                        text = percentText,
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold,
+                        text = "$usageText used",
+                        style = MetricTextStyle,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                val indicatorColor = if (percent >= 90f) {
-                    MaterialTheme.colorScheme.error
-                } else {
-                    MaterialTheme.colorScheme.primary
-                }
-
-                LinearProgressIndicator(
-                    progress = { animatedProgress },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(8.dp)
-                        .clip(CircleShape),
-                    color = indicatorColor,
-                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                    strokeCap = StrokeCap.Round
-                )
             }
 
             // Error Chip if account has error
             if (isAccountError) {
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(MaterialTheme.shapes.small)
                         .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f))
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -801,7 +826,7 @@ fun AccountCard(
                             tint = MaterialTheme.colorScheme.error,
                             modifier = Modifier.size(16.dp)
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = "Disconnected",
                             color = MaterialTheme.colorScheme.error,
@@ -811,9 +836,13 @@ fun AccountCard(
                     }
                     TextButton(
                         onClick = onReconnect,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
                     ) {
-                        Text("Reconnect", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                        Text(
+                            text = "Reconnect",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
                     }
                 }
             }
@@ -900,7 +929,7 @@ fun AccountsErrorState(message: String, onRetry: () -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center
         )
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(24.dp))
         Button(
             onClick = onRetry,
             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)

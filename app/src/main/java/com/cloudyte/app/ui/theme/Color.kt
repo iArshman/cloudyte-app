@@ -43,14 +43,14 @@ val LightSurfaceContainerHigh = Color(0xFFEDEFFF)
 val LightSurfaceContainerHighest = Color(0xFFE6E8F4)
 val LightSurfaceVariant = Color(0xFFE8EAFE)
 val LightOnSurface = Color(0xFF14186B) // deep navy
-val LightOnSurfaceVariant = Color(0xFF8B90B5) // secondary text
-val LightOutline = Color(0xFF8B90B5)
+val LightOnSurfaceVariant = Color(0xFF5F658B) // accessible secondary text (>= 4.5:1 on white)
+val LightOutline = Color(0xFF7B81A8)
 val LightOutlineVariant = Color(0xFFE6E8F4)
 val LightPrimary = BrandPrimary // #4F5BF5
 val LightOnPrimary = Color(0xFFFFFFFF)
 val LightPrimaryContainer = Color(0xFFE8EAFE)
 val LightOnPrimaryContainer = Color(0xFF2B33B5)
-val LightSecondary = Color(0xFF8B90B5)
+val LightSecondary = Color(0xFF5F658B)
 val LightSecondaryContainer = Color(0xFFE8EAFE)
 val LightOnSecondaryContainer = Color(0xFF14186B)
 val LightError = Color(0xFFE5484D)
@@ -58,7 +58,7 @@ val LightErrorContainer = Color(0xFFFFEBEE)
 val LightOnError = Color(0xFFFFFFFF)
 val LightOnErrorContainer = Color(0xFFB71C1C)
 
-// File-type colors
+// File-type & Storage Category colors
 val FileVideo = Color(0xFFF0584F) // video/media red
 val FilePdf = Color(0xFFF0584F) // pdf red
 val FileDoc = Color(0xFFF5B63F) // documents amber
@@ -67,6 +67,13 @@ val FileCode = Color(0xFF5BC98A) // other / code green
 val FileAudio = Color(0xFF5BC98A) // audio green
 val FileImage = Color(0xFF4F5BF5) // images blue
 val FileUnknown = Color(0xFFBFC3DC) // unknown gray
+
+val CategoryImages = Color(0xFF3B66F5)
+val CategoryDocuments = Color(0xFFF6B93B)
+val CategoryMedia = Color(0xFFEB5757)
+val CategoryOther = Color(0xFF56C596)
+val CategoryZipped = Color(0xFF9B51E0)
+val CategoryUnknown = Color(0xFFB0B7D1)
 
 // Cloud Storage Provider Colors
 val ProviderGoogle = Color(0xFF4285F4)

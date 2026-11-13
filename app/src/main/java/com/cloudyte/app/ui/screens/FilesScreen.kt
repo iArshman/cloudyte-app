@@ -70,6 +70,8 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -120,7 +122,6 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -136,6 +137,7 @@ import com.cloudyte.app.api.RenameRequest
 import com.cloudyte.app.CloudyteApplication
 import com.cloudyte.app.core.transfer.TransferCommand
 import com.cloudyte.app.data.CloudFileRepository
+import com.cloudyte.app.data.FileCryptoActions
 import com.cloudyte.app.data.SortDirection
 import com.cloudyte.app.data.SortField
 import com.cloudyte.app.data.UserPreferences
@@ -149,6 +151,7 @@ import com.cloudyte.app.ui.components.FileThumb
 import com.cloudyte.app.ui.components.LocalBottomBarInset
 import com.cloudyte.app.ui.navigation.NavigationTransitions
 import com.cloudyte.app.ui.openFileInViewer
+import com.cloudyte.app.ui.theme.MetricLabelTextStyle
 import com.cloudyte.app.ui.theme.ProviderGoogle
 import com.cloudyte.app.ui.theme.ProviderOneDrive
 import com.cloudyte.app.ui.theme.ProviderTelegram
@@ -488,6 +491,59 @@ class FilesViewModel(
 
     fun enqueueFileUpload(uri: Uri) {
         enqueueUploadUris(listOf(uri))
+    }
+
+    fun createEncryptedCopy(targetFile: CloudFile) {
+        viewModelScope.launch {
+            val accId = targetFile.effectiveAccountId.ifBlank {
+                currentAccountId.value
+                    ?: accounts.value.firstOrNull { it.isDefault == true }?.effectiveId
+                    ?: accounts.value.firstOrNull()?.effectiveId
+                    ?: ""
+            }
+            val app = getApplication<Application>() as? CloudyteApplication ?: return@launch
+            try {
+                val feedback = FileCryptoActions.createEncryptedCopy(
+                    context = app,
+                    accountId = accId,
+                    targetFile = targetFile,
+                    fallbackParentFolderId = currentFolderId.value,
+                    hasExplicitParentFolderId = true,
+                    cloudFileRepository = repo,
+                    transferRepository = app.container.transferRepository,
+                    transferCoordinator = app.container.transferCoordinator
+                )
+                _userEvents.emit(feedback)
+            } catch (e: Exception) {
+                Log.e("FilesViewModel", "Encrypt copy failed", e)
+                _userEvents.emit(e.message ?: "Could not queue encrypted copy")
+            }
+        }
+    }
+
+    fun decryptAndExportFile(targetFile: CloudFile) {
+        viewModelScope.launch {
+            val accId = targetFile.effectiveAccountId.ifBlank {
+                currentAccountId.value
+                    ?: accounts.value.firstOrNull { it.isDefault == true }?.effectiveId
+                    ?: accounts.value.firstOrNull()?.effectiveId
+                    ?: ""
+            }
+            val app = getApplication<Application>() as? CloudyteApplication ?: return@launch
+            try {
+                val feedback = FileCryptoActions.decryptAndExportFile(
+                    context = app,
+                    accountId = accId,
+                    targetFile = targetFile,
+                    transferRepository = app.container.transferRepository,
+                    transferCoordinator = app.container.transferCoordinator
+                )
+                _userEvents.emit(feedback)
+            } catch (e: Exception) {
+                Log.e("FilesViewModel", "Decrypt export failed", e)
+                _userEvents.emit(e.message ?: "Failed to decrypt file")
+            }
+        }
     }
 
     fun enqueueFolderUpload(treeUri: Uri) {
@@ -889,7 +945,12 @@ fun FilesScreen(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        snackbarHost = {
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier.padding(bottom = LocalBottomBarInset.current)
+            )
+        },
         topBar = {
             Column {
             if (isSelectionMode) {
@@ -1170,11 +1231,11 @@ fun FilesScreen(
                         contentPadding = PaddingValues(
                             start = 16.dp,
                             end = 16.dp,
-                            top = 4.dp,
-                            bottom = LocalBottomBarInset.current + 130.dp
+                            top = 8.dp,
+                            bottom = LocalBottomBarInset.current + 128.dp
                         ),
-                        horizontalArrangement = Arrangement.spacedBy(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
                         // Drive & Breadcrumbs indicator row (`[Cloud] TG Drive`)
                         item(span = { GridItemSpan(maxLineSpan) }, key = "drive_breadcrumb_header") {
@@ -1221,6 +1282,7 @@ fun FilesScreen(
                                         renameInput = folder.effectiveName
                                     },
                                     onDeleteClick = { fileForDelete = folder },
+                                    onEncryptClick = { viewModel.createEncryptedCopy(folder) },
                                     modifier = Modifier.animateItem()
                                 )
                             }
@@ -1245,6 +1307,8 @@ fun FilesScreen(
                                         renameInput = file.effectiveName
                                     },
                                     onDeleteClick = { fileForDelete = file },
+                                    onEncryptClick = { viewModel.createEncryptedCopy(file) },
+                                    onDecryptExportClick = { viewModel.decryptAndExportFile(file) },
                                     modifier = Modifier.animateItem()
                                 )
                             }
@@ -1274,8 +1338,8 @@ fun FilesScreen(
                         contentPadding = PaddingValues(
                             start = 16.dp,
                             end = 16.dp,
-                            top = 4.dp,
-                            bottom = LocalBottomBarInset.current + 130.dp
+                            top = 8.dp,
+                            bottom = LocalBottomBarInset.current + 128.dp
                         ),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
@@ -1330,6 +1394,7 @@ fun FilesScreen(
                                         renameInput = folder.effectiveName
                                     },
                                     onDeleteClick = { fileForDelete = folder },
+                                    onEncryptClick = { viewModel.createEncryptedCopy(folder) },
                                     modifier = Modifier.animateItem()
                                 )
                             }
@@ -1362,6 +1427,8 @@ fun FilesScreen(
                                         renameInput = file.effectiveName
                                     },
                                     onDeleteClick = { fileForDelete = file },
+                                    onEncryptClick = { viewModel.createEncryptedCopy(file) },
+                                    onDecryptExportClick = { viewModel.decryptAndExportFile(file) },
                                     modifier = Modifier.animateItem()
                                 )
                             }
@@ -1416,9 +1483,9 @@ private fun OriginalFilesHeaderBar(
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // 1. Left Drive Avatar Button (48.dp circle with 2.dp blue border and bold initial)
+        // 1. Left Drive Avatar Button (48.dp circle with 2.dp border and bold initial)
         Box {
             Box(
                 modifier = Modifier
@@ -1432,7 +1499,7 @@ private fun OriginalFilesHeaderBar(
                 Text(
                     text = driveInitial,
                     color = MaterialTheme.colorScheme.primary,
-                    fontSize = 18.sp,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -1476,7 +1543,7 @@ private fun OriginalFilesHeaderBar(
                                 Text(
                                     text = (acc.effectiveName.firstOrNull() ?: 'D').uppercaseChar().toString(),
                                     color = providerColor,
-                                    fontSize = 12.sp,
+                                    style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -1526,7 +1593,7 @@ private fun OriginalFilesHeaderBar(
             Row(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 14.dp),
+                    .padding(start = 16.dp, end = if (searchQuery.isNotEmpty()) 4.dp else 16.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
@@ -1544,7 +1611,7 @@ private fun OriginalFilesHeaderBar(
                         Text(
                             text = "Search in...",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 15.sp,
+                            style = MaterialTheme.typography.bodyMedium,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -1553,9 +1620,8 @@ private fun OriginalFilesHeaderBar(
                         value = searchQuery,
                         onValueChange = onSearchQueryChange,
                         singleLine = true,
-                        textStyle = TextStyle(
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontSize = 15.sp
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(
+                            color = MaterialTheme.colorScheme.onSurface
                         ),
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                         modifier = Modifier.fillMaxWidth()
@@ -1564,13 +1630,13 @@ private fun OriginalFilesHeaderBar(
                 if (searchQuery.isNotEmpty()) {
                     IconButton(
                         onClick = { onSearchQueryChange("") },
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(48.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
                             contentDescription = "Clear search",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
@@ -1670,28 +1736,29 @@ private fun DriveAndBreadcrumbRow(
     LazyRow(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 6.dp),
+            .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         if (breadcrumbs.size > 1) {
             item(key = "back_button") {
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.surfaceContainer,
-                    modifier = Modifier
-                        .padding(end = 6.dp)
-                        .size(32.dp)
-                        .clip(CircleShape)
-                        .clickable { onBackClick() }
+                IconButton(
+                    onClick = onBackClick,
+                    modifier = Modifier.size(48.dp)
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.size(18.dp)
-                        )
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainer,
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back",
+                                tint = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -1705,9 +1772,10 @@ private fun DriveAndBreadcrumbRow(
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
+                    .heightIn(min = 48.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .clickable(enabled = !isLast) { onBreadcrumbClick(index) }
-                    .padding(horizontal = 4.dp, vertical = 4.dp)
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
             ) {
                 if (isRoot) {
                     Icon(
@@ -1721,8 +1789,8 @@ private fun DriveAndBreadcrumbRow(
                 Text(
                     text = label,
                     color = if (isLast) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
                     maxLines = 1
                 )
             }
@@ -1746,7 +1814,7 @@ fun OfflineBanner() {
             .fillMaxWidth()
             .clip(MaterialTheme.shapes.small)
             .background(MaterialTheme.colorScheme.surfaceContainer)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
@@ -1759,7 +1827,7 @@ fun OfflineBanner() {
         Text(
             text = "Viewing cached files (Offline)",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 12.sp
+            style = MaterialTheme.typography.labelMedium
         )
     }
 }
@@ -1776,7 +1844,8 @@ fun FolderGridItem(
     onToggleSelect: (() -> Unit)? = null,
     onClick: (() -> Unit)? = null,
     onRenameClick: (() -> Unit)? = null,
-    onDeleteClick: (() -> Unit)? = null
+    onDeleteClick: (() -> Unit)? = null,
+    onEncryptClick: (() -> Unit)? = null
 ) {
     val haptic = LocalHapticFeedback.current
     var showMenu by remember { mutableStateOf(false) }
@@ -1875,13 +1944,13 @@ fun FolderGridItem(
                 Box {
                     IconButton(
                         onClick = { showMenu = true },
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(48.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.MoreVert,
                             contentDescription = "Folder options",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(20.dp)
                         )
                     }
 
@@ -1890,6 +1959,22 @@ fun FolderGridItem(
                         onDismissRequest = { showMenu = false },
                         modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer)
                     ) {
+                        DropdownMenuItem(
+                            text = { Text("Encrypt to new folder", color = MaterialTheme.colorScheme.onSurface) },
+                            leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                            onClick = {
+                                showMenu = false
+                                onEncryptClick?.invoke()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Details", color = MaterialTheme.colorScheme.onSurface) },
+                            leadingIcon = { Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                            onClick = {
+                                showMenu = false
+                                navController.navigate("file_detail/$accountId/${folder.effectiveId}")
+                            }
+                        )
                         DropdownMenuItem(
                             text = { Text("Rename", color = MaterialTheme.colorScheme.onSurface) },
                             leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
@@ -1926,7 +2011,9 @@ fun FileGridItem(
     onToggleSelect: (() -> Unit)? = null,
     onClick: (() -> Unit)? = null,
     onRenameClick: (() -> Unit)? = null,
-    onDeleteClick: (() -> Unit)? = null
+    onDeleteClick: (() -> Unit)? = null,
+    onEncryptClick: (() -> Unit)? = null,
+    onDecryptExportClick: (() -> Unit)? = null
 ) {
     val haptic = LocalHapticFeedback.current
     var showMenu by remember { mutableStateOf(false) }
@@ -2017,7 +2104,7 @@ fun FileGridItem(
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = file.formattedSize,
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MetricLabelTextStyle,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1
                     )
@@ -2026,13 +2113,13 @@ fun FileGridItem(
                 Box {
                     IconButton(
                         onClick = { showMenu = true },
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(48.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.MoreVert,
                             contentDescription = "Options",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(20.dp)
                         )
                     }
 
@@ -2041,6 +2128,29 @@ fun FileGridItem(
                         onDismissRequest = { showMenu = false },
                         modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer)
                     ) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = if (file.isEncrypted) "Decrypt / Export" else "Create encrypted copy",
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = if (file.isEncrypted) Icons.Default.LockOpen else Icons.Default.Lock,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                if (file.isEncrypted) {
+                                    onDecryptExportClick?.invoke()
+                                } else {
+                                    onEncryptClick?.invoke()
+                                }
+                            }
+                        )
                         DropdownMenuItem(
                             text = { Text("Details", color = MaterialTheme.colorScheme.onSurface) },
                             leadingIcon = { Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
@@ -2085,7 +2195,9 @@ fun FileRow(
     onToggleSelect: (() -> Unit)? = null,
     onClick: (() -> Unit)? = null,
     onRenameClick: (() -> Unit)? = null,
-    onDeleteClick: (() -> Unit)? = null
+    onDeleteClick: (() -> Unit)? = null,
+    onEncryptClick: (() -> Unit)? = null,
+    onDecryptExportClick: (() -> Unit)? = null
 ) {
     val haptic = LocalHapticFeedback.current
     var showMenu by remember { mutableStateOf(false) }
@@ -2166,7 +2278,7 @@ fun FileRow(
                 }
                 Text(
                     text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MetricLabelTextStyle,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -2187,6 +2299,33 @@ fun FileRow(
                     onDismissRequest = { showMenu = false },
                     modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer)
                 ) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = when {
+                                    file.isEncrypted -> "Decrypt / Export"
+                                    file.isFolderItem -> "Encrypt to new folder"
+                                    else -> "Create encrypted copy"
+                                },
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = if (file.isEncrypted) Icons.Default.LockOpen else Icons.Default.Lock,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        onClick = {
+                            showMenu = false
+                            if (file.isEncrypted) {
+                                onDecryptExportClick?.invoke()
+                            } else {
+                                onEncryptClick?.invoke()
+                            }
+                        }
+                    )
                     DropdownMenuItem(
                         text = { Text("Details", color = MaterialTheme.colorScheme.onSurface) },
                         leadingIcon = { Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
@@ -2259,15 +2398,15 @@ fun FilesEmptyState(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         if (!isSearch) {
-            Spacer(modifier = Modifier.height(20.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Spacer(modifier = Modifier.height(24.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = onUploadFile,
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                 ) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Upload", fontSize = 13.sp)
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Upload", style = MaterialTheme.typography.labelLarge)
                 }
                 Button(
                     onClick = onCreateFolder,
@@ -2276,9 +2415,9 @@ fun FilesEmptyState(
                         contentColor = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 ) {
-                    Icon(Icons.Default.CreateNewFolder, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("New Folder", fontSize = 13.sp)
+                    Icon(Icons.Default.CreateNewFolder, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("New Folder", style = MaterialTheme.typography.labelLarge)
                 }
             }
         }
@@ -2317,20 +2456,20 @@ fun FilesOfflineEmptyState(
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface
         )
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         Text(
             text = "Check your connection and try again.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(24.dp))
         Button(
             onClick = onRetry,
             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
         ) {
-            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-            Spacer(modifier = Modifier.width(6.dp))
-            Text("Retry", fontSize = 13.sp)
+            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Retry", style = MaterialTheme.typography.labelLarge)
         }
     }
 }

@@ -29,15 +29,13 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.api.CloudFile
 import com.cloudyte.app.api.FileRepository
 import com.cloudyte.app.api.OfflineFileManager
-import com.cloudyte.app.ui.theme.AccentBlue
-import com.cloudyte.app.ui.theme.TextPrimary
-import com.cloudyte.app.ui.theme.TextSecondary
+import com.cloudyte.app.ui.theme.MetricLabelTextStyle
+import com.cloudyte.app.ui.theme.MetricTextStyle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -183,30 +181,30 @@ fun PdfViewerScreen(
     }
 
     Scaffold(
-        containerColor = Color(0xFF1A1A24),
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = {
                     Column {
                         Text(
                             text = fileName,
-                            color = TextPrimary,
-                            fontSize = 16.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1
                         )
                         if (pageCount > 0) {
                             Text(
                                 text = "Page ${currentPageIndex + 1} of $pageCount",
-                                color = TextSecondary,
-                                fontSize = 12.sp
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MetricLabelTextStyle
                             )
                         }
                     }
                 },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextPrimary)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.onSurface)
                     }
                 },
                 actions = {
@@ -221,7 +219,7 @@ fun PdfViewerScreen(
                             context.startActivity(Intent.createChooser(shareIntent, "Share PDF Link"))
                         }
                     }) {
-                        Icon(Icons.Default.Share, contentDescription = "Share", tint = TextPrimary)
+                        Icon(Icons.Default.Share, contentDescription = "Share", tint = MaterialTheme.colorScheme.onSurface)
                     }
                     IconButton(onClick = {
                         if (file?.isEncrypted == true) {
@@ -231,7 +229,7 @@ fun PdfViewerScreen(
                             context.startActivity(intent)
                         }
                     }) {
-                        Icon(Icons.Default.Download, contentDescription = "Download", tint = TextPrimary)
+                        Icon(Icons.Default.Download, contentDescription = "Download", tint = MaterialTheme.colorScheme.onSurface)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -253,15 +251,16 @@ fun PdfViewerScreen(
                 ) {
                     Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(56.dp))
                     Spacer(modifier = Modifier.height(16.dp))
-                    Text("Cannot preview PDF file", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
+                    Text("Cannot preview PDF file", color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text(errorMessage ?: "", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                    Text(errorMessage ?: "", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                     Spacer(modifier = Modifier.height(16.dp))
                     Button(
                         onClick = {
                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(pdfUrl))
                             context.startActivity(intent)
                         },
+                        modifier = Modifier.heightIn(min = 48.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                     ) {
                         Text("Open Externally", color = MaterialTheme.colorScheme.onPrimary)
@@ -323,8 +322,8 @@ fun PdfViewerScreen(
                         Text(
                             text = "${currentPageIndex + 1} / $pageCount",
                             color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp
+                            style = MetricTextStyle,
+                            fontWeight = FontWeight.Bold
                         )
 
                         IconButton(

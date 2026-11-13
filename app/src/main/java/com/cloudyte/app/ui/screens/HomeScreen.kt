@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -43,6 +44,11 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -53,6 +59,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
@@ -87,7 +95,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
@@ -104,6 +111,7 @@ import com.cloudyte.app.api.StorageSummary
 import com.cloudyte.app.api.UserProfile
 import com.cloudyte.app.data.ALL_ACCOUNTS_STORAGE_ID
 import com.cloudyte.app.data.CloudFileRepository
+import com.cloudyte.app.data.FileCryptoActions
 import com.cloudyte.app.data.StorageCategoryType
 import com.cloudyte.app.data.UserPreferences
 import com.cloudyte.app.data.UserPreferencesState
@@ -119,6 +127,15 @@ import com.cloudyte.app.ui.components.FileThumb
 import com.cloudyte.app.ui.components.LocalBottomBarInset
 import com.cloudyte.app.ui.openFileInViewer
 import com.cloudyte.app.ui.theme.BrandPrimary
+import com.cloudyte.app.ui.theme.CategoryDocuments
+import com.cloudyte.app.ui.theme.CategoryImages
+import com.cloudyte.app.ui.theme.CategoryMedia
+import com.cloudyte.app.ui.theme.CategoryOther
+import com.cloudyte.app.ui.theme.CategoryUnknown
+import com.cloudyte.app.ui.theme.CategoryZipped
+import com.cloudyte.app.ui.theme.MetricLabelTextStyle
+import com.cloudyte.app.ui.theme.MetricLargeTextStyle
+import com.cloudyte.app.ui.theme.MetricTextStyle
 import com.cloudyte.app.ui.theme.ProviderGoogle
 import com.cloudyte.app.ui.theme.ProviderOneDrive
 import com.cloudyte.app.ui.theme.ProviderTelegram
@@ -135,14 +152,6 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 private val EmphasizedDecelerate = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1.0f)
-
-// Category palette matching the Storage card reference design
-private val CardImagesBlue = Color(0xFF3B66F5)
-private val CardDocsAmber = Color(0xFFF6B93B)
-private val CardMediaCoral = Color(0xFFEB5757)
-private val CardOtherGreen = Color(0xFF56C596)
-private val CardZippedPurple = Color(0xFF9B51E0)
-private val CardUnknownSlate = Color(0xFFB0B7D1)
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
@@ -285,6 +294,46 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 Log.e("HomeViewModel", "Create folder error", e)
                 _errorMessage.value = e.localizedMessage ?: "Failed to create folder"
+            }
+        }
+    }
+
+    fun createEncryptedCopy(accountId: String, targetFile: CloudFile, onFeedback: (String) -> Unit) {
+        viewModelScope.launch {
+            val app = getApplication<Application>() as? com.cloudyte.app.CloudyteApplication ?: return@launch
+            try {
+                val feedback = FileCryptoActions.createEncryptedCopy(
+                    context = app,
+                    accountId = accountId,
+                    targetFile = targetFile,
+                    fallbackParentFolderId = null,
+                    cloudFileRepository = repository,
+                    transferRepository = app.container.transferRepository,
+                    transferCoordinator = app.container.transferCoordinator
+                )
+                onFeedback(feedback)
+            } catch (e: Exception) {
+                Log.e("HomeViewModel", "Encrypt copy failed", e)
+                onFeedback(e.message ?: "Could not queue encrypted copy")
+            }
+        }
+    }
+
+    fun decryptAndExportFile(accountId: String, targetFile: CloudFile, onFeedback: (String) -> Unit) {
+        viewModelScope.launch {
+            val app = getApplication<Application>() as? com.cloudyte.app.CloudyteApplication ?: return@launch
+            try {
+                val feedback = FileCryptoActions.decryptAndExportFile(
+                    context = app,
+                    accountId = accountId,
+                    targetFile = targetFile,
+                    transferRepository = app.container.transferRepository,
+                    transferCoordinator = app.container.transferCoordinator
+                )
+                onFeedback(feedback)
+            } catch (e: Exception) {
+                Log.e("HomeViewModel", "Decrypt export failed", e)
+                onFeedback(e.message ?: "Failed to decrypt file")
             }
         }
     }
@@ -443,7 +492,12 @@ fun HomeScreen(
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        snackbarHost = { androidx.compose.material3.SnackbarHost(snackbarHostState) }
+        snackbarHost = {
+            androidx.compose.material3.SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier.padding(bottom = LocalBottomBarInset.current)
+            )
+        }
     ) { innerPadding ->
         // Loading indicator pinned just below top bar
         AnimatedVisibility(
@@ -463,65 +517,63 @@ fun HomeScreen(
                 .fillMaxSize()
                 .padding(innerPadding),
             contentPadding = PaddingValues(
-                start = 20.dp,
-                end = 20.dp,
-                top = 12.dp,
+                start = 16.dp,
+                end = 16.dp,
+                top = 8.dp,
                 bottom = LocalBottomBarInset.current + 88.dp
             )
         ) {
-            // Original Dashboard Header: Welcome Back + Username + Multi-cloud drive manager + Refresh button
             item {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 4.dp, bottom = 20.dp),
+                        .padding(top = 4.dp, bottom = 16.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Welcome Back 👋",
+                            text = stringResource(R.string.home_welcome_back),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Medium
+                            style = MaterialTheme.typography.titleSmall
                         )
-                        Spacer(modifier = Modifier.height(2.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = profile?.displayUsername ?: "User",
-                            fontSize = 30.sp,
+                            text = profile?.displayUsername ?: stringResource(R.string.home_default_user),
+                            style = MaterialTheme.typography.displaySmall,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onBackground,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        Spacer(modifier = Modifier.height(2.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Multi-cloud drive manager",
+                            text = stringResource(R.string.home_subtitle),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 14.sp
+                            style = MaterialTheme.typography.bodyMedium
                         )
                     }
                     Surface(
                         shape = CircleShape,
                         color = MaterialTheme.colorScheme.primaryContainer,
                         modifier = Modifier
-                            .size(42.dp)
+                            .size(48.dp)
                             .clip(CircleShape)
                             .clickable { navController.navigateSingleTopRestore("settings") }
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
                                 imageVector = Icons.Default.Settings,
-                                contentDescription = "Settings",
+                                contentDescription = stringResource(R.string.nav_settings),
                                 tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.size(20.dp)
+                                modifier = Modifier.size(22.dp)
                             )
                         }
                     }
                 }
             }
 
-            // Storage Card (Exact segmented bar + 2x3 category breakdown from reference card)
+            // Storage Card
             item {
                 StorageOverviewCard(
                     summary = effectiveSummary,
@@ -531,7 +583,7 @@ fun HomeScreen(
                     selectedAccountId = selectedStorageAccountId,
                     onSelectAccount = { viewModel.selectStorageAccount(it) }
                 )
-                Spacer(modifier = Modifier.height(28.dp))
+                Spacer(modifier = Modifier.height(24.dp))
             }
 
             if (errorMessage != null) {
@@ -546,13 +598,13 @@ fun HomeScreen(
                         Row(
                             modifier = Modifier.padding(16.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Text(
                                 text = errorMessage ?: "",
                                 color = MaterialTheme.colorScheme.onErrorContainer,
                                 modifier = Modifier.weight(1f),
-                                fontSize = 13.sp
+                                style = MaterialTheme.typography.bodyMedium
                             )
                             Button(
                                 onClick = { viewModel.loadData(forceStorageRefresh = true) },
@@ -562,12 +614,12 @@ fun HomeScreen(
                             ) {
                                 Text(
                                     text = stringResource(R.string.action_retry),
-                                    fontSize = 12.sp
+                                    style = MaterialTheme.typography.labelLarge
                                 )
                             }
                         }
                     }
-                    Spacer(modifier = Modifier.height(20.dp))
+                    Spacer(modifier = Modifier.height(24.dp))
                 }
             }
 
@@ -575,8 +627,7 @@ fun HomeScreen(
             item {
                 Text(
                     text = stringResource(R.string.home_quick_actions),
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 Spacer(modifier = Modifier.height(16.dp))
@@ -584,31 +635,41 @@ fun HomeScreen(
                     onUploadClick = { filePickerLauncher.launch(arrayOf("*/*")) },
                     onNewFolderClick = { showCreateFolderDialog = true },
                     onSearchClick = { navController.navigateSingleTopRestore("files") },
-                    onDrivesClick = { navController.navigateSingleTopRestore("settings") }
+                    onDrivesClick = { navController.navigateSingleTopRestore("accounts") }
                 )
             }
 
             if (prefsState.showRecentFiles && recentFiles.isNotEmpty()) {
                 item {
-                    Spacer(modifier = Modifier.height(28.dp))
+                    Spacer(modifier = Modifier.height(24.dp))
                     Text(
                         text = "Recent Files",
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onBackground
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
                 }
 
                 items(recentFiles, key = { it.effectiveId.ifEmpty { it.effectiveName } }) { file ->
-                    Box(modifier = Modifier.padding(vertical = 6.dp)) {
+                    val resolvedAccountId = file.accountId?.takeIf { it.isNotBlank() && it != "all" && it != "root" }
+                        ?: currentAccountId?.takeIf { it.isNotBlank() && it != "all" && it != "root" }
+                        ?: accounts.firstOrNull()?.effectiveId.orEmpty()
+                    Box(modifier = Modifier.padding(vertical = 4.dp)) {
                         FileListItem(
                             file = file,
                             navController = rootNavController,
-                            accountId = file.accountId?.takeIf { it.isNotBlank() && it != "all" && it != "root" }
-                                ?: currentAccountId?.takeIf { it.isNotBlank() && it != "all" && it != "root" }
-                                ?: accounts.firstOrNull()?.effectiveId.orEmpty(),
-                            files = recentFiles
+                            accountId = resolvedAccountId,
+                            files = recentFiles,
+                            onEncryptClick = {
+                                viewModel.createEncryptedCopy(resolvedAccountId, file) { msg ->
+                                    coroutineScope.launch { snackbarHostState.showSnackbar(msg) }
+                                }
+                            },
+                            onDecryptExportClick = {
+                                viewModel.decryptAndExportFile(resolvedAccountId, file) { msg ->
+                                    coroutineScope.launch { snackbarHostState.showSnackbar(msg) }
+                                }
+                            }
                         )
                     }
                 }
@@ -703,7 +764,7 @@ fun StorageOverviewCard(
             .fillMaxWidth()
             .testTag("home_storage_card")
     ) {
-        Column(modifier = Modifier.padding(20.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
             if (isLoading && summary == null) {
                 StorageCardSkeleton(hasMultipleAccounts = accounts.size > 1)
             } else {
@@ -724,14 +785,13 @@ fun StorageOverviewCard(
                 ) {
                     Text(
                         text = "Storage",
-                        fontSize = 21.sp,
-                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Column(horizontalAlignment = Alignment.End) {
                         Text(
                             text = formatStorageUsageText(activeSummary),
-                            fontSize = 13.sp,
+                            style = MetricLabelTextStyle,
                             fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.testTag("storage_usage_text")
@@ -741,7 +801,6 @@ fun StorageOverviewCard(
                                 text = "Couldn't refresh",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.error,
-                                fontSize = 11.sp,
                                 modifier = Modifier.testTag("storage_refresh_error")
                             )
                         }
@@ -750,18 +809,20 @@ fun StorageOverviewCard(
 
                 if (defaultAccount != null) {
                     var accountsExpanded by remember { mutableStateOf(false) }
-                    Spacer(modifier = Modifier.height(10.dp))
-                    // Tappable default account row — expands chip row
+                    Spacer(modifier = Modifier.height(8.dp))
+                    // Tappable default account row — expands chip row (48dp min touch target)
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .clip(RoundedCornerShape(12.dp))
                             .clickable { accountsExpanded = !accountsExpanded }
-                            .padding(vertical = 4.dp)
+                            .padding(horizontal = 4.dp, vertical = 4.dp)
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(26.dp)
+                                .size(24.dp)
                                 .clip(CircleShape)
                                 .background(MaterialTheme.colorScheme.primaryContainer),
                             contentAlignment = Alignment.Center
@@ -783,17 +844,32 @@ fun StorageOverviewCard(
                             modifier = Modifier.weight(1f)
                         )
                         if (accounts.size > 1) {
-                            Text(
-                                text = if (accountsExpanded) "▲" else "${accounts.size} accounts ▼",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = "${accounts.size} accounts",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Icon(
+                                    imageVector = if (accountsExpanded) {
+                                        Icons.Default.KeyboardArrowUp
+                                    } else {
+                                        Icons.Default.KeyboardArrowDown
+                                    },
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
                     }
 
                     // Account Switcher Chip Row (shown on tap when user has multiple drives)
                     if (accountsExpanded && accounts.size > 1) {
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
                         StorageAccountChipRow(
                             accounts = accounts,
                             selectedAccountId = selectedAccountId,
@@ -821,10 +897,10 @@ fun StorageOverviewCard(
                     anim
                 }
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
-                // Multi-segment horizontal storage bar matching attached reference card
-                val trackColor = CardUnknownSlate.copy(alpha = 0.28f)
+                // Multi-segment horizontal storage bar
+                val trackColor = CategoryUnknown.copy(alpha = 0.28f)
                 Canvas(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -848,21 +924,19 @@ fun StorageOverviewCard(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(24.dp))
 
-                // 2 rows x 3 columns Category Legend Grid matching attached reference card:
-                // Row 1: Images, Documents, Media
-                // Row 2: Other, Zipped, Unknown
+                // 2 rows x 3 columns Category Legend Grid
                 val byCategory = remember(segments) { segments.associateBy { it.category } }
                 val row1Items = listOf(
-                    Triple("Images", CardImagesBlue, byCategory[StorageCategoryType.IMAGES]?.bytes ?: 0L),
-                    Triple("Documents", CardDocsAmber, byCategory[StorageCategoryType.DOCUMENTS]?.bytes ?: 0L),
-                    Triple("Media", CardMediaCoral, byCategory[StorageCategoryType.VIDEOS]?.bytes ?: 0L)
+                    Triple("Images", CategoryImages, byCategory[StorageCategoryType.IMAGES]?.bytes ?: 0L),
+                    Triple("Documents", CategoryDocuments, byCategory[StorageCategoryType.DOCUMENTS]?.bytes ?: 0L),
+                    Triple("Media", CategoryMedia, byCategory[StorageCategoryType.VIDEOS]?.bytes ?: 0L)
                 )
                 val row2Items = listOf(
-                    Triple("Other", CardOtherGreen, byCategory[StorageCategoryType.OTHER]?.bytes ?: 0L),
-                    Triple("Zipped", CardZippedPurple, byCategory[StorageCategoryType.ARCHIVES]?.bytes ?: 0L),
-                    Triple("Unknown", CardUnknownSlate, byCategory[StorageCategoryType.AUDIO]?.bytes ?: 0L)
+                    Triple("Other", CategoryOther, byCategory[StorageCategoryType.OTHER]?.bytes ?: 0L),
+                    Triple("Zipped", CategoryZipped, byCategory[StorageCategoryType.ARCHIVES]?.bytes ?: 0L),
+                    Triple("Unknown", CategoryUnknown, byCategory[StorageCategoryType.AUDIO]?.bytes ?: 0L)
                 )
 
                 Column(
@@ -890,14 +964,14 @@ fun StorageOverviewCard(
                                     Column {
                                         Text(
                                             text = label,
-                                            fontSize = 12.sp,
+                                            style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
                                         Text(
                                             text = formatStorageSize(bytes),
-                                            fontSize = 14.sp,
+                                            style = MetricTextStyle,
                                             fontWeight = FontWeight.Bold,
                                             color = MaterialTheme.colorScheme.onSurface,
                                             maxLines = 1,
@@ -911,9 +985,9 @@ fun StorageOverviewCard(
                 }
 
                 if (accounts.isNotEmpty() || (activeSummary.fileCount != null && activeSummary.fileCount > 0)) {
-                    Spacer(modifier = Modifier.height(18.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    Spacer(modifier = Modifier.height(14.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -921,29 +995,27 @@ fun StorageOverviewCard(
                     ) {
                         Column {
                             Text(
-                                text = "Total Files",
-                                fontSize = 13.sp,
+                                text = stringResource(R.string.home_total_files),
+                                style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            Spacer(modifier = Modifier.height(2.dp))
+                            Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 text = "${activeSummary.fileCount ?: accounts.sumOf { it.fileCount ?: 0 }}",
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.Bold,
+                                style = MetricLargeTextStyle,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         }
                         Column(horizontalAlignment = Alignment.End) {
                             Text(
-                                text = "Linked Drives",
-                                fontSize = 13.sp,
+                                text = stringResource(R.string.home_linked_drives),
+                                style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            Spacer(modifier = Modifier.height(2.dp))
+                            Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 text = "${accounts.size}",
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.Bold,
+                                style = MetricLargeTextStyle,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         }
@@ -1020,31 +1092,32 @@ private fun StorageAccountChip(
         shape = CircleShape,
         color = bgColor,
         modifier = Modifier
+            .heightIn(min = 48.dp)
             .clip(CircleShape)
             .clickable(onClick = onClick)
             .testTag(testTag)
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .size(18.dp)
+                    .size(20.dp)
                     .background(avatarColor, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = avatarLetter,
-                    color = Color.White,
-                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold
                 )
             }
             Text(
                 text = label,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.labelMedium,
                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                 color = textColor,
                 maxLines = 1,
@@ -1158,12 +1231,12 @@ private fun StorageCardSkeleton(hasMultipleAccounts: Boolean) {
 }
 
 private fun categoryColor(category: StorageCategoryType): Color = when (category) {
-    StorageCategoryType.IMAGES -> CardImagesBlue
-    StorageCategoryType.DOCUMENTS -> CardDocsAmber
-    StorageCategoryType.VIDEOS -> CardMediaCoral
-    StorageCategoryType.OTHER -> CardOtherGreen
-    StorageCategoryType.ARCHIVES -> CardZippedPurple
-    StorageCategoryType.AUDIO -> CardUnknownSlate
+    StorageCategoryType.IMAGES -> CategoryImages
+    StorageCategoryType.DOCUMENTS -> CategoryDocuments
+    StorageCategoryType.VIDEOS -> CategoryMedia
+    StorageCategoryType.OTHER -> CategoryOther
+    StorageCategoryType.ARCHIVES -> CategoryZipped
+    StorageCategoryType.AUDIO -> CategoryUnknown
 }
 
 @Composable
@@ -1188,28 +1261,30 @@ fun QuickActionsRow(
 fun QuickActionButton(icon: ImageVector, label: String, onClick: () -> Unit) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.clickable(onClick = onClick)
+        modifier = Modifier
+            .clip(MaterialTheme.shapes.medium)
+            .clickable(onClick = onClick)
+            .padding(4.dp)
     ) {
         Surface(
             shape = CircleShape,
             color = MaterialTheme.colorScheme.surfaceContainer,
-            modifier = Modifier.size(60.dp)
+            modifier = Modifier.size(56.dp)
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(
                     imageVector = icon,
                     contentDescription = label,
                     tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(26.dp)
+                    modifier = Modifier.size(24.dp)
                 )
             }
         }
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         Text(
             text = label,
             color = MaterialTheme.colorScheme.onBackground,
-            fontWeight = FontWeight.Medium,
-            fontSize = 13.sp
+            style = MaterialTheme.typography.labelMedium
         )
     }
 }
@@ -1219,8 +1294,12 @@ fun FileListItem(
     file: CloudFile,
     navController: NavController,
     accountId: String,
-    files: List<CloudFile>? = null
+    files: List<CloudFile>? = null,
+    onEncryptClick: (() -> Unit)? = null,
+    onDecryptExportClick: (() -> Unit)? = null
 ) {
+    var showMenu by remember { mutableStateOf(false) }
+
     Card(
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
@@ -1231,7 +1310,7 @@ fun FileListItem(
             }
     ) {
         Row(
-            modifier = Modifier.padding(14.dp),
+            modifier = Modifier.padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (file.isFolderItem) {
@@ -1256,38 +1335,84 @@ fun FileListItem(
                     cornerRadius = 12.dp
                 )
             }
-            Spacer(modifier = Modifier.width(14.dp))
+            Spacer(modifier = Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = file.effectiveName,
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 15.sp,
+                    style = MaterialTheme.typography.titleSmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Spacer(modifier = Modifier.height(2.dp))
+                Spacer(modifier = Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = if (file.isFolderItem) stringResource(R.string.files_type_folder) else file.formattedSize,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 12.sp
+                        style = MetricLabelTextStyle
                     )
                     if (!file.isFolderItem) {
                         Text(
                             text = " • ${file.effectiveType.uppercase()}",
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                            fontSize = 11.sp
+                            style = MaterialTheme.typography.labelSmall
                         )
                     }
                 }
             }
-            if (!file.isFolderItem) {
-                IconButton(onClick = { navController.navigate("file_detail/${accountId}/${file.effectiveId}") }) {
+            Box {
+                IconButton(onClick = { showMenu = true }) {
                     Icon(
                         imageVector = Icons.Default.MoreVert,
                         contentDescription = stringResource(R.string.action_options),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                DropdownMenu(
+                    expanded = showMenu,
+                    onDismissRequest = { showMenu = false },
+                    modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer)
+                ) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = when {
+                                    file.isEncrypted -> "Decrypt / Export"
+                                    file.isFolderItem -> "Encrypt to new folder"
+                                    else -> "Create encrypted copy"
+                                },
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = if (file.isEncrypted) Icons.Default.LockOpen else Icons.Default.Lock,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        onClick = {
+                            showMenu = false
+                            if (file.isEncrypted) {
+                                onDecryptExportClick?.invoke()
+                            } else {
+                                onEncryptClick?.invoke()
+                            }
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Details", color = MaterialTheme.colorScheme.onSurface) },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Info,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        },
+                        onClick = {
+                            showMenu = false
+                            navController.navigate("file_detail/$accountId/${file.effectiveId}")
+                        }
                     )
                 }
             }

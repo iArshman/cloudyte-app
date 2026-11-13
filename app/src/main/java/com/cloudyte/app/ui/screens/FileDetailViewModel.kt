@@ -13,16 +13,11 @@ import com.cloudyte.app.api.FileRepository
 import com.cloudyte.app.api.OfflineFileManager
 import com.cloudyte.app.api.ShareRequest
 import com.cloudyte.app.core.security.EncryptedSharingNotSupportedException
-import com.cloudyte.app.core.transfer.TransferCommand
-import com.cloudyte.app.db.TransferDirection
-import kotlinx.coroutines.Dispatchers
+import com.cloudyte.app.data.FileCryptoActions
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.io.File
 
 class FileDetailViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as CloudyteApplication
@@ -87,52 +82,14 @@ class FileDetailViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             _isProcessingCryptoAction.value = true
             try {
-                val context = getApplication<Application>()
-                val resolvedAccId = targetFile.effectiveAccountId.ifBlank {
-                    accountId.takeIf { it.isNotBlank() && it != "all" && it != "root" }.orEmpty()
-                }
-                if (targetFile.isEncrypted) {
-                    val decryptedResult = withContext(Dispatchers.IO) {
-                        OfflineFileManager.prepareDecryptedFileForViewer(context, resolvedAccId, targetFile)
-                    }
-                    decryptedResult.fold(
-                        onSuccess = { decryptedFile ->
-                            val exportDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-                                ?: File(context.filesDir, "exports").apply { mkdirs() }
-                            exportDir.mkdirs()
-                            val safeName = targetFile.effectiveName.replace(Regex("[^a-zA-Z0-9._-]"), "_").ifBlank { "decrypted_file" }
-                            val destFile = File(exportDir, safeName)
-                            withContext(Dispatchers.IO) {
-                                decryptedFile.inputStream().use { input ->
-                                    destFile.outputStream().use { output ->
-                                        input.copyTo(output)
-                                    }
-                                }
-                            }
-                            onFeedback("Decrypted and exported: ${destFile.name}")
-                        },
-                        onFailure = { err ->
-                            onFeedback(err.message ?: "Failed to decrypt file")
-                        }
-                    )
-                } else {
-                    val exportDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-                        ?: File(context.filesDir, "downloads").apply { mkdirs() }
-                    exportDir.mkdirs()
-                    val safeName = targetFile.effectiveName.replace(Regex("[^a-zA-Z0-9._-]"), "_").ifBlank { "download" }
-                    val destFile = File(exportDir, safeName)
-                    val transferId = transferRepository.enqueueTransfer(
-                        accountId = resolvedAccId,
-                        fileId = targetFile.effectiveId,
-                        fileName = targetFile.effectiveName,
-                        localPath = destFile.absolutePath,
-                        direction = TransferDirection.DOWNLOAD,
-                        totalBytes = targetFile.sizeBytes,
-                        isEncrypted = false
-                    )
-                    transferCoordinator.dispatch(TransferCommand.Start(transferId))
-                    onFeedback("Download added to transfers")
-                }
+                val feedback = FileCryptoActions.decryptAndExportFile(
+                    context = getApplication(),
+                    accountId = accountId,
+                    targetFile = targetFile,
+                    transferRepository = transferRepository,
+                    transferCoordinator = transferCoordinator
+                )
+                onFeedback(feedback)
             } catch (e: Exception) {
                 onFeedback(e.message ?: "Download failed")
             } finally {
@@ -153,75 +110,22 @@ class FileDetailViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             _isProcessingCryptoAction.value = true
             try {
-                val context = getApplication<Application>()
-                val resolvedAccId = targetFile.effectiveAccountId.ifBlank {
-                    accountId.takeIf { it.isNotBlank() && it != "all" && it != "root" }.orEmpty()
-                }
-                if (targetFile.isFolderItem) {
-                    val files = withContext(Dispatchers.IO) {
-                        collectFolderFiles(resolvedAccId, targetFile.effectiveId)
-                    }
-                    var queued = 0
-                    for ((child, parentFolderId) in files) {
-                        if (withContext(Dispatchers.IO) {
-                                enqueueEncryptedCopy(context, resolvedAccId, child, parentFolderId)
-                            }) queued++
-                    }
-                    onFeedback(if (queued == 0) "No files found in folder" else "$queued encrypted file copies queued")
-                } else {
-                    val queued = withContext(Dispatchers.IO) {
-                        enqueueEncryptedCopy(context, resolvedAccId, targetFile, targetFile.path ?: targetFile.location)
-                    }
-                    onFeedback(if (queued) "Encrypted copy queued for upload" else "Could not prepare file for encryption")
-                }
+                val feedback = FileCryptoActions.createEncryptedCopy(
+                    context = getApplication(),
+                    accountId = accountId,
+                    targetFile = targetFile,
+                    fallbackParentFolderId = null,
+                    cloudFileRepository = cloudFileRepository,
+                    transferRepository = transferRepository,
+                    transferCoordinator = transferCoordinator
+                )
+                onFeedback(feedback)
             } catch (e: Exception) {
                 onFeedback(e.message ?: "Could not queue encrypted copy")
             } finally {
                 _isProcessingCryptoAction.value = false
             }
         }
-    }
-
-    private suspend fun collectFolderFiles(accountId: String, folderId: String): List<Pair<CloudFile, String>> {
-        cloudFileRepository.refresh(accountId, folderId, force = true)
-        val children = cloudFileRepository.observeFolder(accountId, folderId).first()
-        val result = mutableListOf<Pair<CloudFile, String>>()
-        for (child in children) {
-            if (child.isFolderItem) {
-                result += collectFolderFiles(accountId, child.effectiveId)
-            } else if (!child.isEncrypted) {
-                result += child to folderId
-            }
-        }
-        return result
-    }
-
-    private suspend fun enqueueEncryptedCopy(
-        context: android.content.Context,
-        accountId: String,
-        targetFile: CloudFile,
-        parentFolderId: String?
-    ): Boolean {
-        val plaintextResult = OfflineFileManager.prepareDecryptedFileForViewer(context, accountId, targetFile)
-        return plaintextResult.fold(
-            onSuccess = { localPlaintextFile ->
-                val transferId = transferRepository.enqueueTransfer(
-                    accountId = accountId,
-                    fileName = targetFile.effectiveName,
-                    localPath = Uri.fromFile(localPlaintextFile).toString(),
-                    remotePath = parentFolderId,
-                    direction = TransferDirection.UPLOAD,
-                    totalBytes = localPlaintextFile.length(),
-                    isEncrypted = true,
-                    originalName = targetFile.effectiveName,
-                    originalMimeType = targetFile.mimeType,
-                    originalSize = localPlaintextFile.length()
-                )
-                transferCoordinator.dispatch(TransferCommand.Start(transferId))
-                true
-            },
-            onFailure = { false }
-        )
     }
 
     fun renameFile(accountId: String, fileId: String, newName: String, onSuccess: () -> Unit) {

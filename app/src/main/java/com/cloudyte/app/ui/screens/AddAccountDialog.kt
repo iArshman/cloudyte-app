@@ -24,7 +24,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.api.TgDriveRegisterRequest
@@ -62,12 +61,12 @@ fun AddAccountDialog(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 12.dp)
+                .padding(vertical = 8.dp)
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(22.dp)
+                    .padding(24.dp)
             ) {
                 // Header
                 Row(
@@ -75,29 +74,29 @@ fun AddAccountDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             "Link Cloud Drive",
                             color = MaterialTheme.colorScheme.onSurface,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
                         )
                         Text(
                             "Add a new storage provider to Cloudyte",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 12.sp
+                            style = MaterialTheme.typography.bodySmall
                         )
                     }
                     IconButton(
                         onClick = onDismiss,
                         enabled = !isLoading,
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(48.dp)
                     ) {
                         Icon(Icons.Default.Close, contentDescription = "Close", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
                 // Provider Selection Pills
                 Row(
@@ -113,6 +112,7 @@ fun AddAccountDialog(
                         Box(
                             modifier = Modifier
                                 .weight(1f)
+                                .heightIn(min = 48.dp)
                                 .clip(MaterialTheme.shapes.small)
                                 .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
                                 .clickable {
@@ -122,7 +122,7 @@ fun AddAccountDialog(
                                         oauthWaitingForReturn = false
                                     }
                                 }
-                                .padding(vertical = 8.dp),
+                                .padding(vertical = 12.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -131,27 +131,27 @@ fun AddAccountDialog(
                                     CloudProviderType.ONEDRIVE -> "OneDrive"
                                     CloudProviderType.TELEGRAM -> "Telegram"
                                 },
-                                color = if (isSelected) Color.White else TextSecondary,
-                                fontSize = 12.sp,
+                                color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.labelMedium,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                             )
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
                 if (errorMsg != null) {
                     Card(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f)),
                         shape = MaterialTheme.shapes.small,
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
                     ) {
                         Text(
                             text = errorMsg!!,
                             color = MaterialTheme.colorScheme.error,
-                            fontSize = 12.sp,
-                            modifier = Modifier.padding(10.dp)
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(12.dp)
                         )
                     }
                 }
@@ -277,29 +277,29 @@ fun GoogleDriveLinkPanel(
         Box(
             modifier = Modifier
                 .size(56.dp)
-                .background(Color(0xFF4285F4).copy(alpha = 0.15f), CircleShape),
+                .background(ProviderGoogle.copy(alpha = 0.15f), CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.Default.Cloud, contentDescription = "Google Drive", tint = Color(0xFF4285F4), modifier = Modifier.size(32.dp))
+            Icon(Icons.Default.Cloud, contentDescription = "Google Drive", tint = ProviderGoogle, modifier = Modifier.size(32.dp))
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
         Text(
             "Link Google Drive",
-            color = TextPrimary,
-            fontWeight = FontWeight.Bold,
-            fontSize = 16.sp
+            color = MaterialTheme.colorScheme.onSurface,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold
         )
         Spacer(modifier = Modifier.height(4.dp))
         Text(
             "Securely connect your personal or workspace Google Drive account via OAuth 2.0.",
-            color = TextSecondary,
-            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodySmall,
             textAlign = TextAlign.Center
         )
 
-        Spacer(modifier = Modifier.height(18.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
         if (oauthWaiting) {
             Card(
@@ -308,42 +308,46 @@ fun GoogleDriveLinkPanel(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
-                    modifier = Modifier.padding(14.dp),
+                    modifier = Modifier.padding(16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
                         "Browser window opened. Once you approve permissions, tap 'Done' below to refresh your linked drives.",
-                        color = TextSecondary,
-                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
                         textAlign = TextAlign.Center
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
                     Button(
                         onClick = onVerifyCompleted,
-                        colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Done / Refresh Drives", color = Color.White, fontSize = 13.sp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "Done / Refresh Drives",
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            style = MaterialTheme.typography.labelLarge
+                        )
                     }
                 }
             }
         } else {
             Button(
                 onClick = onConnectClick,
-                colors = ButtonDefaults.buttonColors(containerColor = ProviderGoogle),
+                colors = ButtonDefaults.buttonColors(containerColor = ProviderGoogle, contentColor = Color.White),
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !isLoading
             ) {
                 if (isLoading) {
-                    com.cloudyte.app.ui.components.AppLoadingIndicator(size = 20.dp, color = MaterialTheme.colorScheme.primary)
+                    com.cloudyte.app.ui.components.AppLoadingIndicator(size = 20.dp, color = Color.White)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Opening Google...", color = MaterialTheme.colorScheme.onSurface)
+                    Text("Opening Google...", color = Color.White, style = MaterialTheme.typography.labelLarge)
                 } else {
                     Icon(Icons.Default.OpenInBrowser, contentDescription = null, modifier = Modifier.size(18.dp), tint = Color.White)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Connect Google Drive", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Text("Connect Google Drive", color = Color.White, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -364,29 +368,29 @@ fun OneDriveLinkPanel(
         Box(
             modifier = Modifier
                 .size(56.dp)
-                .background(Color(0xFF0078D4).copy(alpha = 0.15f), CircleShape),
+                .background(ProviderOneDrive.copy(alpha = 0.15f), CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.Default.CloudQueue, contentDescription = "OneDrive", tint = Color(0xFF0078D4), modifier = Modifier.size(32.dp))
+            Icon(Icons.Default.CloudQueue, contentDescription = "OneDrive", tint = ProviderOneDrive, modifier = Modifier.size(32.dp))
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
         Text(
             "Link Microsoft OneDrive",
-            color = TextPrimary,
-            fontWeight = FontWeight.Bold,
-            fontSize = 16.sp
+            color = MaterialTheme.colorScheme.onSurface,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold
         )
         Spacer(modifier = Modifier.height(4.dp))
         Text(
             "Access Microsoft OneDrive and Office 365 cloud files seamlessly with Microsoft Graph.",
-            color = TextSecondary,
-            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodySmall,
             textAlign = TextAlign.Center
         )
 
-        Spacer(modifier = Modifier.height(18.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
         if (oauthWaiting) {
             Card(
@@ -395,42 +399,46 @@ fun OneDriveLinkPanel(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
-                    modifier = Modifier.padding(14.dp),
+                    modifier = Modifier.padding(16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
                         "Browser window opened. Once you approve permissions, tap 'Done' below to refresh your linked drives.",
-                        color = TextSecondary,
-                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
                         textAlign = TextAlign.Center
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
                     Button(
                         onClick = onVerifyCompleted,
-                        colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Done / Refresh Drives", color = Color.White, fontSize = 13.sp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "Done / Refresh Drives",
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            style = MaterialTheme.typography.labelLarge
+                        )
                     }
                 }
             }
         } else {
             Button(
                 onClick = onConnectClick,
-                colors = ButtonDefaults.buttonColors(containerColor = ProviderOneDrive),
+                colors = ButtonDefaults.buttonColors(containerColor = ProviderOneDrive, contentColor = Color.White),
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !isLoading
             ) {
                 if (isLoading) {
-                    com.cloudyte.app.ui.components.AppLoadingIndicator(size = 20.dp, color = MaterialTheme.colorScheme.primary)
+                    com.cloudyte.app.ui.components.AppLoadingIndicator(size = 20.dp, color = Color.White)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Opening Microsoft...", color = MaterialTheme.colorScheme.onSurface)
+                    Text("Opening Microsoft...", color = Color.White, style = MaterialTheme.typography.labelLarge)
                 } else {
                     Icon(Icons.Default.OpenInBrowser, contentDescription = null, modifier = Modifier.size(18.dp), tint = Color.White)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Connect OneDrive", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Text("Connect OneDrive", color = Color.White, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -450,19 +458,18 @@ fun TelegramLinkPanel(
         Card(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
             shape = MaterialTheme.shapes.medium,
-            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
         ) {
             Row(
-                modifier = Modifier.padding(12.dp),
+                modifier = Modifier.padding(16.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.Info, contentDescription = null, tint = AccentSky, modifier = Modifier.size(20.dp))
-                Spacer(modifier = Modifier.width(10.dp))
+                Icon(Icons.Default.Info, contentDescription = null, tint = ProviderTelegram, modifier = Modifier.size(20.dp))
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = "Ensure the Cloudyte Bot is added as an Administrator with upload permissions in your Telegram channel.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 11.sp,
-                    lineHeight = 15.sp
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
         }
@@ -470,29 +477,29 @@ fun TelegramLinkPanel(
         OutlinedTextField(
             value = driveName,
             onValueChange = onDriveNameChange,
-            label = { Text("Drive Name (Optional)", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp) },
-            placeholder = { Text("e.g. My Personal Cloud", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f), fontSize = 12.sp) },
+            label = { Text("Drive Name (Optional)", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium) },
+            placeholder = { Text("e.g. My Personal Cloud", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f), style = MaterialTheme.typography.bodySmall) },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             colors = OutlinedTextFieldDefaults.colors(
                 focusedTextColor = MaterialTheme.colorScheme.onSurface,
                 unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                focusedBorderColor = AccentSky,
+                focusedBorderColor = ProviderTelegram,
                 unfocusedBorderColor = MaterialTheme.colorScheme.outline
             )
         )
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         OutlinedTextField(
             value = channelId,
             onValueChange = onChannelIdChange,
-            label = { Text("Channel ID *", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp) },
-            placeholder = { Text("e.g. -1001987654321", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f), fontSize = 12.sp) },
+            label = { Text("Channel ID *", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium) },
+            placeholder = { Text("e.g. -1001987654321", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f), style = MaterialTheme.typography.bodySmall) },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             colors = OutlinedTextFieldDefaults.colors(
                 focusedTextColor = MaterialTheme.colorScheme.onSurface,
                 unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                focusedBorderColor = AccentSky,
+                focusedBorderColor = ProviderTelegram,
                 unfocusedBorderColor = MaterialTheme.colorScheme.outline
             )
         )
@@ -501,18 +508,18 @@ fun TelegramLinkPanel(
 
         Button(
             onClick = onSubmit,
-            colors = ButtonDefaults.buttonColors(containerColor = AccentSky),
+            colors = ButtonDefaults.buttonColors(containerColor = ProviderTelegram, contentColor = Color.White),
             modifier = Modifier.fillMaxWidth(),
             enabled = !isLoading
         ) {
             if (isLoading) {
-                com.cloudyte.app.ui.components.AppLoadingIndicator(size = 20.dp, color = MaterialTheme.colorScheme.primary)
+                com.cloudyte.app.ui.components.AppLoadingIndicator(size = 20.dp, color = Color.White)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Registering...", color = MaterialTheme.colorScheme.onSurface)
+                Text("Registering...", color = Color.White, style = MaterialTheme.typography.labelLarge)
             } else {
                 Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Register Telegram Drive", color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text("Register Telegram Drive", color = Color.White, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
             }
         }
     }

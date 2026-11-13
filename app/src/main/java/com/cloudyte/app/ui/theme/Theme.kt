@@ -104,17 +104,11 @@ fun CloudyteTheme(
         else -> LightColorScheme
     }
 
-    MaterialTheme(
+    MaterialExpressiveTheme(
         colorScheme = colorScheme,
         typography = Typography,
-        shapes = AppShapes
-    ) {
-        MaterialExpressiveTheme(
-            colorScheme = colorScheme,
-            typography = Typography,
-            shapes = AppShapes,
-            motionScheme = MotionScheme.expressive(),
-            content = content
-        )
-    }
+        shapes = AppShapes,
+        motionScheme = MotionScheme.expressive(),
+        content = content
+    )
 }
