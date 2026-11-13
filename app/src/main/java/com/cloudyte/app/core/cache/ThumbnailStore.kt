@@ -22,9 +22,13 @@ import java.io.File
  * Single thumbnail policy boundary for UI and background callers.
  * Returned strings are either app-private file paths or a compatibility remote fallback URL.
  */
-class ThumbnailStore(
+class ThumbnailStore @JvmOverloads constructor(
     context: Context,
-    private val dao: ThumbnailDao
+    private val dao: ThumbnailDao,
+    private val contentKeyProvider: com.cloudyte.app.core.security.ContentKeyProvider =
+        com.cloudyte.app.core.security.ContentKeyManager(context.applicationContext),
+    private val streamFileCrypto: com.cloudyte.app.core.security.StreamFileCrypto =
+        com.cloudyte.app.core.security.StreamFileCrypto()
 ) {
     private val appContext = context.applicationContext
     private val root = File(appContext.filesDir, "cloudyte_thumbnails").apply { mkdirs() }
@@ -46,9 +50,13 @@ class ThumbnailStore(
             else -> ""
         }
         if (resolvedAccId.isBlank() || file.effectiveId.isBlank() || file.isFolderItem) return@withContext null
+        // If encrypted metadata is not available locally, never attempt thumbnail resolution
+        if (file.isEncrypted && !file.originalMetadataAvailable) return@withContext null
+
         val normalizedSize = sizePx.coerceIn(64, 512)
         val key = CacheKeyFactory.thumbnail(resolvedAccId, providerType, file, normalizedSize)
-        val fallback = fallbackUrl(resolvedAccId, file)
+        // CRITICAL: Never use remote fallback URL for encrypted files
+        val fallback = if (file.isEncrypted) null else fallbackUrl(resolvedAccId, file)
 
         val now = System.currentTimeMillis()
         val existing = dao.get(key)
@@ -62,6 +70,11 @@ class ThumbnailStore(
         }
 
         val validLocalSource = localSource?.takeIf { it.isFile && it.length() > 0L }
+        // CRITICAL: Never request remote thumbnails from the server for encrypted files
+        if (file.isEncrypted && validLocalSource == null) {
+            return@withContext null
+        }
+
         if (existing?.nextRetryAt?.let { it > now } == true && validLocalSource == null) {
             return@withContext fallback
         }
@@ -103,15 +116,19 @@ class ThumbnailStore(
                     val generated = validLocalSource?.let {
                         generateFromLocal(it, key, resolvedAccId, providerType, file, normalizedSize, permitNow)
                     }
-                    generated ?: downloadRemote(
-                        sourceUrl = providerThumbUrl(resolvedAccId, file, normalizedSize),
-                        key = key,
-                        accountId = resolvedAccId,
-                        providerType = providerType,
-                        file = file,
-                        sizePx = normalizedSize,
-                        now = permitNow
-                    )
+                    if (file.isEncrypted) {
+                        generated
+                    } else {
+                        generated ?: downloadRemote(
+                            sourceUrl = providerThumbUrl(resolvedAccId, file, normalizedSize),
+                            key = key,
+                            accountId = resolvedAccId,
+                            providerType = providerType,
+                            file = file,
+                            sizePx = normalizedSize,
+                            now = permitNow
+                        )
+                    }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {
@@ -150,46 +167,71 @@ class ThumbnailStore(
         sizePx: Int,
         now: Long
     ): File? {
-        val bitmap = (if (file.isVideo) {
-            val retriever = android.media.MediaMetadataRetriever()
-            try {
-                retriever.setDataSource(source.absolutePath)
-                retriever.getFrameAtTime(1_000_000, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                    ?: retriever.getFrameAtTime(0, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-            } catch (_: Exception) {
-                null
-            } finally {
-                try { retriever.release() } catch (_: Exception) {}
+        var tempDecryptedSource: File? = null
+        var keyMaterial: com.cloudyte.app.core.security.ContentKeyMaterial? = null
+        val readableSource = try {
+            if (streamFileCrypto.hasCyteMagic(source)) {
+                val header = streamFileCrypto.validateEncryptedFile(source, expectedKeyId = file.encryptionKeyId)
+                keyMaterial = contentKeyProvider.getContentKeyForDecryption(file.encryptionKeyId ?: header.keyId)
+                val tempDir = com.cloudyte.app.core.security.SecureFileCleanup.getDecryptedViewCacheDir(appContext)
+                val decTemp = File(tempDir, ".thumb_dec_${key.hashCode()}_${System.nanoTime()}.tmp")
+                tempDecryptedSource = decTemp
+                streamFileCrypto.decryptEncryptedFileToPlaintext(source, decTemp, keyMaterial)
+                decTemp
+            } else {
+                source
             }
-        } else {
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeFile(source.absolutePath, bounds)
-            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-            val decodeOptions = BitmapFactory.Options().apply {
-                inSampleSize = calculateInSampleSize(bounds.outWidth, bounds.outHeight, sizePx)
-            }
-            BitmapFactory.decodeFile(source.absolutePath, decodeOptions)
-        }) ?: return null
+        } catch (_: Exception) {
+            com.cloudyte.app.core.security.SecureFileCleanup.deleteFileSafely(tempDecryptedSource)
+            keyMaterial?.destroy()
+            return null
+        }
 
-        val target = targetFile(key)
-        val temp = File(target.parentFile, ".${target.name}.tmp")
         try {
-            temp.outputStream().use { output ->
-                check(bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 82, output))
-            }
-        } finally {
-            bitmap.recycle()
-        }
-        if (target.exists()) target.delete()
-        if (!temp.renameTo(target)) {
+            val bitmap = (if (file.isVideo) {
+                val retriever = android.media.MediaMetadataRetriever()
+                try {
+                    retriever.setDataSource(readableSource.absolutePath)
+                    retriever.getFrameAtTime(1_000_000, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                        ?: retriever.getFrameAtTime(0, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                } catch (_: Exception) {
+                    null
+                } finally {
+                    try { retriever.release() } catch (_: Exception) {}
+                }
+            } else {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(readableSource.absolutePath, bounds)
+                if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+                val decodeOptions = BitmapFactory.Options().apply {
+                    inSampleSize = calculateInSampleSize(bounds.outWidth, bounds.outHeight, sizePx)
+                }
+                BitmapFactory.decodeFile(readableSource.absolutePath, decodeOptions)
+            }) ?: return null
+
+            val target = targetFile(key)
+            val temp = File(target.parentFile, ".${target.name}.tmp")
             try {
-                temp.copyTo(target, overwrite = true)
-                temp.delete()
-            } catch (_: Exception) {}
+                temp.outputStream().use { output ->
+                    check(bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 82, output))
+                }
+            } finally {
+                bitmap.recycle()
+            }
+            if (target.exists()) target.delete()
+            if (!temp.renameTo(target)) {
+                try {
+                    temp.copyTo(target, overwrite = true)
+                    temp.delete()
+                } catch (_: Exception) {}
+            }
+            check(target.exists() && target.length() > 0L) { "Unable to commit generated thumbnail" }
+            dao.upsert(entity(key, target, accountId, providerType, file, target.length(), bitmap.width, bitmap.height, now))
+            return target
+        } finally {
+            com.cloudyte.app.core.security.SecureFileCleanup.deleteFileSafely(tempDecryptedSource)
+            keyMaterial?.destroy()
         }
-        check(target.exists() && target.length() > 0L) { "Unable to commit generated thumbnail" }
-        dao.upsert(entity(key, target, accountId, providerType, file, target.length(), bitmap.width, bitmap.height, now))
-        return target
     }
 
     private suspend fun downloadRemote(
@@ -318,6 +360,7 @@ class ThumbnailStore(
         width = width,
         height = height,
         sizeBytes = sizeBytes,
+        isEncrypted = file.isEncrypted,
         generatedAt = now,
         lastAccessAt = now
     )
@@ -345,6 +388,7 @@ class ThumbnailStore(
     }
 
     private fun fallbackUrl(accountId: String, file: CloudFile): String? {
+        if (file.isEncrypted) return null
         val acc = file.effectiveAccountId.ifBlank { accountId.takeIf { it != "all" && it != "root" }.orEmpty() }
         if (acc.isBlank()) return null
         return if (file.isImage || file.isVideo) ApiClient.getFileUrl(acc, file.effectiveId, preview = true) else null

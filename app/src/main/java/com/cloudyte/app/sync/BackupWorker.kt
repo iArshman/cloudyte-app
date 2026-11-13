@@ -264,12 +264,20 @@ class BackupWorker(
         val safeFolderId = currentCloudFolderId ?: "root"
 
         // 1. Fetch remote files to check current drive state
+        val appContainer = (context.applicationContext as? com.cloudyte.app.CloudyteApplication)?.container
+        val encryptUploads = runCatching {
+            UserPreferences.observe(context).first().isUploadEncryptionEnabled
+        }.getOrDefault(false)
         val cloudFiles = try {
             val response = ApiClient.apiService.getFiles(accountId, currentCloudFolderId, null)
             if (response.isSuccessful) {
                 val fetched = response.body().orEmpty()
-                db.cloudFileDao().insertFiles(fetched.map { LocalCloudFile.fromCloudFile(it, accountId, safeFolderId) })
-                fetched
+                val localMapped = fetched.map { remote ->
+                    appContainer?.cloudFileRepository?.resolveRemoteCloudFileToLocal(remote, accountId, safeFolderId)
+                        ?: LocalCloudFile.fromCloudFile(remote, accountId, safeFolderId)
+                }
+                db.cloudFileDao().insertFiles(localMapped)
+                localMapped.map { it.toCloudFile() }
             } else {
                 val code = response.code()
                 if (code == 429 || code in 500..599) {
@@ -391,7 +399,10 @@ class BackupWorker(
                                     providerType = accountType,
                                     direction = TransferDirection.BACKUP.name,
                                     operationType = "BACKUP",
-                                    totalBytes = fileSize
+                                    totalBytes = fileSize,
+                                    isEncrypted = encryptUploads,
+                                    encryptionFormatVersion = if (encryptUploads) 1 else null,
+                                    plaintextSizeBytes = if (encryptUploads) fileSize else null
                                 )
                             )
                         }

@@ -123,38 +123,41 @@ fun PdfViewerScreen(
         }
     }
 
-    LaunchedEffect(fileId) {
+    LaunchedEffect(fileId, file?.isEncrypted) {
         isLoading = true
         errorMessage = null
         try {
             val cachedPdfFile = withContext(Dispatchers.IO) {
-                var local = OfflineFileManager.findOfflineFile(context, accountId, fileId)
-                if (local == null || !local.exists() || local.length() == 0L) {
-                    if (file != null) {
-                        val dlResult = OfflineFileManager.downloadFile(context, accountId, file)
-                        local = dlResult.getOrNull()
+                val acc = effectiveAccId.ifBlank { accountId }
+                if (file?.isEncrypted == true) {
+                    OfflineFileManager.prepareDecryptedFileForViewer(context, acc, file).getOrThrow()
+                } else {
+                    var local = if (file != null) {
+                        OfflineFileManager.prepareDecryptedFileForViewer(context, acc, file).getOrNull()
+                    } else {
+                        OfflineFileManager.findOfflineFile(context, acc, fileId)
                     }
-                }
-                if (local == null || !local.exists() || local.length() == 0L) {
-                    val tempFile = File(context.cacheDir, "pdf_view_${fileId.replace(Regex("[^a-zA-Z0-9]"), "_")}.pdf")
-                    if (!tempFile.exists() || tempFile.length() == 0L) {
-                        val token = ApiClient.getToken()
-                        val requestBuilder = Request.Builder().url(pdfUrl)
-                        if (!token.isNullOrEmpty()) {
-                            requestBuilder.header("Authorization", "Bearer $token")
+                    if (local == null || !local.exists() || local.length() == 0L) {
+                        val tempFile = File(context.cacheDir, "pdf_view_${fileId.replace(Regex("[^a-zA-Z0-9]"), "_")}.pdf")
+                        if (!tempFile.exists() || tempFile.length() == 0L) {
+                            val token = ApiClient.getToken()
+                            val requestBuilder = Request.Builder().url(pdfUrl)
+                            if (!token.isNullOrEmpty()) {
+                                requestBuilder.header("Authorization", "Bearer $token")
+                            }
+                            val response = ApiClient.okHttpClient.newCall(requestBuilder.build()).execute()
+                            if (!response.isSuccessful) {
+                                throw Exception("Failed to download PDF (HTTP ${response.code})")
+                            }
+                            val body = response.body ?: throw Exception("Empty PDF response")
+                            FileOutputStream(tempFile).use { out ->
+                                body.byteStream().copyTo(out)
+                            }
                         }
-                        val response = ApiClient.okHttpClient.newCall(requestBuilder.build()).execute()
-                        if (!response.isSuccessful) {
-                            throw Exception("Failed to download PDF (HTTP ${response.code})")
-                        }
-                        val body = response.body ?: throw Exception("Empty PDF response")
-                        FileOutputStream(tempFile).use { out ->
-                            body.byteStream().copyTo(out)
-                        }
+                        local = tempFile
                     }
-                    local = tempFile
+                    local ?: throw Exception("Cannot access PDF file")
                 }
-                local ?: throw Exception("Cannot access PDF file")
             }
 
             val desc = ParcelFileDescriptor.open(cachedPdfFile, ParcelFileDescriptor.MODE_READ_ONLY)
@@ -208,17 +211,25 @@ fun PdfViewerScreen(
                 },
                 actions = {
                     IconButton(onClick = {
-                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                            type = "text/plain"
-                            putExtra(Intent.EXTRA_TEXT, pdfUrl)
+                        if (file?.isEncrypted == true) {
+                            android.widget.Toast.makeText(context, "Encrypted sharing is not supported", android.widget.Toast.LENGTH_SHORT).show()
+                        } else {
+                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, pdfUrl)
+                            }
+                            context.startActivity(Intent.createChooser(shareIntent, "Share PDF Link"))
                         }
-                        context.startActivity(Intent.createChooser(shareIntent, "Share PDF Link"))
                     }) {
                         Icon(Icons.Default.Share, contentDescription = "Share", tint = TextPrimary)
                     }
                     IconButton(onClick = {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(pdfUrl))
-                        context.startActivity(intent)
+                        if (file?.isEncrypted == true) {
+                            navController.navigate("file_detail/$accountId/$fileId")
+                        } else {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(pdfUrl))
+                            context.startActivity(intent)
+                        }
                     }) {
                         Icon(Icons.Default.Download, contentDescription = "Download", tint = TextPrimary)
                     }

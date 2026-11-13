@@ -196,6 +196,16 @@ object UploadHelper {
         }
     }
 
+    private fun openUriStream(context: Context, uri: Uri): java.io.InputStream? {
+        return if (uri.scheme.equals("file", ignoreCase = true)) {
+            val path = uri.path ?: return null
+            val file = File(path)
+            if (file.exists() && file.isFile) file.inputStream() else null
+        } else {
+            context.contentResolver.openInputStream(uri)
+        }
+    }
+
     suspend fun uploadFileResumable(
         context: Context,
         accountId: String,
@@ -207,17 +217,21 @@ object UploadHelper {
         idempotencyKey: String,
         provider: CloudProvider = CloudyteProvider(ApiClient.apiService),
         knownChecksum: String? = null,
+        isEncrypted: Boolean = false,
+        encryptionFormatVersion: Int? = null,
+        encryptionKeyId: String? = null,
+        encryptedSizeBytes: Long? = null,
+        encryptedMetadata: com.cloudyte.app.api.EncryptedMetadataEnvelope? = null,
         onSessionReady: suspend (String, Long, String, Long, Int) -> Unit = { _, _, _, _, _ -> },
         onProgress: suspend (Long, Int) -> Unit = { _, _ -> }
     ): UploadResult = withContext(Dispatchers.IO) {
         try {
             provider.requireResumableUpload()
-            val resolver = context.contentResolver
             val totalBytes = explicitFileSize
             if (totalBytes < 0L) throw IOException("File size is required for resumable upload")
             val checksum = knownChecksum ?: run {
                 val digest = MessageDigest.getInstance("SHA-256")
-                resolver.openInputStream(uri)?.use { input ->
+                openUriStream(context, uri)?.use { input ->
                     val buffer = ByteArray(1024 * 1024)
                     while (true) {
                         val read = input.read(buffer)
@@ -227,15 +241,21 @@ object UploadHelper {
                 } ?: throw IOException("Cannot open local file stream")
                 digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
             }
+            val effectiveSessionMimeType = if (isEncrypted) "application/octet-stream" else explicitMimeType
             val sessionRequest = UploadSessionRequest(
                 fileName = explicitFileName,
-                mimeType = explicitMimeType,
+                mimeType = effectiveSessionMimeType,
                 size = totalBytes,
                 folderId = folderId,
                 checksum = checksum,
                 idempotencyKey = idempotencyKey,
                 providerType = provider.type,
-                desiredChunkSize = ResumableTransfer.DEFAULT_CHUNK_SIZE
+                desiredChunkSize = ResumableTransfer.DEFAULT_CHUNK_SIZE,
+                isEncrypted = isEncrypted,
+                encryptionFormatVersion = if (isEncrypted) (encryptionFormatVersion ?: 1) else null,
+                encryptionKeyId = if (isEncrypted) encryptionKeyId else null,
+                encryptedSizeBytes = if (isEncrypted) (encryptedSizeBytes ?: totalBytes) else null,
+                encryptedMetadata = if (isEncrypted) encryptedMetadata else null
             )
             var sessionResponse = provider.createUploadSession(accountId, sessionRequest)
             if (!sessionResponse.isSuccessful || sessionResponse.body() == null) {
@@ -266,7 +286,7 @@ object UploadHelper {
             val chunkSize = session.chunkSize.coerceAtLeast(64L * 1024L).coerceAtMost(16L * 1024L * 1024L)
             var nextChunkIndex = ((offset + chunkSize - 1L) / chunkSize).toInt()
             onSessionReady(session.sessionId, chunkSize, checksum, offset, nextChunkIndex)
-            resolver.openInputStream(uri)?.use { input ->
+            openUriStream(context, uri)?.use { input ->
                 var skipped = 0L
                 while (skipped < offset) {
                     val n = input.skip(offset - skipped)
@@ -282,7 +302,7 @@ object UploadHelper {
                         if (read <= 0) throw IOException("Unexpected end of local file")
                         readTotal += read
                     }
-                    val body = bytes.toRequestBody(explicitMimeType.toMediaTypeOrNull())
+                    val body = bytes.toRequestBody(effectiveSessionMimeType.toMediaTypeOrNull())
                     val part = MultipartBody.Part.createFormData("chunk", explicitFileName, body)
                     val response = provider.uploadChunk(
                         sessionId = session.sessionId,

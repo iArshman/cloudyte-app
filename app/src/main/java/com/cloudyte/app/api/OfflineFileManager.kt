@@ -159,7 +159,15 @@ object OfflineFileManager {
                 fileId = fid,
                 fileName = fileName,
                 destinationPath = tempFile.absolutePath,
-                totalBytes = file.sizeBytes.coerceAtLeast(0L)
+                totalBytes = (if (file.isEncrypted) file.encryptedSizeBytes ?: file.sizeBytes else file.sizeBytes).coerceAtLeast(0L),
+                isEncrypted = file.isEncrypted,
+                encryptionFormatVersion = file.encryptionFormatVersion,
+                encryptionKeyId = file.encryptionKeyId,
+                encryptedSizeBytes = file.encryptedSizeBytes,
+                encryptedChecksum = file.encryptedChecksum,
+                opaqueRemoteName = file.opaqueRemoteName,
+                plaintextSizeBytes = file.plaintextSizeBytes,
+                originalMetadataAvailable = file.originalMetadataAvailable
             )
             app.container.transferCoordinator.dispatch(com.cloudyte.app.core.transfer.TransferCommand.Start(transferId))
             val completed = kotlinx.coroutines.withTimeoutOrNull(30 * 60 * 1000L) {
@@ -199,10 +207,83 @@ object OfflineFileManager {
         }
     }
 
+    /**
+     * Ensures that a file (especially an encrypted file or an offline file stored encrypted at rest)
+     * is downloaded, authenticated, and decrypted to a controlled local file before opening in a viewer/player.
+     */
+    suspend fun prepareDecryptedFileForViewer(
+        context: Context,
+        accountId: String,
+        file: CloudFile,
+        onProgress: ((Float) -> Unit)? = null
+    ): Result<File> = withContext(Dispatchers.IO) {
+        val fid = file.effectiveId
+        if (fid.isBlank()) {
+            return@withContext Result.failure(IllegalArgumentException("File ID is empty"))
+        }
+
+        val offlineFile = findOfflineFile(context, accountId, fid)
+            ?: downloadFile(context, accountId, file, onProgress).getOrElse { err ->
+                return@withContext Result.failure(err)
+            }
+
+        val streamCrypto = com.cloudyte.app.core.security.StreamFileCrypto()
+        if (!streamCrypto.hasCyteMagic(offlineFile)) {
+            onProgress?.invoke(1f)
+            return@withContext Result.success(offlineFile)
+        }
+
+        // Offline file is stored encrypted at rest (CYTE1 format); decrypt to controlled view cache
+        val app = context.applicationContext as? com.cloudyte.app.CloudyteApplication
+        val keyProvider = app?.container?.contentKeyManager
+            ?: com.cloudyte.app.core.security.ContentKeyManager(context)
+        val viewCacheDir = com.cloudyte.app.core.security.SecureFileCleanup.getDecryptedViewCacheDir(context)
+        val safeAcc = sanitizeFileName(accountId)
+        val safeFid = sanitizeFileName(fid)
+        val safeName = sanitizeFileName(file.effectiveName.ifBlank { "decrypted_$fid" })
+        val viewTargetFile = File(viewCacheDir, "view_${safeAcc}_${safeFid}_$safeName")
+        val viewTempFile = File(viewCacheDir, "view_${safeAcc}_${safeFid}_$safeName.tmp")
+
+        var keyMaterial: com.cloudyte.app.core.security.ContentKeyMaterial? = null
+        try {
+            val header = streamCrypto.validateEncryptedFile(offlineFile, expectedKeyId = file.encryptionKeyId)
+            keyMaterial = keyProvider.getContentKeyForDecryption(file.encryptionKeyId ?: header.keyId)
+            streamCrypto.decryptEncryptedFileToPlaintext(
+                encryptedFile = offlineFile,
+                destinationTempFile = viewTempFile,
+                keyMaterial = keyMaterial,
+                onProgress = { written ->
+                    if (header.plaintextSize > 0L) {
+                        onProgress?.invoke((written.toFloat() / header.plaintextSize.toFloat()).coerceIn(0f, 1f))
+                    }
+                }
+            )
+            if (viewTargetFile.exists()) viewTargetFile.delete()
+            if (!viewTempFile.renameTo(viewTargetFile)) {
+                viewTempFile.copyTo(viewTargetFile, overwrite = true)
+                viewTempFile.delete()
+            }
+            onProgress?.invoke(1f)
+            Result.success(viewTargetFile)
+        } catch (e: Exception) {
+            com.cloudyte.app.core.security.SecureFileCleanup.deleteFileSafely(viewTempFile)
+            com.cloudyte.app.core.security.SecureFileCleanup.deleteFileSafely(viewTargetFile)
+            Result.failure(e)
+        } finally {
+            keyMaterial?.destroy()
+        }
+    }
+
     fun deleteOfflineFile(context: Context, accountId: String, fileId: String): Boolean {
         val file = findOfflineFile(context, accountId, fileId)
         val deleted = file?.delete() ?: false
         _downloadedFiles.value = _downloadedFiles.value - fileId
+        val safeAcc = sanitizeFileName(accountId)
+        val safeFid = sanitizeFileName(fileId)
+        val viewCacheDir = com.cloudyte.app.core.security.SecureFileCleanup.getDecryptedViewCacheDir(context)
+        viewCacheDir.listFiles { _, name -> name.startsWith("view_${safeAcc}_${safeFid}_") }?.forEach {
+            com.cloudyte.app.core.security.SecureFileCleanup.deleteFileSafely(it)
+        }
         return deleted
     }
 
@@ -223,6 +304,7 @@ object OfflineFileManager {
     fun clearAllOfflineCache(context: Context) {
         val dir = getVaultDir(context)
         dir.listFiles()?.forEach { it.delete() }
+        com.cloudyte.app.core.security.SecureFileCleanup.clearDecryptedViewCache(context)
         _downloadedFiles.value = emptySet()
         _activeDownloads.value = emptyMap()
     }

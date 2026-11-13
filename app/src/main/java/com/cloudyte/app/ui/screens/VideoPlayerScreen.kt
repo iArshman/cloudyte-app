@@ -124,41 +124,42 @@ fun VideoPlayerScreen(
             .setDefaultRequestProperties(headers)
             .setAllowCrossProtocolRedirects(true)
 
-        val offlineFile = if (effectiveAccId.isNotBlank()) {
-            OfflineFileManager.findOfflineFile(context, effectiveAccId, fileId)
-        } else null
-        val initialMediaItem = if (offlineFile != null && offlineFile.exists() && offlineFile.length() > 0) {
-            MediaItem.fromUri(Uri.fromFile(offlineFile))
-        } else {
-            val acc = effectiveAccId.ifBlank { accountId }
-            val initialUrl = ApiClient.getFileUrl(acc, fileId, preview = true)
-            MediaItem.fromUri(initialUrl)
-        }
-
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
-            .build().apply {
-                setMediaItem(initialMediaItem)
-                prepare()
-                playWhenReady = true
-            }
+            .build()
     }
 
     // Update media source when switching videos
-    LaunchedEffect(currentActiveFileId, effectiveAccId) {
-        val offlineFile = if (effectiveAccId.isNotBlank()) {
-            OfflineFileManager.findOfflineFile(context, effectiveAccId, currentActiveFileId)
-        } else null
-        val mediaItem = if (offlineFile != null && offlineFile.exists() && offlineFile.length() > 0) {
-            MediaItem.fromUri(Uri.fromFile(offlineFile))
+    LaunchedEffect(currentActiveFileId, effectiveAccId, file?.isEncrypted) {
+        val acc = effectiveAccId.ifBlank { accountId }
+        val mediaItem = if (file?.isEncrypted == true) {
+            val decrypted = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                OfflineFileManager.prepareDecryptedFileForViewer(context, acc, file).getOrNull()
+            }
+            if (decrypted != null && decrypted.exists() && decrypted.length() > 0) {
+                MediaItem.fromUri(Uri.fromFile(decrypted))
+            } else {
+                null
+            }
         } else {
-            val acc = effectiveAccId.ifBlank { accountId }
-            val url = ApiClient.getFileUrl(acc, currentActiveFileId, preview = true)
-            MediaItem.fromUri(url)
+            val offlineFile = if (acc.isNotBlank()) {
+                OfflineFileManager.findOfflineFile(context, acc, currentActiveFileId)
+            } else null
+            if (offlineFile != null && offlineFile.exists() && offlineFile.length() > 0) {
+                val prepared = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    if (file != null) OfflineFileManager.prepareDecryptedFileForViewer(context, acc, file).getOrNull() else offlineFile
+                } ?: offlineFile
+                MediaItem.fromUri(Uri.fromFile(prepared))
+            } else {
+                val url = ApiClient.getFileUrl(acc, currentActiveFileId, preview = true)
+                MediaItem.fromUri(url)
+            }
         }
-        exoPlayer.setMediaItem(mediaItem)
-        exoPlayer.prepare()
-        exoPlayer.playWhenReady = true
+        if (mediaItem != null) {
+            exoPlayer.setMediaItem(mediaItem)
+            exoPlayer.prepare()
+            exoPlayer.playWhenReady = true
+        }
     }
 
     DisposableEffect(exoPlayer) {

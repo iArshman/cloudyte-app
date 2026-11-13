@@ -422,6 +422,198 @@ fun SettingsSectionScreen(
                 }
 
                 SettingsSectionType.SECURITY -> {
+                    val settingsVm: SettingsViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+                    val keyStatus by settingsVm.encryptionKeyStatus.collectAsState()
+                    val backupStatus by settingsVm.recoveryBackupStatus.collectAsState()
+                    val generatedBackupJson by settingsVm.generatedRecoveryBackupJson.collectAsState()
+                    val securityFeedback by settingsVm.securityFeedback.collectAsState()
+
+                    var showCreateBackupDialog by remember { mutableStateOf(false) }
+                    var showRestoreBackupDialog by remember { mutableStateOf(false) }
+                    var createPassphrase by remember { mutableStateOf("") }
+                    var confirmPassphrase by remember { mutableStateOf("") }
+                    var restorePassphrase by remember { mutableStateOf("") }
+                    var restoreBackupJson by remember { mutableStateOf("") }
+
+                    androidx.compose.runtime.LaunchedEffect(Unit) {
+                        settingsVm.refreshKeyStatus()
+                    }
+
+                    androidx.compose.runtime.LaunchedEffect(securityFeedback) {
+                        securityFeedback?.let {
+                            snackbarHostState.showSnackbar(it)
+                            settingsVm.clearSecurityFeedback()
+                        }
+                    }
+
+                    if (showCreateBackupDialog) {
+                        androidx.compose.material3.AlertDialog(
+                            onDismissRequest = {
+                                showCreateBackupDialog = false
+                                createPassphrase = ""
+                                confirmPassphrase = ""
+                            },
+                            title = { Text(stringResource(R.string.settings_create_recovery_backup)) },
+                            text = {
+                                Column {
+                                    Text(
+                                        text = "Enter a strong passphrase to encrypt your recovery key backup. The server never receives this passphrase.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    androidx.compose.material3.OutlinedTextField(
+                                        value = createPassphrase,
+                                        onValueChange = { createPassphrase = it },
+                                        label = { Text("Recovery passphrase") },
+                                        singleLine = true,
+                                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    androidx.compose.material3.OutlinedTextField(
+                                        value = confirmPassphrase,
+                                        onValueChange = { confirmPassphrase = it },
+                                        label = { Text("Confirm passphrase") },
+                                        singleLine = true,
+                                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            },
+                            confirmButton = {
+                                androidx.compose.material3.Button(
+                                    onClick = {
+                                        val p1 = createPassphrase
+                                        val p2 = confirmPassphrase
+                                        createPassphrase = ""
+                                        confirmPassphrase = ""
+                                        showCreateBackupDialog = false
+                                        settingsVm.createRecoveryBackup(p1, p2)
+                                    }
+                                ) {
+                                    Text(stringResource(R.string.action_create))
+                                }
+                            },
+                            dismissButton = {
+                                androidx.compose.material3.TextButton(
+                                    onClick = {
+                                        showCreateBackupDialog = false
+                                        createPassphrase = ""
+                                        confirmPassphrase = ""
+                                    }
+                                ) {
+                                    Text(stringResource(R.string.action_cancel))
+                                }
+                            }
+                        )
+                    }
+
+                    if (generatedBackupJson != null) {
+                        androidx.compose.material3.AlertDialog(
+                            onDismissRequest = { settingsVm.clearGeneratedRecoveryBackup() },
+                            title = { Text("Recovery Key Backup Ready") },
+                            text = {
+                                Column {
+                                    Text(
+                                        text = "Copy and store this encrypted key backup in a safe place (e.g., password manager).",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    androidx.compose.material3.OutlinedTextField(
+                                        value = generatedBackupJson ?: "",
+                                        onValueChange = {},
+                                        readOnly = true,
+                                        maxLines = 6,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            },
+                            confirmButton = {
+                                androidx.compose.material3.Button(
+                                    onClick = {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        clipboard.setPrimaryClip(ClipData.newPlainText("Cloudyte Key Backup", generatedBackupJson))
+                                        Toast.makeText(context, "Recovery backup copied to clipboard", Toast.LENGTH_SHORT).show()
+                                        settingsVm.clearGeneratedRecoveryBackup()
+                                    }
+                                ) {
+                                    Text("Copy Backup")
+                                }
+                            },
+                            dismissButton = {
+                                androidx.compose.material3.TextButton(
+                                    onClick = { settingsVm.clearGeneratedRecoveryBackup() }
+                                ) {
+                                    Text(stringResource(R.string.action_close))
+                                }
+                            }
+                        )
+                    }
+
+                    if (showRestoreBackupDialog) {
+                        androidx.compose.material3.AlertDialog(
+                            onDismissRequest = {
+                                showRestoreBackupDialog = false
+                                restorePassphrase = ""
+                                restoreBackupJson = ""
+                            },
+                            title = { Text(stringResource(R.string.settings_restore_recovery_backup)) },
+                            text = {
+                                Column {
+                                    Text(
+                                        text = "Paste your recovery backup JSON and enter the recovery passphrase to restore your encryption key.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    androidx.compose.material3.OutlinedTextField(
+                                        value = restorePassphrase,
+                                        onValueChange = { restorePassphrase = it },
+                                        label = { Text("Recovery passphrase") },
+                                        singleLine = true,
+                                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    androidx.compose.material3.OutlinedTextField(
+                                        value = restoreBackupJson,
+                                        onValueChange = { restoreBackupJson = it },
+                                        label = { Text("Recovery backup JSON") },
+                                        maxLines = 5,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                            },
+                            confirmButton = {
+                                androidx.compose.material3.Button(
+                                    onClick = {
+                                        val pass = restorePassphrase
+                                        val json = restoreBackupJson
+                                        restorePassphrase = ""
+                                        restoreBackupJson = ""
+                                        showRestoreBackupDialog = false
+                                        settingsVm.restoreRecoveryBackup(pass, json)
+                                    }
+                                ) {
+                                    Text("Restore")
+                                }
+                            },
+                            dismissButton = {
+                                androidx.compose.material3.TextButton(
+                                    onClick = {
+                                        showRestoreBackupDialog = false
+                                        restorePassphrase = ""
+                                        restoreBackupJson = ""
+                                    }
+                                ) {
+                                    Text(stringResource(R.string.action_cancel))
+                                }
+                            }
+                        )
+                    }
+
                     SettingsSectionTitle(stringResource(R.string.settings_section_security))
                     val timeouts = stringArrayResource(R.array.lock_timeout_options)
 
@@ -430,7 +622,7 @@ fun SettingsSectionScreen(
                             SettingsSwitchRow(
                                 title = stringResource(R.string.settings_app_lock),
                                 checked = prefsState.appLockEnabled,
-                                onChange = { scope.launch { UserPreferences.setAppLockEnabled(context, it) } }
+                                onChange = { settingsVm.setAppLockEnabled(it) }
                             )
                         },
                         GroupedListItem(key = "lock_timeout", visible = prefsState.appLockEnabled) {
@@ -455,6 +647,74 @@ fun SettingsSectionScreen(
                         }
                     )
                     GroupedList(items = secItems)
+
+                    SettingsSectionTitle("End-to-End File Encryption")
+                    val encryptionStatusSubtitle = buildString {
+                        if (prefsState.fullPrivacyMode) {
+                            append("Full privacy mode active")
+                        } else if (prefsState.encryptNewUploads || prefsState.encryptOfflineFiles) {
+                            append("Enabled")
+                        } else {
+                            append("Disabled")
+                        }
+                        append(" • Key: ")
+                        append(keyStatus)
+                    }
+                    val encryptionItems = listOf(
+                        GroupedListItem(key = "encrypt_new_uploads") {
+                            SettingsSwitchRow(
+                                title = stringResource(R.string.settings_encrypt_new_uploads),
+                                subtitle = stringResource(R.string.settings_encrypt_new_uploads_sub),
+                                checked = prefsState.isUploadEncryptionEnabled,
+                                onChange = { settingsVm.setEncryptNewUploads(it) }
+                            )
+                        },
+                        GroupedListItem(key = "encrypt_offline_files") {
+                            SettingsSwitchRow(
+                                title = stringResource(R.string.settings_encrypt_offline_files),
+                                subtitle = stringResource(R.string.settings_encrypt_offline_files_sub),
+                                checked = prefsState.isOfflineEncryptionEnabled,
+                                onChange = { settingsVm.setEncryptOfflineFiles(it) }
+                            )
+                        },
+                        GroupedListItem(key = "full_privacy_mode") {
+                            SettingsSwitchRow(
+                                title = stringResource(R.string.settings_full_privacy_mode),
+                                subtitle = stringResource(R.string.settings_full_privacy_mode_sub),
+                                checked = prefsState.fullPrivacyMode,
+                                onChange = { settingsVm.setFullPrivacyMode(it) }
+                            )
+                        },
+                        GroupedListItem(key = "encryption_status") {
+                            SettingsClickRow(
+                                title = stringResource(R.string.settings_encryption_status),
+                                subtitle = encryptionStatusSubtitle,
+                                onClick = { settingsVm.refreshKeyStatus() }
+                            )
+                        },
+                        GroupedListItem(key = "recovery_backup_status") {
+                            SettingsClickRow(
+                                title = stringResource(R.string.settings_recovery_backup_status),
+                                subtitle = backupStatus,
+                                onClick = {}
+                            )
+                        },
+                        GroupedListItem(key = "create_recovery_backup") {
+                            SettingsClickRow(
+                                title = stringResource(R.string.settings_create_recovery_backup),
+                                subtitle = stringResource(R.string.settings_create_recovery_backup_sub),
+                                onClick = { showCreateBackupDialog = true }
+                            )
+                        },
+                        GroupedListItem(key = "restore_recovery_backup") {
+                            SettingsClickRow(
+                                title = stringResource(R.string.settings_restore_recovery_backup),
+                                subtitle = stringResource(R.string.settings_restore_recovery_backup_sub),
+                                onClick = { showRestoreBackupDialog = true }
+                            )
+                        }
+                    )
+                    GroupedList(items = encryptionItems)
                 }
 
                 SettingsSectionType.APPEARANCE -> {

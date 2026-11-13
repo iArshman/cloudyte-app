@@ -53,9 +53,22 @@ data class LocalTransfer(
     val lastErrorMessage: String? = null,
     val lastHttpStatus: Int? = null,
     val correlationId: String? = null,
+    val isEncrypted: Boolean = false,
+    val encryptionFormatVersion: Int? = null,
+    val encryptionKeyId: String? = null,
+    val encryptedMetadata: String? = null,
+    val encryptedSizeBytes: Long? = null,
+    val encryptedChecksum: String? = null,
+    val opaqueRemoteName: String? = null,
+    val encryptedStagePath: String? = null,
+    val plaintextSizeBytes: Long? = null,
+    val originalMetadataAvailable: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
-)
+) {
+    val encryptionEnabled: Boolean
+        get() = isEncrypted
+}
 
 enum class TransferDirection { UPLOAD, DOWNLOAD, BACKUP }
 enum class TransferStatus { PENDING, RUNNING, PAUSED, COMPLETED, FAILED, CANCELLED }

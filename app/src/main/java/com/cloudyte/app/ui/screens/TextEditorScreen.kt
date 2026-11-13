@@ -35,6 +35,7 @@ import com.cloudyte.app.api.FileRepository
 import com.cloudyte.app.api.OfflineFileManager
 import com.cloudyte.app.ui.theme.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.Request
@@ -75,33 +76,41 @@ fun TextEditorScreen(
     }
 
     // Load file content
-    LaunchedEffect(fileId, effectiveAccId) {
+    LaunchedEffect(fileId, effectiveAccId, file?.isEncrypted) {
         isLoading = true
         errorMessage = null
         try {
             val content = withContext(Dispatchers.IO) {
                 val acc = effectiveAccId.ifBlank { accountId }
-                val offlineFile = if (acc.isNotBlank() && acc != "all" && acc != "root") {
-                    OfflineFileManager.findOfflineFile(context, acc, fileId)
-                } else null
-                if (offlineFile != null && offlineFile.exists() && offlineFile.length() > 0) {
-                    offlineFile.readText()
+                if (file?.isEncrypted == true) {
+                    val decryptedFile = OfflineFileManager.prepareDecryptedFileForViewer(context, acc, file).getOrThrow()
+                    decryptedFile.readText()
                 } else {
-                    val token = ApiClient.getToken()
-                    val requestBuilder = Request.Builder().url(fileUrl)
-                    if (!token.isNullOrEmpty()) {
-                        requestBuilder.header("Authorization", "Bearer $token")
-                    }
-                    val response = ApiClient.okHttpClient.newCall(requestBuilder.build()).execute()
-                    if (response.isSuccessful) {
-                        val text = response.body?.string() ?: ""
-                        // Auto-cache for offline use
-                        file?.let {
-                            OfflineFileManager.autoCacheOnView(context, accountId, it)
+                    val offlineFile = if (acc.isNotBlank() && acc != "all" && acc != "root") {
+                        if (file != null) {
+                            OfflineFileManager.prepareDecryptedFileForViewer(context, acc, file).getOrNull()
+                        } else {
+                            OfflineFileManager.findOfflineFile(context, acc, fileId)
                         }
-                        text
+                    } else null
+                    if (offlineFile != null && offlineFile.exists() && offlineFile.length() > 0) {
+                        offlineFile.readText()
                     } else {
-                        throw Exception("Server returned HTTP ${response.code}")
+                        val token = ApiClient.getToken()
+                        val requestBuilder = Request.Builder().url(fileUrl)
+                        if (!token.isNullOrEmpty()) {
+                            requestBuilder.header("Authorization", "Bearer $token")
+                        }
+                        val response = ApiClient.okHttpClient.newCall(requestBuilder.build()).execute()
+                        if (response.isSuccessful) {
+                            val text = response.body?.string() ?: ""
+                            file?.let {
+                                OfflineFileManager.autoCacheOnView(context, accountId, it)
+                            }
+                            text
+                        } else {
+                            throw Exception("Server returned HTTP ${response.code}")
+                        }
                     }
                 }
             }
@@ -123,12 +132,19 @@ fun TextEditorScreen(
                 val stagedFile = java.io.File.createTempFile("cloudyte-queued-text-", ".txt", queueDirectory)
                 stagedFile.writeText(textContent)
                 val app = context.applicationContext as com.cloudyte.app.CloudyteApplication
+                val shouldEncrypt = file?.isEncrypted == true || runCatching {
+                    com.cloudyte.app.data.UserPreferences.observe(context).first().isUploadEncryptionEnabled
+                }.getOrDefault(false)
                 val transferId = app.container.transferRepository.enqueueTransfer(
                     accountId = accountId,
                     fileName = fileName,
                     localPath = Uri.fromFile(stagedFile).toString(),
                     direction = com.cloudyte.app.db.TransferDirection.UPLOAD,
-                    totalBytes = stagedFile.length()
+                    totalBytes = stagedFile.length(),
+                    isEncrypted = shouldEncrypt,
+                    originalName = if (shouldEncrypt) fileName else null,
+                    originalMimeType = if (shouldEncrypt) (file?.mimeType ?: "text/plain") else null,
+                    originalSize = if (shouldEncrypt) stagedFile.length() else null
                 )
                 app.container.transferCoordinator.dispatch(com.cloudyte.app.core.transfer.TransferCommand.Start(transferId))
                 originalContent = textContent

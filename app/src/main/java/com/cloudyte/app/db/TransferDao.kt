@@ -94,4 +94,35 @@ interface TransferDao {
 
     @Query("UPDATE transfers SET attemptCount = attemptCount + 1, updatedAt = :updatedAt WHERE id = :id")
     suspend fun incrementAttempt(id: String, updatedAt: Long = System.currentTimeMillis())
+
+    @Query(
+        """UPDATE transfers SET
+            isEncrypted = :isEncrypted,
+            encryptionFormatVersion = :encryptionFormatVersion,
+            encryptionKeyId = :encryptionKeyId,
+            encryptedMetadata = :encryptedMetadata,
+            encryptedSizeBytes = :encryptedSizeBytes,
+            encryptedChecksum = :encryptedChecksum,
+            opaqueRemoteName = :opaqueRemoteName,
+            encryptedStagePath = :encryptedStagePath,
+            plaintextSizeBytes = :plaintextSizeBytes,
+            originalMetadataAvailable = :originalMetadataAvailable,
+            totalBytes = CASE WHEN :encryptedSizeBytes IS NOT NULL AND :encryptedSizeBytes > 0 THEN :encryptedSizeBytes ELSE totalBytes END,
+            updatedAt = :updatedAt
+        WHERE id = :id"""
+    )
+    suspend fun updateEncryptionMetadata(
+        id: String,
+        isEncrypted: Boolean,
+        encryptionFormatVersion: Int?,
+        encryptionKeyId: String?,
+        encryptedMetadata: String?,
+        encryptedSizeBytes: Long?,
+        encryptedChecksum: String?,
+        opaqueRemoteName: String?,
+        encryptedStagePath: String?,
+        plaintextSizeBytes: Long?,
+        originalMetadataAvailable: Boolean,
+        updatedAt: Long = System.currentTimeMillis()
+    )
 }
