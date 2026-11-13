@@ -25,14 +25,14 @@ data class RestoredKeyBackup(
  *
  * Backup JSON schema:
  * {
- *   "version": 1,
- *   "kdf": "PBKDF2-HMAC-SHA256",
- *   "iterations": 310000,
- *   "salt": "base64url",
- *   "nonce": "base64url",
- *   "ciphertext": "base64url",
+ *   "backupVersion": 1,
  *   "keyId": "opaque-key-id",
- *   "createdAt": 0
+ *   "kdfAlgorithm": "PBKDF2-HMAC-SHA256",
+ *   "kdfIterations": 310000,
+ *   "salt": "base64url",
+ *   "wrapAlgorithm": "AES-256-GCM",
+ *   "nonce": "base64url",
+ *   "wrappedKey": "base64url"
  * }
  */
 class KeyBackupCodec(
@@ -84,14 +84,11 @@ class KeyBackupCodec(
             val version = CryptoConstants.BACKUP_VERSION_V1
             val kdfName = CryptoConstants.PBKDF2_HEADER_NAME
             val iterations = CryptoConstants.PBKDF2_ITERATIONS
-            val createdAt = keyMaterial.createdAt
-
             val aad = buildBackupAad(
                 version = version,
                 kdf = kdfName,
                 iterations = iterations,
-                keyId = keyMaterial.keyId,
-                createdAt = createdAt
+                keyId = keyMaterial.keyId
             )
 
             val cipher = Cipher.getInstance(CryptoConstants.AES_GCM_TRANSFORMATION)
@@ -104,14 +101,14 @@ class KeyBackupCodec(
             val ciphertextWithTag = cipher.doFinal(rawKeyBytes)
 
             val json = JSONObject().apply {
-                put("version", version)
-                put("kdf", kdfName)
-                put("iterations", iterations)
-                put("salt", Base64UrlCodec.encode(salt))
-                put("nonce", Base64UrlCodec.encode(nonce))
-                put("ciphertext", Base64UrlCodec.encode(ciphertextWithTag))
+                put("backupVersion", version)
                 put("keyId", keyMaterial.keyId)
-                put("createdAt", createdAt)
+                put("kdfAlgorithm", kdfName)
+                put("kdfIterations", iterations)
+                put("salt", Base64UrlCodec.encode(salt))
+                put("wrapAlgorithm", CryptoConstants.METADATA_ALGORITHM_NAME)
+                put("nonce", Base64UrlCodec.encode(nonce))
+                put("wrappedKey", Base64UrlCodec.encode(ciphertextWithTag))
             }
             return json.toString().toByteArray(StandardCharsets.UTF_8)
         } catch (e: CryptoException) {
@@ -164,8 +161,7 @@ class KeyBackupCodec(
                 version = parsed.version,
                 kdf = parsed.kdf,
                 iterations = parsed.iterations,
-                keyId = parsed.keyId,
-                createdAt = parsed.createdAt
+                keyId = parsed.keyId
             )
             val cipher = Cipher.getInstance(CryptoConstants.AES_GCM_TRANSFORMATION)
             cipher.init(
@@ -182,12 +178,12 @@ class KeyBackupCodec(
             contentKeyProvider?.importRecoveredContentKey(
                 keyId = parsed.keyId,
                 rawKeyBytes = plaintextKey,
-                createdAt = parsed.createdAt
+                createdAt = 0L
             )?.destroy()
             return RestoredKeyBackup(
                 keyId = parsed.keyId,
                 contentKeyBytes = plaintextKey,
-                createdAt = parsed.createdAt
+                createdAt = 0L
             )
         } catch (e: CryptoException) {
             throw e
@@ -218,8 +214,7 @@ class KeyBackupCodec(
         val salt: ByteArray,
         val nonce: ByteArray,
         val ciphertextWithTag: ByteArray,
-        val keyId: String,
-        val createdAt: Long
+        val keyId: String
     )
 
     private fun parseBackupEnvelope(backup: ByteArray): ParsedBackupEnvelope {
@@ -238,37 +233,34 @@ class KeyBackupCodec(
             throw KeyBackupException("Key backup is not valid JSON", e)
         }
 
-        if (!json.has("version")) {
-            throw KeyBackupException("Key backup is missing version")
+        if (!json.has("backupVersion")) {
+            throw KeyBackupException("Key backup is missing backupVersion")
         }
-        val version = json.optInt("version", -1)
+        val version = json.optInt("backupVersion", -1)
         if (version != CryptoConstants.BACKUP_VERSION_V1) {
             throw UnsupportedEncryptionVersionException(version, "Unsupported key backup version: $version")
         }
 
-        val kdf = json.optString("kdf", "")
+        val kdf = json.optString("kdfAlgorithm", "")
         if (kdf != CryptoConstants.PBKDF2_HEADER_NAME) {
             throw KeyBackupException("Unsupported KDF in key backup: $kdf")
         }
 
-        val iterations = json.optInt("iterations", 0)
+        val iterations = json.optInt("kdfIterations", 0)
         if (iterations < CryptoConstants.PBKDF2_ITERATIONS) {
             throw KeyBackupException("Insufficient KDF iterations in key backup: $iterations")
         }
 
         val saltStr = json.optString("salt", "")
         val nonceStr = json.optString("nonce", "")
-        val ciphertextStr = json.optString("ciphertext", "")
+        val ciphertextStr = json.optString("wrappedKey", "")
+        val wrapAlgorithm = json.optString("wrapAlgorithm", "")
         val keyId = json.optString("keyId", "")
+        if (wrapAlgorithm != CryptoConstants.METADATA_ALGORITHM_NAME) {
+            throw KeyBackupException("Unsupported wrap algorithm in key backup: $wrapAlgorithm")
+        }
         if (saltStr.isBlank() || nonceStr.isBlank() || ciphertextStr.isBlank() || keyId.isBlank()) {
             throw KeyBackupException("Key backup is missing required fields")
-        }
-        if (!json.has("createdAt")) {
-            throw KeyBackupException("Key backup is missing createdAt")
-        }
-        val createdAt = json.optLong("createdAt", -1L)
-        if (createdAt < 0L) {
-            throw KeyBackupException("Key backup has invalid createdAt timestamp")
         }
 
         val salt = try {
@@ -306,8 +298,7 @@ class KeyBackupCodec(
             salt = salt,
             nonce = nonce,
             ciphertextWithTag = ciphertextWithTag,
-            keyId = keyId,
-            createdAt = createdAt
+            keyId = keyId
         )
     }
 
@@ -316,19 +307,17 @@ class KeyBackupCodec(
             version: Int,
             kdf: String,
             iterations: Int,
-            keyId: String,
-            createdAt: Long
+            keyId: String
         ): ByteArray {
             val kdfBytes = kdf.toByteArray(StandardCharsets.UTF_8)
             val keyIdBytes = keyId.toByteArray(StandardCharsets.UTF_8)
-            return ByteBuffer.allocate(4 + 2 + kdfBytes.size + 4 + 2 + keyIdBytes.size + 8)
+            return ByteBuffer.allocate(4 + 2 + kdfBytes.size + 4 + 2 + keyIdBytes.size)
                 .putInt(version)
                 .putShort(kdfBytes.size.toShort())
                 .put(kdfBytes)
                 .putInt(iterations)
                 .putShort(keyIdBytes.size.toShort())
                 .put(keyIdBytes)
-                .putLong(createdAt)
                 .array()
         }
     }

@@ -37,6 +37,22 @@ interface CloudyteApi {
     @POST("/api/user/settings")
     suspend fun updateSettings(@Body request: UserSettingsRequest): Response<Unit>
 
+    @PUT("/api/accounts/{accountId}/encryption/key-backup")
+    suspend fun putEncryptionKeyBackup(
+        @Path("accountId") accountId: String,
+        @Body backup: EncryptionKeyBackup
+    ): Response<Unit>
+
+    @GET("/api/accounts/{accountId}/encryption/key-backup")
+    suspend fun getEncryptionKeyBackup(
+        @Path("accountId") accountId: String
+    ): Response<EncryptionKeyBackup>
+
+    @DELETE("/api/accounts/{accountId}/encryption/key-backup")
+    suspend fun deleteEncryptionKeyBackup(
+        @Path("accountId") accountId: String
+    ): Response<Unit>
+
     @GET("/api/accounts")
     suspend fun getAccounts(): List<Account>
 
