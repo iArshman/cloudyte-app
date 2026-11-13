@@ -154,9 +154,9 @@ class ContentKeyManagerAndBackupTest {
         assertFalse(backupCodec.validateKeyBackup("{not_valid_json".toByteArray()))
         assertNull(backupCodec.restoreKeyBackup("Pass123!".toCharArray(), "{not_valid_json".toByteArray()))
 
-        // 2. Unsupported version
-        val unsupportedVersionJson = validJson.replace("\"version\":1", "\"version\":99")
-            .replace("\"version\": 1", "\"version\": 99")
+        // 2. Unsupported backup version
+        val unsupportedVersionJson = validJson.replace("\"backupVersion\":1", "\"backupVersion\":99")
+            .replace("\"backupVersion\": 1", "\"backupVersion\": 99")
         assertFalse(backupCodec.validateKeyBackup(unsupportedVersionJson.toByteArray()))
         try {
             backupCodec.restoreKeyBackupDetailed("Pass123!".toCharArray(), unsupportedVersionJson.toByteArray())
@@ -167,7 +167,7 @@ class ContentKeyManagerAndBackupTest {
 
         // 3. Truncated salt
         val truncatedSaltJson = """
-            {"version":1,"kdf":"PBKDF2-HMAC-SHA256","iterations":310000,"salt":"AAAA","nonce":"AAAAAAAAAAAAAAAA","keyId":"k_123","ciphertext":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","createdAt":1000}
+            {"backupVersion":1,"keyId":"k_123","kdfAlgorithm":"PBKDF2-HMAC-SHA256","kdfIterations":310000,"salt":"AAAA","wrapAlgorithm":"AES-256-GCM","nonce":"AAAAAAAAAAAAAAAA","wrappedKey":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
         """.trimIndent()
         assertFalse(backupCodec.validateKeyBackup(truncatedSaltJson.toByteArray()))
 

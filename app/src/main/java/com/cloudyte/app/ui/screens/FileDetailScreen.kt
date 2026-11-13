@@ -445,7 +445,11 @@ fun FileDetailScreen(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = if (nonNullFile.isEncrypted) "Decrypt / Export file" else "Create encrypted copy",
+                    text = when {
+                        nonNullFile.isEncrypted -> "Decrypt / Export file"
+                        nonNullFile.isFolderItem -> "Encrypt all files in folder"
+                        else -> "Create encrypted copy"
+                    },
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold
                 )
