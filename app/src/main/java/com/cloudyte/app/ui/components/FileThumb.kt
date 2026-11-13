@@ -243,7 +243,7 @@ fun FileThumb(
                     Icon(
                         imageVector = Icons.Default.Lock,
                         contentDescription = "Encrypted",
-                        tint = MaterialTheme.colorScheme.primary,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
                         modifier = Modifier.size(lockBadgeSize * 0.62f)
                     )
                 }

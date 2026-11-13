@@ -22,8 +22,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.SwapVert
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -59,7 +57,6 @@ fun FloatingNavigationBar(
     navController: NavController,
     visible: Boolean = true,
     showNavText: Boolean = true,
-    activeTransferCount: Int = 0,
     modifier: Modifier = Modifier,
     onNavigate: ((String) -> Unit)? = null
 ) {
@@ -99,11 +96,12 @@ fun FloatingNavigationBar(
             ) {
                 items.forEachIndexed { index, item ->
                     val isSelected = index == selectedIndex
-                    val showBadge = item.route == "transfers" && activeTransferCount > 0
-                    val badgeLabel = if (activeTransferCount > 99) "99+" else activeTransferCount.toString()
-
                     val pillColor by animateColorAsState(
-                        targetValue = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0f),
+                        targetValue = if (isSelected) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0f)
+                        },
                         label = "navPillColor_${item.route}"
                     )
 
@@ -134,25 +132,12 @@ fun FloatingNavigationBar(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                                 modifier = Modifier.padding(horizontal = 12.dp)
                             ) {
-                                BadgedBox(
-                                    badge = {
-                                        if (showBadge) {
-                                            Badge(
-                                                containerColor = MaterialTheme.colorScheme.onPrimary,
-                                                contentColor = MaterialTheme.colorScheme.primary
-                                            ) {
-                                                Text(badgeLabel)
-                                            }
-                                        }
-                                    }
-                                ) {
-                                    Icon(
-                                        imageVector = item.icon,
-                                        contentDescription = item.label,
-                                        tint = MaterialTheme.colorScheme.onPrimary,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
+                                Icon(
+                                    imageVector = item.icon,
+                                    contentDescription = item.label,
+                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.size(18.dp)
+                                )
                                 if (showNavText) {
                                     Text(
                                         text = item.label,
@@ -167,50 +152,24 @@ fun FloatingNavigationBar(
                                 }
                             }
                         } else if (showNavText) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp),
-                                modifier = Modifier.padding(horizontal = 10.dp)
-                            ) {
-                                Text(
-                                    text = item.label,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 13.sp,
-                                    lineHeight = 16.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                if (showBadge) {
-                                    Badge(
-                                        containerColor = MaterialTheme.colorScheme.primary,
-                                        contentColor = MaterialTheme.colorScheme.onPrimary
-                                    ) {
-                                        Text(badgeLabel)
-                                    }
-                                }
-                            }
+                            Text(
+                                text = item.label,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 13.sp,
+                                lineHeight = 16.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(horizontal = 8.dp)
+                            )
                         } else {
-                            BadgedBox(
-                                badge = {
-                                    if (showBadge) {
-                                        Badge(
-                                            containerColor = MaterialTheme.colorScheme.primary,
-                                            contentColor = MaterialTheme.colorScheme.onPrimary
-                                        ) {
-                                            Text(badgeLabel)
-                                        }
-                                    }
-                                }
-                            ) {
-                                Icon(
-                                    imageVector = item.icon,
-                                    contentDescription = item.label,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
+                            Icon(
+                                imageVector = item.icon,
+                                contentDescription = item.label,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                                modifier = Modifier.size(20.dp)
+                            )
                         }
                     }
                 }

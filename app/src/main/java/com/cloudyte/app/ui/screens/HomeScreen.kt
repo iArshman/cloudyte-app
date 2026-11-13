@@ -515,13 +515,14 @@ fun HomeScreen(
                 isManualRefreshing = true
                 viewModel.loadData(forceStorageRefresh = true)
             },
+            indicator = {},
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
             // Loading indicator pinned just below top bar
             AnimatedVisibility(
-                visible = isLoading && !isManualRefreshing,
+                visible = isLoading,
                 enter = expandVertically(),
                 exit = shrinkVertically()
             ) {
@@ -1361,9 +1362,9 @@ fun FileListItem(
                     text = file.effectiveName,
                     color = MaterialTheme.colorScheme.onSurface,
                     style = MaterialTheme.typography.bodyMedium,
-                    fontSize = 14.sp,
-                    lineHeight = 18.sp,
-                    fontWeight = FontWeight.Medium,
+                    fontSize = 13.5.sp,
+                    lineHeight = 17.sp,
+                    fontWeight = FontWeight.Normal,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -1375,13 +1376,13 @@ fun FileListItem(
                     Text(
                         text = if (file.isFolderItem) stringResource(R.string.files_type_folder) else file.formattedSize,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MetricLabelTextStyle.copy(fontSize = 11.sp, lineHeight = 14.sp)
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, lineHeight = 14.sp)
                     )
                     if (!file.isFolderItem) {
                         Text(
                             text = "• ${file.effectiveType.uppercase()}",
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, lineHeight = 14.sp)
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, lineHeight = 14.sp)
                         )
                     }
                     if (file.isEncrypted) {

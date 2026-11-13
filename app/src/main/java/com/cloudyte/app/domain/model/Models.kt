@@ -83,7 +83,11 @@ data class Transfer(
     val idempotencyKey: String?,
     val attemptCount: Int,
     val updatedAt: Long,
-    val isEncrypted: Boolean = false
+    val isEncrypted: Boolean = false,
+    val fileId: String? = null,
+    val remoteId: String? = null,
+    val localPath: String? = null,
+    val localUri: String? = null
 ) {
     companion object {
         fun fromLocal(value: LocalTransfer) = Transfer(
@@ -102,7 +106,11 @@ data class Transfer(
             idempotencyKey = value.idempotencyKey,
             attemptCount = value.attemptCount,
             updatedAt = value.updatedAt,
-            isEncrypted = value.isEncrypted
+            isEncrypted = value.isEncrypted,
+            fileId = value.fileId,
+            remoteId = value.remoteId,
+            localPath = value.localPath,
+            localUri = value.localUri
         )
     }
 }

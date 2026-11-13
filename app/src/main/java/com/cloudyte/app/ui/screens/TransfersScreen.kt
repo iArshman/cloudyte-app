@@ -1,8 +1,10 @@
 package com.cloudyte.app.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,12 +15,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
@@ -26,10 +30,11 @@ import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
@@ -41,7 +46,6 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -56,9 +60,11 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.cloudyte.app.R
 import com.cloudyte.app.CloudyteApplication
+import com.cloudyte.app.R
+import com.cloudyte.app.api.CloudFile
 import com.cloudyte.app.core.transfer.TransferCommand
 import com.cloudyte.app.data.TransferRepository
 import com.cloudyte.app.data.formatStorageSize
@@ -67,8 +73,9 @@ import com.cloudyte.app.db.TransferStatus
 import com.cloudyte.app.domain.model.Transfer
 import com.cloudyte.app.sync.AutoSyncManager
 import com.cloudyte.app.ui.components.EmptyState
-import com.cloudyte.app.ui.theme.MetricLabelTextStyle
+import com.cloudyte.app.ui.components.FileThumb
 import kotlinx.coroutines.launch
+import java.io.File
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -87,6 +94,8 @@ fun TransfersScreen(
     }
 
     var selectedTab by remember { mutableIntStateOf(0) }
+    var showOverflowMenu by remember { mutableStateOf(false) }
+
     val allLabel = stringResource(R.string.transfers_tab_all)
     val activeLabel = stringResource(R.string.transfers_tab_active)
     val completedLabel = stringResource(R.string.transfers_tab_completed)
@@ -111,14 +120,7 @@ fun TransfersScreen(
         }
     }
 
-    val tabs = remember(allTransfers.size, activeTransfers.size, completedTransfers.size, failedTransfers.size) {
-        listOf(
-            if (allTransfers.isNotEmpty()) "$allLabel (${allTransfers.size})" else allLabel,
-            if (activeTransfers.isNotEmpty()) "$activeLabel (${activeTransfers.size})" else activeLabel,
-            if (completedTransfers.isNotEmpty()) "$completedLabel (${completedTransfers.size})" else completedLabel,
-            if (failedTransfers.isNotEmpty()) "$failedLabel (${failedTransfers.size})" else failedLabel
-        )
-    }
+    val tabs = listOf(allLabel, activeLabel, completedLabel, failedLabel)
 
     val filteredTransfers = when (selectedTab) {
         1 -> activeTransfers
@@ -137,7 +139,11 @@ fun TransfersScreen(
     }
 
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
-    val isScrolled by remember { androidx.compose.runtime.derivedStateOf { listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0 } }
+    val isScrolled by remember {
+        androidx.compose.runtime.derivedStateOf {
+            listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0
+        }
+    }
     val topBarContainerColor by androidx.compose.animation.animateColorAsState(
         targetValue = if (isScrolled) MaterialTheme.colorScheme.surfaceContainer else MaterialTheme.colorScheme.surface,
         animationSpec = androidx.compose.animation.core.tween(durationMillis = 200),
@@ -182,9 +188,58 @@ fun TransfersScreen(
                                 Text("Retry All", color = MaterialTheme.colorScheme.primary)
                             }
                         }
-                        if (completedTransfers.isNotEmpty() || selectedTab == 0 || selectedTab == 2) {
-                            IconButton(onClick = { scope.launch { repo.clearCompleted() } }) {
-                                Icon(Icons.Default.Clear, contentDescription = stringResource(R.string.transfers_clear_completed))
+                        if (completedTransfers.isNotEmpty() || pausableActive.isNotEmpty() || retryableFailed.isNotEmpty()) {
+                            Box {
+                                IconButton(onClick = { showOverflowMenu = true }) {
+                                    Icon(
+                                        imageVector = Icons.Default.MoreVert,
+                                        contentDescription = stringResource(R.string.action_options)
+                                    )
+                                }
+                                DropdownMenu(
+                                    expanded = showOverflowMenu,
+                                    onDismissRequest = { showOverflowMenu = false },
+                                    modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer)
+                                ) {
+                                    if (pausableActive.isNotEmpty()) {
+                                        DropdownMenuItem(
+                                            text = { Text("Pause all active (${pausableActive.size})") },
+                                            leadingIcon = { Icon(Icons.Default.Pause, contentDescription = null) },
+                                            onClick = {
+                                                showOverflowMenu = false
+                                                scope.launch {
+                                                    pausableActive.forEach { t ->
+                                                        coordinator.dispatch(TransferCommand.Pause(t.id))
+                                                    }
+                                                }
+                                            }
+                                        )
+                                    }
+                                    if (retryableFailed.isNotEmpty()) {
+                                        DropdownMenuItem(
+                                            text = { Text("Retry all failed (${retryableFailed.size})") },
+                                            leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) },
+                                            onClick = {
+                                                showOverflowMenu = false
+                                                scope.launch {
+                                                    retryableFailed.forEach { t ->
+                                                        coordinator.dispatch(TransferCommand.Retry(t.id))
+                                                    }
+                                                }
+                                            }
+                                        )
+                                    }
+                                    if (completedTransfers.isNotEmpty()) {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.transfers_clear_completed)) },
+                                            leadingIcon = { Icon(Icons.Default.DeleteSweep, contentDescription = null) },
+                                            onClick = {
+                                                showOverflowMenu = false
+                                                scope.launch { repo.clearCompleted() }
+                                            }
+                                        )
+                                    }
+                                }
                             }
                         }
                     },
@@ -235,11 +290,11 @@ fun TransfersScreen(
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    contentPadding = PaddingValues(
                         start = 16.dp,
                         end = 16.dp,
                         top = 12.dp,
-                        bottom = com.cloudyte.app.ui.components.LocalBottomBarInset.current + 16.dp
+                        bottom = com.cloudyte.app.ui.components.LocalBottomBarInset.current + 24.dp
                     )
                 ) {
                     items(filteredTransfers, key = { it.id }) { transfer ->
@@ -307,19 +362,71 @@ fun TransferItemCard(
     }
     val speedBytesPerSecond = emaSpeedBps.toLong()
 
+    val directionLabel = when (transfer.direction) {
+        "UPLOAD" -> "Upload"
+        "BACKUP" -> "Backup"
+        else -> "Download"
+    }
+    val isActiveOrPaused = transfer.status == TransferStatus.RUNNING.name ||
+        transfer.status == TransferStatus.PENDING.name ||
+        transfer.status == TransferStatus.PAUSED.name
+
+    val progress = if (transfer.totalBytes > 0) {
+        (transfer.bytesTransferred.toFloat() / transfer.totalBytes.toFloat()).coerceIn(0f, 1f)
+    } else 0f
+
+    val previewLocalFile = remember(transfer.localPath) {
+        transfer.localPath?.takeIf { it.isNotBlank() }?.let(::File)?.takeIf { it.isFile && it.length() > 0L }
+    }
+    val previewCloudId = transfer.remoteId?.takeIf { it.isNotBlank() } ?: transfer.fileId?.takeIf { it.isNotBlank() }
+    val previewExt = remember(transfer.fileName) {
+        transfer.fileName.substringAfterLast('.', "").lowercase()
+    }
+    val previewCloudFile = remember(transfer.id, previewCloudId, transfer.fileName, previewExt, transfer.totalBytes, transfer.isEncrypted, transfer.accountId) {
+        if (previewCloudId != null || previewLocalFile != null) {
+            CloudFile(
+                id = previewCloudId ?: transfer.id,
+                name = transfer.fileName,
+                type = previewExt.ifBlank { null },
+                size = transfer.totalBytes,
+                isEncrypted = transfer.isEncrypted,
+                accountId = transfer.accountId
+            )
+        } else null
+    }
+
     Card(
         shape = MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = if (transfer.direction == "UPLOAD" || transfer.direction == "BACKUP") Icons.Default.Upload else Icons.Default.Download,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(24.dp)
-                )
+                if (previewCloudFile != null) {
+                    FileThumb(
+                        file = previewCloudFile,
+                        accountId = transfer.accountId,
+                        sizeDp = 44.dp,
+                        cornerRadius = 10.dp,
+                        showEncryptedBadge = false,
+                        localSource = previewLocalFile
+                    )
+                } else {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                        modifier = Modifier.size(44.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = if (transfer.direction == "UPLOAD" || transfer.direction == "BACKUP") Icons.Default.Upload else Icons.Default.Download,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Row(
@@ -328,26 +435,28 @@ fun TransferItemCard(
                     ) {
                         Text(
                             text = transfer.fileName,
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.SemiBold,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontSize = 14.sp,
+                            lineHeight = 18.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false)
                         )
                         if (transfer.isEncrypted) {
                             Surface(
-                                shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
+                                shape = RoundedCornerShape(6.dp),
                                 color = MaterialTheme.colorScheme.primaryContainer
                             ) {
                                 Row(
                                     modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Lock,
                                         contentDescription = "Encrypted",
-                                        tint = MaterialTheme.colorScheme.primary,
+                                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
                                         modifier = Modifier.size(11.dp)
                                     )
                                 }
@@ -355,13 +464,43 @@ fun TransferItemCard(
                         }
                     }
                     Spacer(modifier = Modifier.height(2.dp))
+                    val sizeLabel = if (transfer.totalBytes > 0L) formatStorageSize(transfer.totalBytes) else null
+                    val subtitleText = when (transfer.status) {
+                        TransferStatus.COMPLETED.name -> listOfNotNull(directionLabel, sizeLabel).joinToString(" • ")
+                        TransferStatus.FAILED.name -> listOfNotNull("$directionLabel failed", sizeLabel).joinToString(" • ")
+                        TransferStatus.CANCELLED.name -> "$directionLabel • Cancelled"
+                        TransferStatus.PAUSED.name -> {
+                            val pct = (progress * 100f).roundToInt().coerceIn(0, 100)
+                            if (transfer.totalBytes > 0L) "$directionLabel paused • $pct%" else "$directionLabel paused"
+                        }
+                        TransferStatus.PENDING.name -> listOfNotNull("$directionLabel queued", sizeLabel).joinToString(" • ")
+                        else -> {
+                            val verb = if (transfer.direction == "UPLOAD" || transfer.direction == "BACKUP") "Uploading" else "Downloading"
+                            val pct = (progress * 100f).roundToInt().coerceIn(0, 100)
+                            val progText = when {
+                                transfer.totalBytes > 0L -> "${formatStorageSize(transfer.bytesTransferred)} / ${formatStorageSize(transfer.totalBytes)} ($pct%)"
+                                transfer.bytesTransferred > 0L -> formatStorageSize(transfer.bytesTransferred)
+                                else -> null
+                            }
+                            val rateText = if (speedBytesPerSecond > 0L) {
+                                val remaining = (transfer.totalBytes - transfer.bytesTransferred).coerceAtLeast(0L)
+                                val eta = if (remaining > 0L) remaining / speedBytesPerSecond else 0L
+                                "${formatTransferRate(speedBytesPerSecond)} • ${formatTransferEta(eta)} left"
+                            } else null
+                            listOfNotNull(verb, progText, rateText).joinToString(" • ")
+                        }
+                    }
                     Text(
-                        text = "${transfer.direction} • ${transfer.status}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = subtitleText,
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 16.sp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
-                Spacer(modifier = Modifier.width(8.dp))
+                if (isActiveOrPaused || transfer.status == TransferStatus.FAILED.name) {
+                    Spacer(modifier = Modifier.width(4.dp))
+                }
 
                 when (transfer.status) {
                     TransferStatus.RUNNING.name, TransferStatus.PENDING.name -> {
@@ -388,50 +527,23 @@ fun TransferItemCard(
                 }
             }
 
-            if (transfer.status == TransferStatus.RUNNING.name || transfer.status == TransferStatus.PENDING.name || transfer.status == TransferStatus.PAUSED.name) {
+            if (isActiveOrPaused) {
                 Spacer(modifier = Modifier.height(8.dp))
-                val progress = if (transfer.totalBytes > 0) {
-                    (transfer.bytesTransferred.toFloat() / transfer.totalBytes.toFloat()).coerceIn(0f, 1f)
-                } else 0f
                 @OptIn(androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
                 androidx.compose.material3.LinearWavyProgressIndicator(
                     progress = { progress },
                     modifier = Modifier.fillMaxWidth()
                 )
-                Spacer(modifier = Modifier.height(8.dp))
-                val percentInt = (progress * 100f).roundToInt().coerceIn(0, 100)
-                val sizeProgressText = if (transfer.totalBytes > 0L) {
-                    "${formatStorageSize(transfer.bytesTransferred)} / ${formatStorageSize(transfer.totalBytes)} ($percentInt%)"
-                } else if (transfer.bytesTransferred > 0L) {
-                    formatStorageSize(transfer.bytesTransferred)
-                } else {
-                    null
-                }
-                val rateEtaText = if (speedBytesPerSecond > 0L) {
-                    val remainingBytes = (transfer.totalBytes - transfer.bytesTransferred).coerceAtLeast(0L)
-                    val etaSeconds = if (remainingBytes > 0L) remainingBytes / speedBytesPerSecond else 0L
-                    "${formatTransferRate(speedBytesPerSecond)} • ${formatTransferEta(etaSeconds)} left"
-                } else {
-                    null
-                }
-                val metricsLine = listOfNotNull(sizeProgressText, rateEtaText).joinToString("  •  ")
-                if (metricsLine.isNotBlank()) {
-                    Text(
-                        text = metricsLine,
-                        style = MetricLabelTextStyle,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
             }
 
             if (!transfer.errorMessage.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     text = transfer.errorMessage,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.5.sp),
+                    color = MaterialTheme.colorScheme.error,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
@@ -441,12 +553,11 @@ fun TransferItemCard(
 private data class TransferMetricSample(val bytes: Long, val timestamp: Long)
 
 private fun formatTransferRate(bytesPerSecond: Long): String {
-    val value = when {
+    return when {
         bytesPerSecond >= 1024L * 1024L -> "%.1f MB/s".format(bytesPerSecond / (1024.0 * 1024.0))
         bytesPerSecond >= 1024L -> "%.1f KB/s".format(bytesPerSecond / 1024.0)
         else -> "$bytesPerSecond B/s"
     }
-    return value
 }
 
 private fun formatTransferEta(seconds: Long): String {

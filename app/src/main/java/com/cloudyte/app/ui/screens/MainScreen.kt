@@ -14,8 +14,6 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SwapVert
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationRail
@@ -25,14 +23,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -40,11 +36,9 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.cloudyte.app.CloudyteApplication
 import com.cloudyte.app.R
 import com.cloudyte.app.data.UserPreferences
 import com.cloudyte.app.data.UserPreferencesState
-import com.cloudyte.app.db.TransferStatus
 import com.cloudyte.app.features.accounts.AccountsScreen as FeatureAccountsScreen
 import com.cloudyte.app.features.files.FilesScreen as FeatureFilesScreen
 import com.cloudyte.app.features.home.HomeScreen as FeatureHomeScreen
@@ -74,15 +68,6 @@ fun MainScreen(rootNavController: NavController) {
     val bottomNavController = rememberNavController()
     val filesViewModel: FilesViewModel = viewModel()
     val prefsState by UserPreferences.observe(context).collectAsState(initial = UserPreferencesState())
-    val allTransfers by remember(context) {
-        (context.applicationContext as? CloudyteApplication)?.container?.transferCoordinator?.observeTransfers()
-            ?: kotlinx.coroutines.flow.flowOf(emptyList())
-    }.collectAsStateWithLifecycle(initialValue = emptyList())
-    val activeTransferCount = remember(allTransfers) {
-        allTransfers.count {
-            it.status == TransferStatus.RUNNING.name || it.status == TransferStatus.PENDING.name
-        }
-    }
 
     BoxWithConstraints(
         modifier = Modifier
@@ -109,22 +94,10 @@ fun MainScreen(rootNavController: NavController) {
                     ) {
                         Spacer(modifier = Modifier.weight(0.2f))
                         railItems.forEach { item ->
-                            val showBadge = item.route == "transfers" && activeTransferCount > 0
-                            val badgeLabel = if (activeTransferCount > 99) "99+" else activeTransferCount.toString()
                             NavigationRailItem(
                                 selected = currentRoute == item.route,
                                 onClick = { bottomNavController.navigateSingleTopRestore(item.route) },
-                                icon = {
-                                    BadgedBox(
-                                        badge = {
-                                            if (showBadge) {
-                                                Badge { Text(badgeLabel) }
-                                            }
-                                        }
-                                    ) {
-                                        Icon(item.icon, contentDescription = item.label)
-                                    }
-                                },
+                                icon = { Icon(item.icon, contentDescription = item.label) },
                                 label = if (prefsState.showNavText) {
                                     { Text(item.label, style = MaterialTheme.typography.labelMedium) }
                                 } else null,
@@ -163,7 +136,6 @@ fun MainScreen(rootNavController: NavController) {
                     FloatingNavigationBar(
                         navController = bottomNavController,
                         showNavText = prefsState.showNavText,
-                        activeTransferCount = activeTransferCount,
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth(),

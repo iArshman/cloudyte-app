@@ -1388,6 +1388,7 @@ fun FilesScreen(
         PullToRefreshBox(
             isRefreshing = isRefreshing && files.isNotEmpty(),
             onRefresh = { viewModel.refresh(force = true) },
+            indicator = {},
             modifier = Modifier.fillMaxSize()
         ) {
             val currentPane = FolderPane(
@@ -2143,7 +2144,7 @@ fun FolderGridItem(
     )
 
     Card(
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = cardBg),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         modifier = modifier
@@ -2162,18 +2163,12 @@ fun FolderGridItem(
                 }
             )
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 10.dp, bottom = 8.dp)
-        ) {
-            // Top inner rounded box with centered Folder icon
+        Column(modifier = Modifier.fillMaxWidth()) {
+            // Top full-bleed preview box with centered Folder icon (no border around preview)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 10.dp)
                     .aspectRatio(1.15f)
-                    .clip(RoundedCornerShape(16.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)),
                 contentAlignment = Alignment.Center
             ) {
@@ -2225,22 +2220,20 @@ fun FolderGridItem(
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-
             // Bottom row: Folder name + "Folder" subtitle on left, 3-dot menu on right
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 12.dp, end = 2.dp),
+                    .padding(start = 10.dp, end = 0.dp, top = 6.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = folder.effectiveName,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontSize = 14.sp,
-                        lineHeight = 18.sp,
-                        fontWeight = FontWeight.Medium,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontSize = 12.5.sp,
+                        lineHeight = 16.sp,
+                        fontWeight = FontWeight.Normal,
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -2248,7 +2241,7 @@ fun FolderGridItem(
                     Spacer(modifier = Modifier.height(1.dp))
                     Text(
                         text = "Folder",
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.5.sp, lineHeight = 15.sp),
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, lineHeight = 14.sp),
                         fontWeight = FontWeight.Normal,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1
@@ -2338,7 +2331,7 @@ fun FileGridItem(
     )
 
     Card(
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = cardBg),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         modifier = modifier
@@ -2357,25 +2350,19 @@ fun FileGridItem(
                 }
             )
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 10.dp, bottom = 8.dp)
-        ) {
-            // Top inner rounded box with full-bleed thumbnail or uppercase type badge ("OTHE")
+        Column(modifier = Modifier.fillMaxWidth()) {
+            // Full-bleed top preview thumbnail (no border around thumbnail)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 10.dp)
                     .aspectRatio(1.15f)
-                    .clip(RoundedCornerShape(16.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
             ) {
                 FileThumb(
                     file = file,
                     accountId = accountId,
                     sizeDp = 160.dp,
-                    cornerRadius = 16.dp,
+                    cornerRadius = 0.dp,
                     showTypeBadgeInGrid = true,
                     modifier = Modifier.fillMaxSize()
                 )
@@ -2400,22 +2387,20 @@ fun FileGridItem(
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-
             // Bottom row: File name + formatted size on left, 3-dot menu on right
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 12.dp, end = 2.dp),
+                    .padding(start = 10.dp, end = 0.dp, top = 6.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = file.effectiveName,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontSize = 14.sp,
-                        lineHeight = 18.sp,
-                        fontWeight = FontWeight.Medium,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontSize = 12.5.sp,
+                        lineHeight = 16.sp,
+                        fontWeight = FontWeight.Normal,
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -2427,7 +2412,7 @@ fun FileGridItem(
                     ) {
                         Text(
                             text = file.formattedSize,
-                            style = MetricLabelTextStyle.copy(fontSize = 11.sp, lineHeight = 14.sp),
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, lineHeight = 14.sp),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1
                         )
@@ -2597,9 +2582,9 @@ fun FileRow(
                 Text(
                     text = file.effectiveName,
                     style = MaterialTheme.typography.bodyMedium,
-                    fontSize = 14.sp,
-                    lineHeight = 18.sp,
-                    fontWeight = FontWeight.Medium,
+                    fontSize = 13.5.sp,
+                    lineHeight = 17.sp,
+                    fontWeight = FontWeight.Normal,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
@@ -2616,7 +2601,7 @@ fun FileRow(
                 ) {
                     Text(
                         text = subtitle,
-                        style = MetricLabelTextStyle.copy(fontSize = 11.sp, lineHeight = 14.sp),
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, lineHeight = 14.sp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
