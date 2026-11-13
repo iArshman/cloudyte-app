@@ -32,6 +32,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -50,6 +51,8 @@ import com.cloudyte.app.ui.theme.FileVideo
 import java.io.File
 
 import android.net.Uri
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
@@ -64,9 +67,14 @@ fun FileThumb(
     modifier: Modifier = Modifier,
     cornerRadius: Dp = 12.dp,
     showTypeBadgeInGrid: Boolean = false,
+    showEncryptedBadge: Boolean = true,
     localSource: File? = null
 ) {
     val context = LocalContext.current
+    val density = LocalDensity.current
+    val targetSizePx = remember(sizeDp, density) {
+        with(density) { sizeDp.roundToPx().coerceIn(64, 512) }
+    }
     val app = context.applicationContext as? CloudyteApplication
     val downloadedFiles by OfflineFileManager.downloadedFiles.collectAsState()
     val isDownloadedOffline = file.effectiveId in downloadedFiles
@@ -127,7 +135,7 @@ fun FileThumb(
                 accountId = resolvedAccId,
                 providerType = providerType,
                 file = file,
-                sizePx = (sizeDp.value * 4).toInt().coerceIn(64, 512),
+                sizePx = targetSizePx,
                 localSource = resolvedLocalSource
             )
             if (!resolvedPath.isNullOrBlank() && resolvedPath.startsWith("/")) {
@@ -139,7 +147,7 @@ fun FileThumb(
         }
     }
 
-    val remoteThumbUrl = remember(file.isEncrypted, file.thumbUrl, effectiveAccountId, file.effectiveId, sizeDp) {
+    val remoteThumbUrl = remember(file.isEncrypted, file.thumbUrl, effectiveAccountId, file.effectiveId, targetSizePx) {
         if (file.isEncrypted) {
             null
         } else {
@@ -156,7 +164,7 @@ fun FileThumb(
                     }
                 }
                 effectiveAccountId.isNotBlank() && file.effectiveId.isNotBlank() -> {
-                    ApiClient.getThumbUrl(effectiveAccountId, file.effectiveId, (sizeDp.value * 4).toInt().coerceIn(64, 512))
+                    ApiClient.getThumbUrl(effectiveAccountId, file.effectiveId, targetSizePx)
                 }
                 else -> null
             }
@@ -176,6 +184,7 @@ fun FileThumb(
     val iconSize = (sizeDp * 0.52f).coerceIn(22.dp, 64.dp)
     val badgeSize = (sizeDp * 0.42f).coerceIn(20.dp, 48.dp)
     val playIconSize = (badgeSize * 0.62f).coerceIn(12.dp, 28.dp)
+    val lockBadgeSize = if (sizeDp >= 96.dp) 24.dp else 18.dp
 
     Box(
         modifier = containerModifier
@@ -184,9 +193,10 @@ fun FileThumb(
         contentAlignment = Alignment.Center
     ) {
         if (isPreviewable && imageModel != null) {
-            val imageRequest = remember(imageModel, context) {
+            val imageRequest = remember(imageModel, context, targetSizePx) {
                 coil.request.ImageRequest.Builder(context)
                     .data(imageModel)
+                    .size(targetSizePx)
                     .crossfade(150)
                     .build()
             }
@@ -217,6 +227,27 @@ fun FileThumb(
             }
         } else {
             FileTypeFallbackContent(file, iconSize, showTypeBadgeInGrid)
+        }
+
+        if (showEncryptedBadge && file.isEncrypted && file.originalMetadataAvailable && !file.isFolderItem) {
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primaryContainer,
+                shadowElevation = 2.dp,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(if (sizeDp >= 96.dp) 6.dp else 3.dp)
+                    .size(lockBadgeSize)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Default.Lock,
+                        contentDescription = "Encrypted",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(lockBadgeSize * 0.62f)
+                    )
+                }
+            }
         }
     }
 }

@@ -4,6 +4,6 @@ import androidx.compose.runtime.Composable
 import com.cloudyte.app.ui.screens.TransfersScreen as LegacyTransfersScreen
 
 @Composable
-fun TransfersScreen(onBack: () -> Unit) {
-    LegacyTransfersScreen(onBack)
+fun TransfersScreen(onBack: () -> Unit, showBackButton: Boolean = true) {
+    LegacyTransfersScreen(onBack = onBack, showBackButton = showBackButton)
 }
