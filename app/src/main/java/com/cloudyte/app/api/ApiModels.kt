@@ -185,6 +185,16 @@ data class StorageSummary(
 
 @Stable
 @JsonClass(generateAdapter = true)
+data class EncryptedMetadataEnvelope(
+    val metadataVersion: Int = 1,
+    val algorithm: String = "AES-256-GCM",
+    val keyId: String,
+    val nonce: String,
+    val ciphertext: String
+)
+
+@Stable
+@JsonClass(generateAdapter = true)
 data class CloudFile(
     val id: String? = null,
     val _id: String? = null,
@@ -206,10 +216,26 @@ data class CloudFile(
     val isFolder: Boolean? = false,
     val is_dir: Boolean? = false,
     val isDirectory: Boolean? = false,
-    val accountId: String? = null
+    val accountId: String? = null,
+    val isEncrypted: Boolean = false,
+    val encryptionFormatVersion: Int? = null,
+    val encryptionKeyId: String? = null,
+    val encryptedMetadata: EncryptedMetadataEnvelope? = null,
+    val encryptedSizeBytes: Long? = null,
+    val encryptedChecksum: String? = null,
+    val opaqueRemoteName: String? = null,
+    val plaintextSizeBytes: Long? = null,
+    val originalMetadataAvailable: Boolean = false,
+    val metadataStatus: String? = null
 ) {
     val effectiveId: String get() = id ?: _id ?: fileId ?: ""
-    val effectiveName: String get() = name ?: fileName ?: title ?: "Unnamed File"
+    val effectiveName: String
+        get() {
+            if (isEncrypted && !originalMetadataAvailable) {
+                return "Encrypted file"
+            }
+            return name ?: fileName ?: title ?: "Unnamed File"
+        }
     val isFolderItem: Boolean get() = isFolder == true || is_dir == true || isDirectory == true || type.equals("folder", ignoreCase = true)
     
     val effectiveAccountId: String
@@ -228,19 +254,26 @@ data class CloudFile(
         }
     
     val fileExtension: String
-        get() = effectiveName.substringAfterLast('.', "").lowercase(Locale.US)
+        get() {
+            if (isEncrypted && !originalMetadataAvailable) return ""
+            return effectiveName.substringAfterLast('.', "").lowercase(Locale.US)
+        }
 
     val allTypeCandidates: List<String>
-        get() = listOfNotNull(
-            type?.lowercase(Locale.US),
-            fileType?.lowercase(Locale.US),
-            mimeType?.lowercase(Locale.US),
-            mimeType?.substringAfterLast('/')?.lowercase(Locale.US),
-            fileExtension.takeIf { it.isNotBlank() }
-        )
+        get() {
+            if (isEncrypted && !originalMetadataAvailable) return emptyList()
+            return listOfNotNull(
+                type?.lowercase(Locale.US),
+                fileType?.lowercase(Locale.US),
+                mimeType?.lowercase(Locale.US),
+                mimeType?.substringAfterLast('/')?.lowercase(Locale.US),
+                fileExtension.takeIf { it.isNotBlank() }
+            )
+        }
 
     val effectiveType: String get() {
         if (isFolderItem) return "folder"
+        if (isEncrypted && !originalMetadataAvailable) return "encrypted"
         val ext = fileExtension
         if (ext.isNotBlank() && ext.length <= 6 && !effectiveName.startsWith(".trashed")) {
             return ext
@@ -249,47 +282,63 @@ data class CloudFile(
         return if (rawType.isNotBlank()) rawType.lowercase(Locale.US) else "file"
     }
 
-    val isImage: Boolean get() = !isFolderItem && (
+    val isImage: Boolean get() = !isFolderItem && (!isEncrypted || originalMetadataAvailable) && (
         allTypeCandidates.any {
             it in listOf("image", "photo", "jpg", "jpeg", "png", "webp", "gif", "bmp", "svg", "heic", "heif", "ico", "jfif", "avif") ||
                 it.startsWith("image/")
         } || effectiveName.contains("IMG_", ignoreCase = true) || effectiveName.contains("Screenshot", ignoreCase = true)
     )
 
-    val isVideo: Boolean get() = !isFolderItem && (
+    val isVideo: Boolean get() = !isFolderItem && (!isEncrypted || originalMetadataAvailable) && (
         allTypeCandidates.any {
             it in listOf("video", "mp4", "mkv", "avi", "mov", "flv", "wmv", "3gp", "webm", "m4v", "ts", "mpeg", "mpg") ||
                 it.startsWith("video/")
         } || effectiveName.contains("VID_", ignoreCase = true)
     )
 
-    val isAudio: Boolean get() = !isFolderItem && allTypeCandidates.any {
+    val isAudio: Boolean get() = !isFolderItem && (!isEncrypted || originalMetadataAvailable) && allTypeCandidates.any {
         it in listOf("audio", "mp3", "wav", "ogg", "m4a", "flac", "aac", "opus", "wma") ||
             it.startsWith("audio/")
     }
 
-    val isTextOrCode: Boolean get() = !isFolderItem && allTypeCandidates.any {
+    val isTextOrCode: Boolean get() = !isFolderItem && (!isEncrypted || originalMetadataAvailable) && allTypeCandidates.any {
         it in listOf("txt", "text", "json", "js", "ts", "py", "java", "kt", "c", "cpp", "h", "cs", "html", "css", "xml", "yml", "yaml", "sh", "sql", "log", "csv", "env", "md", "markdown", "properties", "gradle", "toml", "conf") ||
             it.startsWith("text/") || it.contains("json")
     }
 
-    val isPdf: Boolean get() = !isFolderItem && allTypeCandidates.any {
+    val isPdf: Boolean get() = !isFolderItem && (!isEncrypted || originalMetadataAvailable) && allTypeCandidates.any {
         it == "pdf" || it.contains("pdf")
     }
     
-    val sizeBytes: Long get() = parseBytes(size)
+    val sizeBytes: Long
+        get() {
+            if (isEncrypted) {
+                if (originalMetadataAvailable && plaintextSizeBytes != null && plaintextSizeBytes >= 0L) {
+                    return plaintextSizeBytes
+                }
+                if (encryptedSizeBytes != null && encryptedSizeBytes > 0L) {
+                    return encryptedSizeBytes
+                }
+            }
+            return parseBytes(size)
+        }
     
     val formattedSize: String get() {
-        if (size is String && size.contains(Regex("[a-zA-Z]"))) return size.toString()
+        if (!isEncrypted && size is String && size.contains(Regex("[a-zA-Z]"))) return size.toString()
         val s = sizeBytes
         if (s == 0L) return "0 B"
-        return when {
-            s >= 1024L * 1024 * 1024 * 1024 -> String.format(Locale.US, "%.1f TB", s.toDouble() / (1024L * 1024 * 1024 * 1024))
-            s >= 1024L * 1024 * 1024 -> String.format(Locale.US, "%.1f GB", s.toDouble() / (1024L * 1024 * 1024))
-            s >= 1024L * 1024 -> String.format(Locale.US, "%.1f MB", s.toDouble() / (1024L * 1024))
-            s >= 1024 -> String.format(Locale.US, "%.1f KB", s.toDouble() / 1024)
-            else -> "$s B"
-        }
+        return formatByteCount(s)
+    }
+}
+
+fun formatByteCount(bytes: Long): String {
+    if (bytes <= 0L) return "0 B"
+    return when {
+        bytes >= 1024L * 1024 * 1024 * 1024 -> String.format(Locale.US, "%.1f TB", bytes.toDouble() / (1024L * 1024 * 1024 * 1024))
+        bytes >= 1024L * 1024 * 1024 -> String.format(Locale.US, "%.1f GB", bytes.toDouble() / (1024L * 1024 * 1024))
+        bytes >= 1024L * 1024 -> String.format(Locale.US, "%.1f MB", bytes.toDouble() / (1024L * 1024))
+        bytes >= 1024 -> String.format(Locale.US, "%.1f KB", bytes.toDouble() / 1024)
+        else -> "$bytes B"
     }
 }
 
@@ -320,7 +369,12 @@ data class UploadSessionRequest(
     val checksum: String? = null,
     val idempotencyKey: String,
     val providerType: String? = null,
-    val desiredChunkSize: Long? = null
+    val desiredChunkSize: Long? = null,
+    val isEncrypted: Boolean = false,
+    val encryptionFormatVersion: Int? = null,
+    val encryptionKeyId: String? = null,
+    val encryptedSizeBytes: Long? = null,
+    val encryptedMetadata: EncryptedMetadataEnvelope? = null
 )
 
 @JsonClass(generateAdapter = true)

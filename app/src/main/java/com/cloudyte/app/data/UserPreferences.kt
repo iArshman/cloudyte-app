@@ -91,8 +91,17 @@ data class UserPreferencesState(
     val language: String = "SYSTEM",
     val lastActiveAccountId: String? = null,
     val homeStorageAccountId: String? = null,
-    val showNavText: Boolean = true
-)
+    val showNavText: Boolean = true,
+    val encryptNewUploads: Boolean = false,
+    val encryptOfflineFiles: Boolean = false,
+    val fullPrivacyMode: Boolean = false
+) {
+    val isUploadEncryptionEnabled: Boolean
+        get() = encryptNewUploads || fullPrivacyMode
+
+    val isOfflineEncryptionEnabled: Boolean
+        get() = encryptOfflineFiles || fullPrivacyMode
+}
 
 object UserPreferences {
     private val KEY_MIGRATED = booleanPreferencesKey("migrated_v1")
@@ -142,6 +151,9 @@ object UserPreferences {
     private val KEY_LAST_ACTIVE_ACCOUNT_ID = stringPreferencesKey("last_active_account_id")
     private val KEY_HOME_STORAGE_ACCOUNT_ID = stringPreferencesKey("home_storage_account_id")
     private val KEY_SHOW_NAV_TEXT = booleanPreferencesKey("show_nav_text")
+    private val KEY_ENCRYPT_NEW_UPLOADS = booleanPreferencesKey("encrypt_new_uploads")
+    private val KEY_ENCRYPT_OFFLINE_FILES = booleanPreferencesKey("encrypt_offline_files")
+    private val KEY_FULL_PRIVACY_MODE = booleanPreferencesKey("full_privacy_mode")
 
     // Legacy sync_prefs keys
     private val LEGACY_AUTO_BACKUP_ENABLED = booleanPreferencesKey("auto_backup_enabled")
@@ -247,8 +259,39 @@ object UserPreferences {
                 language = prefs[KEY_LANGUAGE] ?: "SYSTEM",
                 lastActiveAccountId = prefs[KEY_LAST_ACTIVE_ACCOUNT_ID],
                 homeStorageAccountId = prefs[KEY_HOME_STORAGE_ACCOUNT_ID],
-                showNavText = prefs[KEY_SHOW_NAV_TEXT] ?: true
+                showNavText = prefs[KEY_SHOW_NAV_TEXT] ?: true,
+                encryptNewUploads = prefs[KEY_ENCRYPT_NEW_UPLOADS] ?: false,
+                encryptOfflineFiles = prefs[KEY_ENCRYPT_OFFLINE_FILES] ?: false,
+                fullPrivacyMode = prefs[KEY_FULL_PRIVACY_MODE] ?: false
             )
+        }
+    }
+
+    suspend fun setEncryptNewUploads(context: Context, enabled: Boolean) {
+        context.userPreferencesDataStore.edit { prefs ->
+            prefs[KEY_ENCRYPT_NEW_UPLOADS] = enabled
+            if (!enabled) {
+                prefs[KEY_FULL_PRIVACY_MODE] = false
+            }
+        }
+    }
+
+    suspend fun setEncryptOfflineFiles(context: Context, enabled: Boolean) {
+        context.userPreferencesDataStore.edit { prefs ->
+            prefs[KEY_ENCRYPT_OFFLINE_FILES] = enabled
+            if (!enabled) {
+                prefs[KEY_FULL_PRIVACY_MODE] = false
+            }
+        }
+    }
+
+    suspend fun setFullPrivacyMode(context: Context, enabled: Boolean) {
+        context.userPreferencesDataStore.edit { prefs ->
+            prefs[KEY_FULL_PRIVACY_MODE] = enabled
+            if (enabled) {
+                prefs[KEY_ENCRYPT_NEW_UPLOADS] = true
+                prefs[KEY_ENCRYPT_OFFLINE_FILES] = true
+            }
         }
     }
 

@@ -20,7 +20,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         LocalFileTombstone::class,
         ThumbnailEntity::class
     ],
-    version = 13,
+    version = 14,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -254,6 +254,31 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cloud_files ADD COLUMN isEncrypted INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE cloud_files ADD COLUMN encryptionFormatVersion INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE cloud_files ADD COLUMN encryptionKeyId TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE cloud_files ADD COLUMN encryptedMetadata TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE cloud_files ADD COLUMN encryptedSizeBytes INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE cloud_files ADD COLUMN encryptedChecksum TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE cloud_files ADD COLUMN opaqueRemoteName TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE cloud_files ADD COLUMN plaintextSizeBytes INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE cloud_files ADD COLUMN originalMetadataAvailable INTEGER NOT NULL DEFAULT 0")
+
+                db.execSQL("ALTER TABLE transfers ADD COLUMN isEncrypted INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN encryptionFormatVersion INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN encryptionKeyId TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN encryptedMetadata TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN encryptedSizeBytes INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN encryptedChecksum TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN opaqueRemoteName TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN encryptedStagePath TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN plaintextSizeBytes INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE transfers ADD COLUMN originalMetadataAvailable INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -272,7 +297,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_9_10,
                         MIGRATION_10_11,
                         MIGRATION_11_12,
-                        MIGRATION_12_13
+                        MIGRATION_12_13,
+                        MIGRATION_13_14
                     )
                     .build()
                 INSTANCE = instance

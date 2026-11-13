@@ -80,8 +80,24 @@ class AppContainer(context: Context) {
         AppDatabase.getDatabase(appContext)
     }
 
+    val contentKeyManager: com.cloudyte.app.core.security.ContentKeyManager by lazy {
+        com.cloudyte.app.core.security.ContentKeyManager(appContext)
+    }
+
+    val streamFileCrypto: com.cloudyte.app.core.security.StreamFileCrypto by lazy {
+        com.cloudyte.app.core.security.StreamFileCrypto()
+    }
+
+    val metadataCodec: com.cloudyte.app.core.security.EncryptedMetadataCodec by lazy {
+        com.cloudyte.app.core.security.EncryptedMetadataCodec()
+    }
+
+    val keyBackupCodec: com.cloudyte.app.core.security.KeyBackupCodec by lazy {
+        com.cloudyte.app.core.security.KeyBackupCodec(contentKeyManager)
+    }
+
     val thumbnailStore: ThumbnailStore by lazy {
-        ThumbnailStore(appContext, database.thumbnailDao())
+        ThumbnailStore(appContext, database.thumbnailDao(), contentKeyManager, streamFileCrypto)
     }
 
     val previewStore: PreviewStore by lazy { PreviewStore(appContext) }
@@ -91,7 +107,12 @@ class AppContainer(context: Context) {
     }
 
     val cloudFileRepository: CloudFileRepository by lazy {
-        CloudFileRepository(database, ApiClient.apiService)
+        CloudFileRepository(
+            db = database,
+            api = ApiClient.apiService,
+            contentKeyProvider = contentKeyManager,
+            metadataCodec = metadataCodec
+        )
     }
 
     val transferRepository: TransferRepository by lazy {
@@ -108,7 +129,15 @@ class AppContainer(context: Context) {
     val transferQueueDrainer by lazy {
         RoomTransferQueueDrainer(
             queueDao = database.transferQueueDao(),
-            executor = CloudTransferOperationExecutor(appContext, database, transferRepository, providerRegistry),
+            executor = CloudTransferOperationExecutor(
+                context = appContext,
+                database = database,
+                transfers = transferRepository,
+                providers = providerRegistry,
+                contentKeyProvider = contentKeyManager,
+                streamFileCrypto = streamFileCrypto,
+                metadataCodec = metadataCodec
+            ),
             ownerId = "${Process.myPid()}-${UUID.randomUUID()}",
             networkGate = transferNetworkGate,
             diagnostics = transferDiagnostics
@@ -152,6 +181,12 @@ class AppContainer(context: Context) {
 
     init {
         networkMonitor.start()
+        applicationScope.launch {
+            runCatching {
+                val activeIds = database.transferDao().observeActiveTransfers().first().map { it.id }.toSet()
+                com.cloudyte.app.core.security.SecureFileCleanup.cleanupStaleTempFiles(appContext, activeIds)
+            }
+        }
         applicationScope.launch {
             networkMonitor.status
                 .distinctUntilChanged()

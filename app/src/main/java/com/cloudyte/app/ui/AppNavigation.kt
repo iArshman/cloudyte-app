@@ -41,6 +41,7 @@ fun openFileInViewer(
         FileRepository.setActiveList(currentList, resolvedAccountId)
     }
     when {
+        file.isEncrypted && !file.originalMetadataAvailable -> navController.navigateOnce("file_detail/$resolvedAccountId/$fid")
         file.isVideo -> navController.navigateOnce("video_player/$resolvedAccountId/$fid")
         file.isImage -> navController.navigateOnce("image_viewer/$resolvedAccountId/$fid")
         file.isAudio -> navController.navigateOnce("audio_player/$resolvedAccountId/$fid")

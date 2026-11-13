@@ -138,4 +138,67 @@ class TransferMigrationTest {
             assertEquals(10L, row.getLong(2))
         }
     }
+
+    @Test
+    fun migration13To14AddsEncryptionColumnsAndPreservesPlaintextRows() {
+        database.execSQL(
+            """CREATE TABLE IF NOT EXISTS cloud_files (
+                id TEXT NOT NULL PRIMARY KEY,
+                name TEXT NOT NULL,
+                type TEXT NOT NULL,
+                size TEXT NOT NULL,
+                rawSize INTEGER NOT NULL,
+                time INTEGER NOT NULL,
+                isFolder INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                folderId TEXT NOT NULL,
+                accountId TEXT,
+                mimeType TEXT,
+                shareId TEXT,
+                isShared INTEGER NOT NULL,
+                cachedAt INTEGER NOT NULL,
+                updatedAt INTEGER,
+                thumbUrl TEXT
+            )""".trimIndent()
+        )
+        database.execSQL(
+            "INSERT INTO cloud_files(id, name, type, size, rawSize, time, isFolder, path, folderId, accountId, mimeType, isShared, cachedAt) " +
+                "VALUES ('plain-1', 'report.pdf', 'pdf', '1.0 KB', 1024, 1000, 0, '/report.pdf', 'root', 'a1', 'application/pdf', 0, 1000)"
+        )
+
+        AppDatabase.MIGRATION_13_14.migrate(database)
+
+        database.query("PRAGMA table_info(cloud_files)").use { cursor ->
+            val columns = mutableSetOf<String>()
+            while (cursor.moveToNext()) columns += cursor.getString(1)
+            assertTrue(columns.containsAll(setOf(
+                "isEncrypted", "encryptionFormatVersion", "encryptionKeyId", "encryptedMetadata",
+                "encryptedSizeBytes", "encryptedChecksum", "opaqueRemoteName", "plaintextSizeBytes",
+                "originalMetadataAvailable"
+            )))
+        }
+
+        database.query("PRAGMA table_info(transfers)").use { cursor ->
+            val columns = mutableSetOf<String>()
+            while (cursor.moveToNext()) columns += cursor.getString(1)
+            assertTrue(columns.containsAll(setOf(
+                "isEncrypted", "encryptionFormatVersion", "encryptionKeyId", "encryptedMetadata",
+                "encryptedSizeBytes", "encryptedChecksum", "opaqueRemoteName", "encryptedStagePath",
+                "plaintextSizeBytes", "originalMetadataAvailable"
+            )))
+        }
+
+        database.query("SELECT name, isEncrypted, originalMetadataAvailable FROM cloud_files WHERE id='plain-1'").use { row ->
+            assertTrue(row.moveToFirst())
+            assertEquals("report.pdf", row.getString(0))
+            assertEquals(0, row.getInt(1))
+            assertEquals(0, row.getInt(2))
+        }
+
+        database.query("SELECT fileName, isEncrypted FROM transfers WHERE id='pending'").use { row ->
+            assertTrue(row.moveToFirst())
+            assertEquals("one.bin", row.getString(0))
+            assertEquals(0, row.getInt(1))
+        }
+    }
 }

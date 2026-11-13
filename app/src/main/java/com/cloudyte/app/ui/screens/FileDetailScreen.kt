@@ -40,7 +40,9 @@ fun FileDetailScreen(
     val context = LocalContext.current
     val file by viewModel.file.collectAsState()
     val shareUrl by viewModel.shareUrl.collectAsState()
+    val shareError by viewModel.shareError.collectAsState()
     val isDeleting by viewModel.isDeleting.collectAsState()
+    val isProcessingCryptoAction by viewModel.isProcessingCryptoAction.collectAsState()
     var showRenameDialog by remember { mutableStateOf(false) }
     var newFileName by remember { mutableStateOf("") }
     var showDeleteConfirm by remember { mutableStateOf(false) }
@@ -53,6 +55,13 @@ fun FileDetailScreen(
     val strDownloadStarted = stringResource(R.string.detail_download_started)
     val strDownloadFailed = stringResource(R.string.detail_download_failed)
     val strDownloadingDesc = stringResource(R.string.detail_downloading_desc)
+
+    LaunchedEffect(shareError) {
+        shareError?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearShareError()
+        }
+    }
 
     LaunchedEffect(actionFeedbackMessage) {
         actionFeedbackMessage?.let {
@@ -195,7 +204,10 @@ fun FileDetailScreen(
                     fontWeight = FontWeight.Bold,
                     fontSize = 17.sp
                 )
-                IconButton(onClick = { showRenameDialog = true }) {
+                IconButton(
+                    onClick = { showRenameDialog = true },
+                    enabled = file?.isEncrypted != true || file?.originalMetadataAvailable == true
+                ) {
                     Icon(
                         imageVector = Icons.Default.Edit,
                         contentDescription = stringResource(R.string.action_rename),
@@ -278,17 +290,17 @@ fun FileDetailScreen(
             FileThumb(
                 file = nonNullFile,
                 accountId = detailAccId,
-                sizeDp = 200.dp,
+                sizeDp = 180.dp,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(200.dp)
-                    .clickable {
+                    .height(180.dp)
+                    .clickable(enabled = !nonNullFile.isEncrypted || nonNullFile.originalMetadataAvailable) {
                         openFileInViewer(nonNullFile, detailAccId, navController)
                     },
                 cornerRadius = 16.dp
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
@@ -306,7 +318,7 @@ fun FileDetailScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             val dateFormat = SimpleDateFormat("MMM dd, yyyy hh:mm a", Locale.getDefault())
             val dateStr = nonNullFile.time?.let { dateFormat.format(Date(it)) }
@@ -318,14 +330,14 @@ fun FileDetailScreen(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(18.dp)) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Text(
                         text = stringResource(R.string.detail_section_title),
                         color = MaterialTheme.colorScheme.onSurface,
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
                     DetailRow(
                         label = stringResource(R.string.detail_location),
                         value = nonNullFile.location ?: nonNullFile.path ?: stringResource(R.string.detail_location_root)
@@ -342,56 +354,104 @@ fun FileDetailScreen(
                         label = stringResource(R.string.detail_type),
                         value = nonNullFile.effectiveType.uppercase()
                     )
+                    DetailRow(
+                        label = "Encryption",
+                        value = if (nonNullFile.isEncrypted) {
+                            if (nonNullFile.originalMetadataAvailable) "End-to-End Encrypted (AES-256-GCM)"
+                            else "Encrypted (Key Required)"
+                        } else {
+                            "Standard (Plaintext)"
+                        }
+                    )
+                    if (nonNullFile.isEncrypted && !nonNullFile.encryptionKeyId.isNullOrBlank()) {
+                        DetailRow(
+                            label = "Key ID",
+                            value = nonNullFile.encryptionKeyId.take(16)
+                        )
+                    }
                 }
             }
-
-            Spacer(modifier = Modifier.height(14.dp))
 
             Spacer(modifier = Modifier.weight(1f))
 
             val primaryColor = MaterialTheme.colorScheme.primary
 
-            // Action button: Open in viewer / player / editor
-            Button(
+            // Action button: Open in viewer / player / editor (or Decrypt / Export when metadata unavailable)
+            if (!nonNullFile.isEncrypted || nonNullFile.originalMetadataAvailable) {
+                Button(
+                    onClick = {
+                        openFileInViewer(nonNullFile, accountId, navController)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
+                    shape = MaterialTheme.shapes.medium,
+                    colors = ButtonDefaults.buttonColors(containerColor = primaryColor),
+                    contentPadding = PaddingValues()
+                ) {
+                    Icon(
+                        imageVector = when {
+                            nonNullFile.isVideo -> Icons.Default.PlayArrow
+                            nonNullFile.isImage -> Icons.Default.Visibility
+                            nonNullFile.isAudio -> Icons.Default.MusicNote
+                            nonNullFile.isTextOrCode -> Icons.Default.Edit
+                            nonNullFile.isPdf -> Icons.Default.PictureAsPdf
+                            else -> Icons.Default.OpenInNew
+                        },
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimary
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = when {
+                            nonNullFile.isVideo -> stringResource(R.string.detail_play_video)
+                            nonNullFile.isImage -> stringResource(R.string.detail_view_image)
+                            nonNullFile.isAudio -> stringResource(R.string.detail_play_audio)
+                            nonNullFile.isTextOrCode -> stringResource(R.string.detail_open_editor)
+                            nonNullFile.isPdf -> stringResource(R.string.detail_view_pdf)
+                            else -> stringResource(R.string.detail_open_file)
+                        },
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            // Explicit Encryption / Decryption Action Row
+            OutlinedButton(
                 onClick = {
-                    openFileInViewer(nonNullFile, accountId, navController)
+                    if (nonNullFile.isEncrypted) {
+                        viewModel.downloadOrDecryptExportFile(accountId, nonNullFile) { msg ->
+                            actionFeedbackMessage = msg
+                        }
+                    } else {
+                        viewModel.createEncryptedCopy(accountId, nonNullFile) { msg ->
+                            actionFeedbackMessage = msg
+                        }
+                    }
                 },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
+                enabled = !isProcessingCryptoAction,
+                modifier = Modifier.fillMaxWidth(),
                 shape = MaterialTheme.shapes.medium,
-                colors = ButtonDefaults.buttonColors(containerColor = primaryColor),
-                contentPadding = PaddingValues()
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onBackground)
             ) {
                 Icon(
-                    imageVector = when {
-                        nonNullFile.isVideo -> Icons.Default.PlayArrow
-                        nonNullFile.isImage -> Icons.Default.Visibility
-                        nonNullFile.isAudio -> Icons.Default.MusicNote
-                        nonNullFile.isTextOrCode -> Icons.Default.Edit
-                        nonNullFile.isPdf -> Icons.Default.PictureAsPdf
-                        else -> Icons.Default.OpenInNew
-                    },
+                    imageVector = if (nonNullFile.isEncrypted) Icons.Default.LockOpen else Icons.Default.Lock,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimary
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.primary
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = when {
-                        nonNullFile.isVideo -> stringResource(R.string.detail_play_video)
-                        nonNullFile.isImage -> stringResource(R.string.detail_view_image)
-                        nonNullFile.isAudio -> stringResource(R.string.detail_play_audio)
-                        nonNullFile.isTextOrCode -> stringResource(R.string.detail_open_editor)
-                        nonNullFile.isPdf -> stringResource(R.string.detail_view_pdf)
-                        else -> stringResource(R.string.detail_open_file)
-                    },
-                    color = MaterialTheme.colorScheme.onPrimary,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp
+                    text = if (nonNullFile.isEncrypted) "Decrypt / Export file" else "Create encrypted copy",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold
                 )
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             // Move & Copy actions
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -434,26 +494,34 @@ fun FileDetailScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 OutlinedButton(
                     onClick = {
-                        val token = ApiClient.getToken()
-                        val downloadUrl = "${ApiClient.API_BASE_URL}/api/download/$accountId/${nonNullFile.effectiveId}?token=$token"
+                        if (nonNullFile.isEncrypted) {
+                            viewModel.downloadOrDecryptExportFile(accountId, nonNullFile) { msg ->
+                                actionFeedbackMessage = msg
+                            }
+                        } else {
+                            val token = ApiClient.getToken()
+                            val downloadUrl = "${ApiClient.API_BASE_URL}/api/download/$accountId/${nonNullFile.effectiveId}?token=$token"
 
-                        try {
-                            val request = android.app.DownloadManager.Request(Uri.parse(downloadUrl))
-                            request.setTitle(nonNullFile.effectiveName)
-                            request.setDescription(strDownloadingDesc)
-                            request.setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                            request.setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, nonNullFile.effectiveName)
+                            try {
+                                val request = android.app.DownloadManager.Request(Uri.parse(downloadUrl))
+                                request.setTitle(nonNullFile.effectiveName)
+                                request.setDescription(strDownloadingDesc)
+                                request.setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                                request.setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, nonNullFile.effectiveName)
 
-                            val downloadManager = context.getSystemService(android.content.Context.DOWNLOAD_SERVICE) as android.app.DownloadManager
-                            downloadManager.enqueue(request)
-                            actionFeedbackMessage = strDownloadStarted
-                        } catch (e: Exception) {
-                            actionFeedbackMessage = strDownloadFailed
+                                val downloadManager = context.getSystemService(android.content.Context.DOWNLOAD_SERVICE) as android.app.DownloadManager
+                                downloadManager.enqueue(request)
+                                actionFeedbackMessage = strDownloadStarted
+                            } catch (e: Exception) {
+                                viewModel.downloadOrDecryptExportFile(accountId, nonNullFile) { msg ->
+                                    actionFeedbackMessage = msg
+                                }
+                            }
                         }
                     },
                     modifier = Modifier.weight(1f),

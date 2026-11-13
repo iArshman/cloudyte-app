@@ -9,6 +9,7 @@ import androidx.work.Constraints
 import androidx.work.NetworkType
 import androidx.work.WorkManager
 import com.cloudyte.app.db.AppDatabase
+import kotlinx.coroutines.flow.first
 import java.util.concurrent.TimeUnit
 
 class CacheCleanupWorker(
@@ -20,6 +21,10 @@ class CacheCleanupWorker(
             val db = AppDatabase.getDatabase(applicationContext)
             ThumbnailStore(applicationContext, db.thumbnailDao()).enforceQuota()
             PreviewStore(applicationContext).enforceQuota()
+            val activeIds = runCatching {
+                db.transferDao().observeActiveTransfers().first().map { it.id }.toSet()
+            }.getOrDefault(emptySet())
+            com.cloudyte.app.core.security.SecureFileCleanup.cleanupStaleTempFiles(applicationContext, activeIds)
             Result.success()
         } catch (_: Exception) {
             Result.retry()

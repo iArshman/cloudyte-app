@@ -183,6 +183,18 @@
     <string name="settings_lock_timeout">Lock Timeout</string>
     <string name="settings_block_screenshots">Block Screenshots</string>
     <string name="settings_block_screenshots_sub">Prevent screenshots and screen recording (FLAG_SECURE)</string>
+    <string name="settings_encrypt_new_uploads">Encrypt new uploads</string>
+    <string name="settings_encrypt_new_uploads_sub">Encrypt file contents and metadata before uploading (AES-256-GCM)</string>
+    <string name="settings_encrypt_offline_files">Encrypt offline files</string>
+    <string name="settings_encrypt_offline_files_sub">Store downloaded offline files encrypted at rest on device</string>
+    <string name="settings_full_privacy_mode">Full privacy mode</string>
+    <string name="settings_full_privacy_mode_sub">Enforce end-to-end encryption for all new uploads and offline files</string>
+    <string name="settings_encryption_status">Encryption status</string>
+    <string name="settings_recovery_backup_status">Recovery backup status</string>
+    <string name="settings_create_recovery_backup">Create recovery backup</string>
+    <string name="settings_create_recovery_backup_sub">Protect your encryption key with a recovery passphrase</string>
+    <string name="settings_restore_recovery_backup">Restore recovery backup</string>
+    <string name="settings_restore_recovery_backup_sub">Unlock encrypted files using a saved recovery backup</string>
     <string name="settings_logout">Log Out</string>
 
     <!-- Appearance Section -->

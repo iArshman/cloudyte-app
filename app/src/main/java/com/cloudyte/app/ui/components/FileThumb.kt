@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PictureAsPdf
@@ -92,11 +93,18 @@ fun FileThumb(
         }
     }
 
-    val isPreviewable = (file.isImage || file.isVideo || !file.thumbUrl.isNullOrBlank()) &&
-        file.effectiveId.isNotBlank() && !file.isFolderItem
+    val isPreviewable = if (file.isEncrypted) {
+        file.originalMetadataAvailable && (file.isImage || file.isVideo) &&
+            file.effectiveId.isNotBlank() && !file.isFolderItem
+    } else {
+        (file.isImage || file.isVideo || !file.thumbUrl.isNullOrBlank()) &&
+            file.effectiveId.isNotBlank() && !file.isFolderItem
+    }
 
-    var cachedThumbFile by remember(file.effectiveId) {
-        mutableStateOf<File?>(localSource?.takeIf { it.isFile && it.length() > 0L })
+    var cachedThumbFile by remember(file.effectiveId, file.isEncrypted) {
+        mutableStateOf<File?>(
+            if (file.isEncrypted) null else localSource?.takeIf { it.isFile && it.length() > 0L }
+        )
     }
 
     LaunchedEffect(effectiveAccountId, file.effectiveId, isPreviewable, isDownloadedOffline, localSource?.absolutePath) {
@@ -132,31 +140,35 @@ fun FileThumb(
         }
     }
 
-    val remoteThumbUrl = remember(file.thumbUrl, effectiveAccountId, file.effectiveId, sizeDp) {
-        val raw = file.thumbUrl
-        val token = ApiClient.getToken()
-        when {
-            !raw.isNullOrBlank() -> {
-                val full = if (raw.startsWith("http://") || raw.startsWith("https://")) raw else "${ApiClient.API_BASE_URL}/${raw.trimStart('/')}"
-                if (!token.isNullOrBlank() && !full.contains("token=")) {
-                    val sep = if (full.contains("?")) "&" else "?"
-                    "$full${sep}token=${Uri.encode(token.orEmpty())}"
-                } else {
-                    full
+    val remoteThumbUrl = remember(file.isEncrypted, file.thumbUrl, effectiveAccountId, file.effectiveId, sizeDp) {
+        if (file.isEncrypted) {
+            null
+        } else {
+            val raw = file.thumbUrl
+            val token = ApiClient.getToken()
+            when {
+                !raw.isNullOrBlank() -> {
+                    val full = if (raw.startsWith("http://") || raw.startsWith("https://")) raw else "${ApiClient.API_BASE_URL}/${raw.trimStart('/')}"
+                    if (!token.isNullOrBlank() && !full.contains("token=")) {
+                        val sep = if (full.contains("?")) "&" else "?"
+                        "$full${sep}token=${Uri.encode(token.orEmpty())}"
+                    } else {
+                        full
+                    }
                 }
+                effectiveAccountId.isNotBlank() && file.effectiveId.isNotBlank() -> {
+                    ApiClient.getThumbUrl(effectiveAccountId, file.effectiveId, (sizeDp.value * 4).toInt().coerceIn(64, 512))
+                }
+                else -> null
             }
-            effectiveAccountId.isNotBlank() && file.effectiveId.isNotBlank() -> {
-                ApiClient.getThumbUrl(effectiveAccountId, file.effectiveId, (sizeDp.value * 4).toInt().coerceIn(64, 512))
-            }
-            else -> null
         }
     }
 
-    val imageModel: Any? = remember(cachedThumbFile, localSource, remoteThumbUrl) {
+    val imageModel: Any? = remember(file.isEncrypted, cachedThumbFile, localSource, remoteThumbUrl) {
         when {
             cachedThumbFile != null && cachedThumbFile!!.isFile && cachedThumbFile!!.length() > 0L -> cachedThumbFile
-            localSource != null && localSource.isFile && localSource.length() > 0L -> localSource
-            !remoteThumbUrl.isNullOrBlank() -> remoteThumbUrl
+            !file.isEncrypted && localSource != null && localSource.isFile && localSource.length() > 0L -> localSource
+            !file.isEncrypted && !remoteThumbUrl.isNullOrBlank() -> remoteThumbUrl
             else -> null
         }
     }
@@ -212,8 +224,10 @@ fun FileThumb(
 
 @Composable
 private fun FileTypeFallbackContent(file: CloudFile, iconSize: Dp, showTypeBadgeInGrid: Boolean) {
-    if (showTypeBadgeInGrid && !file.isFolderItem && !file.isImage && !file.isVideo) {
-        val rawLabel = (file.type ?: file.effectiveType).uppercase().take(4).ifBlank { "FILE" }
+    if (file.isEncrypted && !file.originalMetadataAvailable) {
+        Icon(Icons.Default.Lock, file.effectiveName, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(iconSize))
+    } else if (showTypeBadgeInGrid && !file.isFolderItem && !file.isImage && !file.isVideo) {
+        val rawLabel = file.effectiveType.uppercase().take(4).ifBlank { "FILE" }
         Text(rawLabel, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 18.sp)
     } else {
         val (icon, tint) = when {
@@ -223,6 +237,7 @@ private fun FileTypeFallbackContent(file: CloudFile, iconSize: Dp, showTypeBadge
             file.isAudio -> Icons.Default.MusicNote to FileAudio
             file.isPdf -> Icons.Default.PictureAsPdf to FilePdf
             file.isTextOrCode -> Icons.Default.Code to FileCode
+            file.isEncrypted -> Icons.Default.Lock to MaterialTheme.colorScheme.primary
             else -> Icons.Default.Description to MaterialTheme.colorScheme.onSurfaceVariant
         }
         Icon(icon, file.effectiveName, tint = tint, modifier = Modifier.size(iconSize))

@@ -73,7 +73,7 @@ fun AudioPlayerScreen(
     // Auto-cache audio for offline listening in background
     LaunchedEffect(fileId, file, effectiveAccId) {
         val acc = effectiveAccId.ifBlank { accountId }
-        if (acc.isNotBlank() && acc != "all" && acc != "root") {
+        if (acc.isNotBlank() && acc != "all" && acc != "root" && file?.isEncrypted != true) {
             file?.let {
                 OfflineFileManager.autoCacheOnView(context, acc, it)
             }
@@ -90,20 +90,36 @@ fun AudioPlayerScreen(
             .setDefaultRequestProperties(headers)
             .setAllowCrossProtocolRedirects(true)
 
-        val offlineFile = OfflineFileManager.findOfflineFile(context, accountId, fileId)
-        val initialMediaItem = if (offlineFile != null && offlineFile.exists() && offlineFile.length() > 0) {
-            MediaItem.fromUri(Uri.fromFile(offlineFile))
-        } else {
-            MediaItem.fromUri(audioUrl)
-        }
-
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
-            .build().apply {
-                setMediaItem(initialMediaItem)
-                prepare()
-                playWhenReady = true
+            .build()
+    }
+
+    LaunchedEffect(fileId, effectiveAccId, file?.isEncrypted) {
+        val acc = effectiveAccId.ifBlank { accountId }
+        val mediaItem = if (file?.isEncrypted == true) {
+            val decrypted = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                OfflineFileManager.prepareDecryptedFileForViewer(context, acc, file).getOrNull()
             }
+            if (decrypted != null && decrypted.exists() && decrypted.length() > 0) {
+                MediaItem.fromUri(Uri.fromFile(decrypted))
+            } else null
+        } else {
+            val offlineFile = OfflineFileManager.findOfflineFile(context, acc, fileId)
+            if (offlineFile != null && offlineFile.exists() && offlineFile.length() > 0) {
+                val prepared = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    if (file != null) OfflineFileManager.prepareDecryptedFileForViewer(context, acc, file).getOrNull() else offlineFile
+                } ?: offlineFile
+                MediaItem.fromUri(Uri.fromFile(prepared))
+            } else {
+                MediaItem.fromUri(audioUrl)
+            }
+        }
+        if (mediaItem != null) {
+            exoPlayer.setMediaItem(mediaItem)
+            exoPlayer.prepare()
+            exoPlayer.playWhenReady = true
+        }
     }
 
     DisposableEffect(exoPlayer) {
@@ -203,17 +219,25 @@ fun AudioPlayerScreen(
                 },
                 actions = {
                     IconButton(onClick = {
-                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                            type = "text/plain"
-                            putExtra(Intent.EXTRA_TEXT, audioUrl)
+                        if (file?.isEncrypted == true) {
+                            android.widget.Toast.makeText(context, "Encrypted sharing is not supported", android.widget.Toast.LENGTH_SHORT).show()
+                        } else {
+                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, audioUrl)
+                            }
+                            context.startActivity(Intent.createChooser(shareIntent, "Share Audio Link"))
                         }
-                        context.startActivity(Intent.createChooser(shareIntent, "Share Audio Link"))
                     }) {
                         Icon(Icons.Default.Share, contentDescription = "Share", tint = MaterialTheme.colorScheme.onBackground)
                     }
                     IconButton(onClick = {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(audioUrl))
-                        context.startActivity(intent)
+                        if (file?.isEncrypted == true) {
+                            navController.navigate("file_detail/$accountId/$fileId")
+                        } else {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(audioUrl))
+                            context.startActivity(intent)
+                        }
                     }) {
                         Icon(Icons.Default.Download, contentDescription = "Download", tint = MaterialTheme.colorScheme.onBackground)
                     }

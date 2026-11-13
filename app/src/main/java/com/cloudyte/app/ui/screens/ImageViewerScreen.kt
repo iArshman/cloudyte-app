@@ -345,7 +345,9 @@ fun ImageViewerScreen(
                             // Share Action
                             IconButton(
                                 onClick = {
-                                    if (currentFileUrl.isNotBlank()) {
+                                    if (currentFile?.isEncrypted == true) {
+                                        snackbarMsg = "Encrypted sharing is not supported"
+                                    } else if (currentFileUrl.isNotBlank()) {
                                         val shareIntent = Intent(Intent.ACTION_SEND).apply {
                                             type = "text/plain"
                                             putExtra(Intent.EXTRA_TEXT, currentFileUrl)
@@ -364,7 +366,9 @@ fun ImageViewerScreen(
                             // Download Action
                             IconButton(
                                 onClick = {
-                                    if (currentFileUrl.isNotBlank()) {
+                                    if (currentFile?.isEncrypted == true) {
+                                        navController.navigate("file_detail/$accountId/${currentFile.effectiveId}")
+                                    } else if (currentFileUrl.isNotBlank()) {
                                         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(currentFileUrl))
                                         context.startActivity(intent)
                                     }
@@ -472,7 +476,7 @@ fun ImageViewerScreen(
                                 val itemAccId = file.effectiveAccountId.ifBlank {
                                     accountId.takeIf { it.isNotBlank() && it != "all" && it != "root" }.orEmpty()
                                 }
-                                val thumbUrl = if (itemAccId.isNotBlank()) ApiClient.getFileUrl(itemAccId, file.effectiveId, preview = true) else ""
+                                val thumbUrl = if (!file.isEncrypted && itemAccId.isNotBlank()) ApiClient.getFileUrl(itemAccId, file.effectiveId, preview = true) else ""
 
                                 Box(
                                     modifier = Modifier
@@ -494,7 +498,7 @@ fun ImageViewerScreen(
                                         },
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    if (file.isImage) {
+                                    if (file.isImage && !file.isEncrypted) {
                                         SubcomposeAsyncImage(
                                             model = thumbUrl,
                                             contentDescription = file.effectiveName,
@@ -508,6 +512,7 @@ fun ImageViewerScreen(
                                                 file.isAudio -> Icons.Default.Audiotrack
                                                 file.isPdf -> Icons.Default.PictureAsPdf
                                                 file.isTextOrCode -> Icons.Default.Code
+                                                file.isImage -> Icons.Default.Image
                                                 else -> Icons.AutoMirrored.Filled.InsertDriveFile
                                             },
                                             contentDescription = null,
@@ -552,24 +557,33 @@ private fun MediaPageContent(
             else -> ""
         }
     }
-    val fileUrl = remember(effectiveAccId, file.effectiveId) {
-        if (effectiveAccId.isNotBlank()) ApiClient.getFileUrl(effectiveAccId, file.effectiveId, preview = true) else ""
+    val fileUrl = remember(file.isEncrypted, effectiveAccId, file.effectiveId) {
+        if (!file.isEncrypted && effectiveAccId.isNotBlank()) ApiClient.getFileUrl(effectiveAccId, file.effectiveId, preview = true) else ""
     }
 
-    // Auto-cache file in background when viewed
-    LaunchedEffect(file.effectiveId, effectiveAccId) {
+    var decryptedViewerFile by remember(effectiveAccId, file.effectiveId) { mutableStateOf<java.io.File?>(null) }
+
+    // Auto-cache or prepare decrypted file in background when viewed
+    LaunchedEffect(file.effectiveId, effectiveAccId, file.isEncrypted) {
         if (effectiveAccId.isNotBlank()) {
-            OfflineFileManager.autoCacheOnView(context, effectiveAccId, file)
+            if (file.isEncrypted) {
+                val res = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    OfflineFileManager.prepareDecryptedFileForViewer(context, effectiveAccId, file)
+                }
+                decryptedViewerFile = res.getOrNull()
+            } else {
+                OfflineFileManager.autoCacheOnView(context, effectiveAccId, file)
+            }
         }
     }
 
-    val offlineFile = remember(effectiveAccId, file.effectiveId) {
-        OfflineFileManager.findOfflineFile(context, effectiveAccId, file.effectiveId)
+    val offlineFile = remember(effectiveAccId, file.effectiveId, file.isEncrypted) {
+        if (file.isEncrypted) null else OfflineFileManager.findOfflineFile(context, effectiveAccId, file.effectiveId)
     }
     val app = context.applicationContext as? com.cloudyte.app.CloudyteApplication
     var cachedPreviewFile by remember(effectiveAccId, file.effectiveId) { mutableStateOf<java.io.File?>(null) }
-    LaunchedEffect(effectiveAccId, file.effectiveId) {
-        if (app != null && effectiveAccId.isNotBlank()) {
+    LaunchedEffect(effectiveAccId, file.effectiveId, file.isEncrypted) {
+        if (!file.isEncrypted && app != null && effectiveAccId.isNotBlank()) {
             val rev = file.updatedAt?.toString() ?: file.time?.toString()
             val acc = app.container.database.accountDao().getAccountById(effectiveAccId)
             val pType = acc?.accountType ?: "unknown"
@@ -578,11 +592,13 @@ private fun MediaPageContent(
             )
         }
     }
-    val imageModel: Any = remember(offlineFile, cachedPreviewFile, fileUrl) {
+    val imageModel: Any? = remember(file.isEncrypted, decryptedViewerFile, offlineFile, cachedPreviewFile, fileUrl) {
         when {
-            offlineFile != null && offlineFile.exists() && offlineFile.length() > 0 -> offlineFile
-            cachedPreviewFile != null && cachedPreviewFile!!.exists() && cachedPreviewFile!!.length() > 0 -> cachedPreviewFile!!
-            else -> fileUrl
+            decryptedViewerFile != null && decryptedViewerFile!!.exists() && decryptedViewerFile!!.length() > 0 -> decryptedViewerFile!!
+            !file.isEncrypted && offlineFile != null && offlineFile.exists() && offlineFile.length() > 0 -> offlineFile
+            !file.isEncrypted && cachedPreviewFile != null && cachedPreviewFile!!.exists() && cachedPreviewFile!!.length() > 0 -> cachedPreviewFile!!
+            !file.isEncrypted && fileUrl.isNotBlank() -> fileUrl
+            else -> null
         }
     }
 

@@ -163,6 +163,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -532,6 +533,9 @@ class FilesViewModel(
                 }
                 val context = getApplication<Application>()
                 val app = context.applicationContext as CloudyteApplication
+                val encryptUploads = runCatching {
+                    UserPreferences.observe(context).first().isUploadEncryptionEnabled
+                }.getOrDefault(false)
                 var queued = 0
                 withContext(kotlinx.coroutines.Dispatchers.IO) {
                     uris.forEach { uri ->
@@ -542,13 +546,18 @@ class FilesViewModel(
                             )
                         }
                         val metadata = readUploadMetadata(context, uri)
+                        val mimeType = runCatching { context.contentResolver.getType(uri) }.getOrNull()
                         val transferId = app.container.transferRepository.enqueueTransfer(
                             accountId = accountId,
                             fileName = metadata.first,
                             localPath = uri.toString(),
                             remotePath = currentFolderId.value,
                             direction = TransferDirection.UPLOAD,
-                            totalBytes = metadata.second
+                            totalBytes = metadata.second,
+                            isEncrypted = encryptUploads,
+                            originalName = if (encryptUploads) metadata.first else null,
+                            originalMimeType = if (encryptUploads) mimeType else null,
+                            originalSize = if (encryptUploads) metadata.second else null
                         )
                         app.container.transferCoordinator.dispatch(TransferCommand.Start(transferId))
                         queued++

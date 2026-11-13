@@ -67,6 +67,9 @@ interface CloudFileDao {
     @Query("SELECT * FROM cloud_files WHERE id = :id LIMIT 1")
     suspend fun getFileById(id: String): LocalCloudFile?
 
+    @Query("SELECT * FROM cloud_files WHERE isEncrypted = 1")
+    suspend fun getEncryptedFiles(): List<LocalCloudFile>
+
     @Query("DELETE FROM cloud_files")
     suspend fun clearAll()
 }

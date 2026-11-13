@@ -342,12 +342,18 @@ fun HomeScreen(
                             }
                         }
                         val app = context.applicationContext as com.cloudyte.app.CloudyteApplication
+                        val encryptUploads = prefsState.isUploadEncryptionEnabled
+                        val mimeType = runCatching { context.contentResolver.getType(it) }.getOrNull()
                         val transferId = app.container.transferRepository.enqueueTransfer(
                             accountId = accId,
                             fileName = name,
                             localPath = it.toString(),
                             direction = com.cloudyte.app.db.TransferDirection.UPLOAD,
-                            totalBytes = size
+                            totalBytes = size,
+                            isEncrypted = encryptUploads,
+                            originalName = if (encryptUploads) name else null,
+                            originalMimeType = if (encryptUploads) mimeType else null,
+                            originalSize = if (encryptUploads) size else null
                         )
                         app.container.transferCoordinator.dispatch(com.cloudyte.app.core.transfer.TransferCommand.Start(transferId))
                         snackbarHostState.showSnackbar("$name added to transfers")

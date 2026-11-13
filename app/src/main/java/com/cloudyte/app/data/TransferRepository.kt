@@ -30,14 +30,33 @@ class TransferRepository(
         remotePath: String? = null,
         direction: TransferDirection = TransferDirection.DOWNLOAD,
         totalBytes: Long = 0L,
-        fileId: String? = null
+        fileId: String? = null,
+        isEncrypted: Boolean = false,
+        encryptionFormatVersion: Int? = null,
+        encryptionKeyId: String? = null,
+        encryptedMetadata: String? = null,
+        encryptedSizeBytes: Long? = null,
+        encryptedChecksum: String? = null,
+        opaqueRemoteName: String? = null,
+        plaintextSizeBytes: Long? = null,
+        originalMetadataAvailable: Boolean = false,
+        originalName: String? = null,
+        originalMimeType: String? = null,
+        originalSize: Long? = null
     ): String {
         val id = UUID.randomUUID().toString()
+        val effectiveFileName = originalName?.takeIf { it.isNotBlank() } ?: fileName
+        val effectivePlaintextSize = plaintextSizeBytes
+            ?: originalSize
+            ?: if (isEncrypted && totalBytes > 0L) totalBytes else null
+        val effectiveMetadataAvailable = originalMetadataAvailable ||
+            !originalName.isNullOrBlank() ||
+            !originalMimeType.isNullOrBlank()
         val transfer = LocalTransfer(
             id = id,
             accountId = accountId,
             fileId = fileId,
-            fileName = fileName,
+            fileName = effectiveFileName,
             localPath = localPath,
             remotePath = remotePath,
             direction = direction.name,
@@ -48,6 +67,15 @@ class TransferRepository(
             status = TransferStatus.PENDING.name,
             bytesTransferred = 0L,
             totalBytes = totalBytes,
+            isEncrypted = isEncrypted,
+            encryptionFormatVersion = encryptionFormatVersion ?: if (isEncrypted) 1 else null,
+            encryptionKeyId = encryptionKeyId,
+            encryptedMetadata = encryptedMetadata,
+            encryptedSizeBytes = encryptedSizeBytes,
+            encryptedChecksum = encryptedChecksum,
+            opaqueRemoteName = opaqueRemoteName,
+            plaintextSizeBytes = effectivePlaintextSize,
+            originalMetadataAvailable = effectiveMetadataAvailable,
             createdAt = System.currentTimeMillis(),
             updatedAt = System.currentTimeMillis()
         )
@@ -58,7 +86,22 @@ class TransferRepository(
     suspend fun queueTransfer(id: String, direction: TransferDirection, localUri: String, parentFolderId: String?, providerType: String?, totalBytes: Long): Boolean =
         transferDao.queueTransfer(id, direction.name, if (direction == TransferDirection.BACKUP) "BACKUP" else direction.name, localUri, parentFolderId, providerType, totalBytes) == 1
 
-    suspend fun enqueueOrGetOfflineDownload(accountId: String, fileId: String, fileName: String, destinationPath: String, totalBytes: Long): String {
+    suspend fun enqueueOrGetOfflineDownload(
+        accountId: String,
+        fileId: String,
+        fileName: String,
+        destinationPath: String,
+        totalBytes: Long,
+        isEncrypted: Boolean = false,
+        encryptionFormatVersion: Int? = null,
+        encryptionKeyId: String? = null,
+        encryptedMetadata: String? = null,
+        encryptedSizeBytes: Long? = null,
+        encryptedChecksum: String? = null,
+        opaqueRemoteName: String? = null,
+        plaintextSizeBytes: Long? = null,
+        originalMetadataAvailable: Boolean = false
+    ): String {
         val stableId = "offline:$accountId:$fileId"
         val existing = transferDao.getById(stableId)
         if (existing != null && existing.state !in setOf("COMPLETED", "CANCELLED", "EXPIRED", "FAILED_PERMANENT")) return stableId
@@ -74,7 +117,16 @@ class TransferRepository(
                 localUri = destinationPath,
                 direction = TransferDirection.DOWNLOAD.name,
                 operationType = "DOWNLOAD",
-                totalBytes = totalBytes
+                totalBytes = totalBytes,
+                isEncrypted = isEncrypted,
+                encryptionFormatVersion = encryptionFormatVersion ?: if (isEncrypted) 1 else null,
+                encryptionKeyId = encryptionKeyId,
+                encryptedMetadata = encryptedMetadata,
+                encryptedSizeBytes = encryptedSizeBytes,
+                encryptedChecksum = encryptedChecksum,
+                opaqueRemoteName = opaqueRemoteName,
+                plaintextSizeBytes = plaintextSizeBytes,
+                originalMetadataAvailable = originalMetadataAvailable
             )
         )
         return id
@@ -214,4 +266,32 @@ class TransferRepository(
     ): Boolean = transferDao.updateResumableProgressOwned(
         id, leaseOwner, bytesTransferred, nextChunkIndex
     ) == 1
+
+    suspend fun saveEncryptionMetadata(
+        id: String,
+        isEncrypted: Boolean,
+        encryptionFormatVersion: Int?,
+        encryptionKeyId: String?,
+        encryptedMetadata: String?,
+        encryptedSizeBytes: Long?,
+        encryptedChecksum: String?,
+        opaqueRemoteName: String?,
+        encryptedStagePath: String?,
+        plaintextSizeBytes: Long?,
+        originalMetadataAvailable: Boolean
+    ) {
+        transferDao.updateEncryptionMetadata(
+            id = id,
+            isEncrypted = isEncrypted,
+            encryptionFormatVersion = encryptionFormatVersion,
+            encryptionKeyId = encryptionKeyId,
+            encryptedMetadata = encryptedMetadata,
+            encryptedSizeBytes = encryptedSizeBytes,
+            encryptedChecksum = encryptedChecksum,
+            opaqueRemoteName = opaqueRemoteName,
+            encryptedStagePath = encryptedStagePath,
+            plaintextSizeBytes = plaintextSizeBytes,
+            originalMetadataAvailable = originalMetadataAvailable
+        )
+    }
 }

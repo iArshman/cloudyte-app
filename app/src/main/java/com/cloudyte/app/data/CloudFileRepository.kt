@@ -6,6 +6,11 @@ import com.cloudyte.app.api.CloudFile
 import com.cloudyte.app.api.CloudyteApi
 import com.cloudyte.app.api.FileRepository
 import com.cloudyte.app.api.StorageSummary
+import com.cloudyte.app.api.formatByteCount
+import com.cloudyte.app.api.parseBytes
+import com.cloudyte.app.core.security.ContentKeyProvider
+import com.cloudyte.app.core.security.CryptoConstants
+import com.cloudyte.app.core.security.EncryptedMetadataCodec
 import com.cloudyte.app.db.AppDatabase
 import com.cloudyte.app.db.LocalCloudFile
 import com.cloudyte.app.db.LocalFileMutation
@@ -24,6 +29,7 @@ import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -31,7 +37,9 @@ class CloudFileRepository @JvmOverloads constructor(
     private val db: AppDatabase,
     private val api: CloudyteApi,
     private val clock: () -> Long = { System.currentTimeMillis() },
-    val cacheTtlMs: Long = DEFAULT_FOLDER_CACHE_TTL_MS
+    val cacheTtlMs: Long = DEFAULT_FOLDER_CACHE_TTL_MS,
+    private val contentKeyProvider: ContentKeyProvider? = null,
+    private val metadataCodec: EncryptedMetadataCodec = EncryptedMetadataCodec()
 ) {
     private val etagMap = ConcurrentHashMap<String, String>()
     private val storageRefreshTimestamps = ConcurrentHashMap<String, Long>()
@@ -330,8 +338,13 @@ class CloudFileRepository @JvmOverloads constructor(
             val serverRows = allFiles
                 .filterNot { it.effectiveId in pendingDeletes }
                 .map { file ->
-                    val local = LocalCloudFile.fromCloudFile(file, normalizedAccount, safeFolder)
-                    local.copy(name = pendingRenames[file.effectiveId] ?: local.name, cachedAt = now)
+                    resolveRemoteCloudFileToLocal(
+                        file = file,
+                        accountId = normalizedAccount,
+                        folderId = safeFolder,
+                        pendingRename = pendingRenames[file.effectiveId],
+                        now = now
+                    )
                 }
             val optimisticFolders = pending
                 .filter { it.operation == LocalFileMutation.CREATE_FOLDER }
@@ -428,6 +441,180 @@ class CloudFileRepository @JvmOverloads constructor(
             )
             Result.failure(e)
         }
+    }
+
+    internal fun resolveRemoteCloudFileToLocal(
+        file: CloudFile,
+        accountId: String?,
+        folderId: String?,
+        pendingRename: String? = null,
+        now: Long = System.currentTimeMillis()
+    ): LocalCloudFile {
+        val isEncryptedFile = file.isEncrypted || file.encryptedMetadata != null
+        if (!isEncryptedFile) {
+            val local = LocalCloudFile.fromCloudFile(file, accountId, folderId)
+            return local.copy(name = pendingRename ?: local.name, cachedAt = now)
+        }
+
+        val safeFolder = safeFolderId(folderId)
+        val resolvedAccId = file.effectiveAccountId.ifBlank { accountId.orEmpty() }
+        val rawRemoteName = file.opaqueRemoteName
+            ?: file.name
+            ?: file.fileName
+            ?: file.title
+        val envelope = file.encryptedMetadata
+        val serializedEnvelope = envelope?.let {
+            runCatching { metadataCodec.serializeEnvelopeToJson(it) }.getOrNull()
+        }
+        val keyId = file.encryptionKeyId ?: envelope?.keyId
+        val encryptedBytes = file.encryptedSizeBytes ?: parseBytes(file.size)
+
+        if (envelope != null && contentKeyProvider != null) {
+            var keyMaterial: com.cloudyte.app.core.security.ContentKeyMaterial? = null
+            try {
+                keyMaterial = contentKeyProvider.getContentKeyForDecryption(keyId)
+                val decrypted = metadataCodec.decryptMetadata(envelope, keyMaterial)
+                val resolvedName = pendingRename ?: decrypted.originalName
+                val ext = decrypted.originalExtension.ifBlank {
+                    resolvedName.substringAfterLast('.', "")
+                }.lowercase(Locale.US)
+                val resolvedType = when {
+                    ext.isNotBlank() && ext.length <= 6 -> ext
+                    decrypted.originalMimeType.isNotBlank() ->
+                        decrypted.originalMimeType.substringAfterLast('/', "file").lowercase(Locale.US)
+                    else -> "file"
+                }
+                val fileId = if (file.effectiveId.isNotBlank()) {
+                    file.effectiveId
+                } else {
+                    "${resolvedAccId}_${safeFolder}_${rawRemoteName ?: resolvedName}"
+                }
+
+                return LocalCloudFile(
+                    id = fileId,
+                    name = resolvedName,
+                    type = resolvedType,
+                    size = formatByteCount(decrypted.plaintextSizeBytes),
+                    rawSize = decrypted.plaintextSizeBytes,
+                    time = if ((file.time ?: 0L) > 0L) file.time!! else decrypted.modifiedAt,
+                    isFolder = false,
+                    path = decrypted.relativePath ?: "",
+                    folderId = safeFolder,
+                    accountId = resolvedAccId,
+                    mimeType = decrypted.originalMimeType,
+                    cachedAt = now,
+                    updatedAt = file.updatedAt ?: decrypted.modifiedAt,
+                    thumbUrl = null,
+                    isEncrypted = true,
+                    encryptionFormatVersion = file.encryptionFormatVersion ?: CryptoConstants.FORMAT_VERSION_V1,
+                    encryptionKeyId = keyId,
+                    encryptedMetadata = serializedEnvelope,
+                    encryptedSizeBytes = encryptedBytes,
+                    encryptedChecksum = file.encryptedChecksum,
+                    opaqueRemoteName = rawRemoteName,
+                    plaintextSizeBytes = decrypted.plaintextSizeBytes,
+                    originalMetadataAvailable = true
+                )
+            } catch (_: Exception) {
+                // Fall through to safe fallback when key is unavailable or metadata is corrupted
+            } finally {
+                keyMaterial?.destroy()
+            }
+        }
+
+        val fallbackName = pendingRename ?: if (file.originalMetadataAvailable && !file.name.isNullOrBlank()) {
+            file.name
+        } else {
+            CryptoConstants.ENCRYPTED_FALLBACK_DISPLAY_NAME
+        }
+        val fallbackAvailable = file.originalMetadataAvailable && fallbackName != CryptoConstants.ENCRYPTED_FALLBACK_DISPLAY_NAME
+        val fallbackSize = if (fallbackAvailable && file.plaintextSizeBytes != null) {
+            file.plaintextSizeBytes
+        } else {
+            encryptedBytes
+        }
+        val fileId = if (file.effectiveId.isNotBlank()) {
+            file.effectiveId
+        } else {
+            "${resolvedAccId}_${safeFolder}_${rawRemoteName ?: fallbackName}"
+        }
+
+        return LocalCloudFile(
+            id = fileId,
+            name = fallbackName,
+            type = if (fallbackAvailable) file.effectiveType else "encrypted",
+            size = formatByteCount(fallbackSize),
+            rawSize = fallbackSize,
+            time = file.time ?: 0L,
+            isFolder = false,
+            path = if (fallbackAvailable) (file.path ?: "") else "",
+            folderId = safeFolder,
+            accountId = resolvedAccId,
+            mimeType = if (fallbackAvailable) file.mimeType else CryptoConstants.ENCRYPTED_MIME_TYPE,
+            cachedAt = now,
+            updatedAt = file.updatedAt,
+            thumbUrl = null,
+            isEncrypted = true,
+            encryptionFormatVersion = file.encryptionFormatVersion ?: CryptoConstants.FORMAT_VERSION_V1,
+            encryptionKeyId = keyId,
+            encryptedMetadata = serializedEnvelope,
+            encryptedSizeBytes = encryptedBytes,
+            encryptedChecksum = file.encryptedChecksum,
+            opaqueRemoteName = rawRemoteName,
+            plaintextSizeBytes = file.plaintextSizeBytes,
+            originalMetadataAvailable = fallbackAvailable
+        )
+    }
+
+    /**
+     * Re-evaluates all cached encrypted files in Room using the currently available CONTENT_KEY
+     * (e.g., immediately after restoring a key from recovery backup).
+     */
+    suspend fun reevaluateEncryptedMetadata(): Int {
+        val provider = contentKeyProvider ?: return 0
+        val encryptedRows = db.cloudFileDao().getEncryptedFiles()
+        if (encryptedRows.isEmpty()) return 0
+
+        val updatedRows = mutableListOf<LocalCloudFile>()
+        for (row in encryptedRows) {
+            val metadataJson = row.encryptedMetadata ?: continue
+            var keyMaterial: com.cloudyte.app.core.security.ContentKeyMaterial? = null
+            try {
+                val envelope = metadataCodec.deserializeEnvelopeFromJson(metadataJson)
+                keyMaterial = provider.getContentKeyForDecryption(row.encryptionKeyId ?: envelope.keyId)
+                val decrypted = metadataCodec.decryptMetadata(envelope, keyMaterial)
+                val ext = decrypted.originalExtension.ifBlank {
+                    decrypted.originalName.substringAfterLast('.', "")
+                }.lowercase(Locale.US)
+                val resolvedType = when {
+                    ext.isNotBlank() && ext.length <= 6 -> ext
+                    decrypted.originalMimeType.isNotBlank() ->
+                        decrypted.originalMimeType.substringAfterLast('/', "file").lowercase(Locale.US)
+                    else -> "file"
+                }
+                updatedRows += row.copy(
+                    name = decrypted.originalName,
+                    type = resolvedType,
+                    size = formatByteCount(decrypted.plaintextSizeBytes),
+                    rawSize = decrypted.plaintextSizeBytes,
+                    mimeType = decrypted.originalMimeType,
+                    path = decrypted.relativePath ?: row.path,
+                    plaintextSizeBytes = decrypted.plaintextSizeBytes,
+                    originalMetadataAvailable = true,
+                    thumbUrl = null
+                )
+            } catch (_: Exception) {
+                // Keep row as-is if key still doesn't match or metadata is corrupted
+            } finally {
+                keyMaterial?.destroy()
+            }
+        }
+
+        if (updatedRows.isNotEmpty()) {
+            db.cloudFileDao().insertFiles(updatedRows)
+            FileRepository.cacheFiles(updatedRows.map { it.toCloudFile() })
+        }
+        return updatedRows.size
     }
 
     suspend fun rename(fileId: String, accountId: String?, newName: String): Result<Unit> {
