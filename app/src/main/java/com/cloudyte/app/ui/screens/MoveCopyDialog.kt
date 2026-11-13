@@ -35,7 +35,6 @@ import com.cloudyte.app.api.MoveCopyRequest
 import com.cloudyte.app.ui.theme.*
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MoveCopyDialog(
     file: CloudFile,
@@ -44,6 +43,29 @@ fun MoveCopyDialog(
     onDismiss: () -> Unit,
     onSuccess: (String) -> Unit
 ) {
+    MoveCopyDialog(
+        files = listOf(file),
+        sourceAccountId = sourceAccountId,
+        isMove = isMove,
+        onDismiss = onDismiss,
+        onSuccess = onSuccess
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun MoveCopyDialog(
+    files: List<CloudFile>,
+    sourceAccountId: String,
+    isMove: Boolean,
+    onDismiss: () -> Unit,
+    onSuccess: (String) -> Unit
+) {
+    if (files.isEmpty()) return
+    val excludedFolderIds = remember(files) { files.map { it.effectiveId }.toSet() }
+    val headerSubtitle = remember(files) {
+        if (files.size == 1) files.first().effectiveName else "${files.size} items selected"
+    }
     val coroutineScope = rememberCoroutineScope()
     var accounts by remember { mutableStateOf<List<Account>>(emptyList()) }
     var selectedAccountId by remember { mutableStateOf(sourceAccountId) }
@@ -78,8 +100,8 @@ fun MoveCopyDialog(
         coroutineScope.launch {
             try {
                 val items = ApiClient.apiService.getFiles(selectedAccountId, currentTargetFolderId, null).body().orEmpty()
-                // Filter only folders, and exclude self if this item itself is a folder
-                folderItems = items.filter { it.isFolderItem && it.effectiveId != file.effectiveId }
+                // Filter only folders, and exclude self if any selected item is a folder
+                folderItems = items.filter { it.isFolderItem && it.effectiveId !in excludedFolderIds }
             } catch (e: Exception) {
                 Log.e("MoveCopyDialog", "Error fetching folders", e)
                 errorMessage = "Failed to list folders"
@@ -133,13 +155,17 @@ fun MoveCopyDialog(
                         Spacer(modifier = Modifier.width(8.dp))
                         Column {
                             Text(
-                                text = if (isMove) "Move File" else "Copy File",
+                                text = if (isMove) {
+                                    if (files.size == 1) "Move File" else "Move ${files.size} Items"
+                                } else {
+                                    if (files.size == 1) "Copy File" else "Copy ${files.size} Items"
+                                },
                                 color = MaterialTheme.colorScheme.onSurface,
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = file.effectiveName,
+                                text = headerSubtitle,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 style = MaterialTheme.typography.bodySmall,
                                 maxLines = 1,
@@ -459,25 +485,38 @@ fun MoveCopyDialog(
                             coroutineScope.launch {
                                 try {
                                     val targetFolderParam = currentTargetFolderId ?: "root"
-                                    val req = MoveCopyRequest(
-                                        sourceAccountId = sourceAccountId,
-                                        fileId = file.effectiveId,
-                                        targetAccountId = selectedAccountId,
-                                        targetFolderId = targetFolderParam
-                                    )
-                                    val res = if (isMove) {
-                                        ApiClient.apiService.moveFile(req)
-                                    } else {
-                                        ApiClient.apiService.copyFile(req)
+                                    var succeeded = 0
+                                    var lastErrorCode: Int? = null
+                                    for (targetFile in files) {
+                                        val req = MoveCopyRequest(
+                                            sourceAccountId = targetFile.effectiveAccountId.ifBlank { sourceAccountId },
+                                            fileId = targetFile.effectiveId,
+                                            targetAccountId = selectedAccountId,
+                                            targetFolderId = targetFolderParam
+                                        )
+                                        val res = if (isMove) {
+                                            ApiClient.apiService.moveFile(req)
+                                        } else {
+                                            ApiClient.apiService.copyFile(req)
+                                        }
+                                        if (res.isSuccessful) {
+                                            succeeded++
+                                        } else {
+                                            lastErrorCode = res.code()
+                                        }
                                     }
 
-                                    if (res.isSuccessful) {
+                                    if (succeeded == files.size) {
                                         val destDriveName = accounts.find { it.effectiveId == selectedAccountId }?.effectiveName ?: "Drive"
                                         val destFolderName = targetFolderBreadcrumbs.lastOrNull()?.name ?: "Root"
                                         val actionWord = if (isMove) "Moved" else "Copied"
-                                        onSuccess("$actionWord '${file.effectiveName}' to $destDriveName ($destFolderName)")
+                                        val targetDesc = if (files.size == 1) "'${files.first().effectiveName}'" else "$succeeded items"
+                                        onSuccess("$actionWord $targetDesc to $destDriveName ($destFolderName)")
+                                    } else if (succeeded > 0) {
+                                        val actionWord = if (isMove) "Moved" else "Copied"
+                                        onSuccess("$actionWord $succeeded of ${files.size} items (some failed)")
                                     } else {
-                                        errorMessage = "Operation failed (HTTP ${res.code()})"
+                                        errorMessage = "Operation failed (HTTP ${lastErrorCode ?: 500})"
                                     }
                                 } catch (e: Exception) {
                                     Log.e("MoveCopyDialog", "Move/Copy execution failed", e)

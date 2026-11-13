@@ -1,6 +1,7 @@
 package com.cloudyte.app.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -12,15 +13,17 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -37,9 +40,12 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import androidx.navigation.compose.currentBackStackEntryAsState
 import com.cloudyte.app.R
@@ -53,6 +59,7 @@ fun FloatingNavigationBar(
     navController: NavController,
     visible: Boolean = true,
     showNavText: Boolean = true,
+    activeTransferCount: Int = 0,
     modifier: Modifier = Modifier,
     onNavigate: ((String) -> Unit)? = null
 ) {
@@ -74,7 +81,8 @@ fun FloatingNavigationBar(
     ) {
         Surface(
             modifier = Modifier
-                .padding(horizontal = 24.dp, vertical = 8.dp)
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 10.dp)
                 .testTag("floating_bottom_bar"),
             shape = CircleShape,
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -83,67 +91,126 @@ fun FloatingNavigationBar(
         ) {
             Row(
                 modifier = Modifier
-                    .height(64.dp)
-                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                    .fillMaxWidth()
+                    .height(62.dp)
+                    .padding(horizontal = 6.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 items.forEachIndexed { index, item ->
                     val isSelected = index == selectedIndex
-                    if (isSelected) {
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight()
-                                .background(
-                                    color = MaterialTheme.colorScheme.primary,
-                                    shape = RoundedCornerShape(50)
-                                )
-                                .testTag("nav_item_${item.route}"),
-                            contentAlignment = Alignment.Center
-                        ) {
+                    val showBadge = item.route == "transfers" && activeTransferCount > 0
+                    val badgeLabel = if (activeTransferCount > 99) "99+" else activeTransferCount.toString()
+
+                    val pillColor by animateColorAsState(
+                        targetValue = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0f),
+                        label = "navPillColor_${item.route}"
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clip(CircleShape)
+                            .background(color = pillColor, shape = CircleShape)
+                            .then(
+                                if (!isSelected) {
+                                    Modifier.clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = ripple(bounded = true),
+                                        role = Role.Tab
+                                    ) { onNavigate?.invoke(item.route) }
+                                } else {
+                                    Modifier
+                                }
+                            )
+                            .semantics { contentDescription = item.label }
+                            .testTag("nav_item_${item.route}"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (isSelected) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.padding(horizontal = 16.dp)
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.padding(horizontal = 12.dp)
                             ) {
-                                Icon(
-                                    imageVector = item.icon,
-                                    contentDescription = item.label,
-                                    tint = MaterialTheme.colorScheme.onPrimary,
-                                    modifier = Modifier.size(20.dp)
-                                )
+                                BadgedBox(
+                                    badge = {
+                                        if (showBadge) {
+                                            Badge(
+                                                containerColor = MaterialTheme.colorScheme.onPrimary,
+                                                contentColor = MaterialTheme.colorScheme.primary
+                                            ) {
+                                                Text(badgeLabel)
+                                            }
+                                        }
+                                    }
+                                ) {
+                                    Icon(
+                                        imageVector = item.icon,
+                                        contentDescription = item.label,
+                                        tint = MaterialTheme.colorScheme.onPrimary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
                                 if (showNavText) {
                                     Text(
                                         text = item.label,
                                         color = MaterialTheme.colorScheme.onPrimary,
-                                        style = MaterialTheme.typography.labelLarge,
+                                        fontSize = 13.sp,
+                                        lineHeight = 16.sp,
                                         fontWeight = FontWeight.SemiBold,
                                         maxLines = 1,
+                                        softWrap = false,
                                         overflow = TextOverflow.Ellipsis
                                     )
                                 }
                             }
-                        }
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(CircleShape)
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = ripple(bounded = true, radius = 24.dp),
-                                    role = Role.Tab
-                                ) { onNavigate?.invoke(item.route) }
-                                .testTag("nav_item_${item.route}"),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = item.icon,
-                                contentDescription = item.label,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
-                                modifier = Modifier.size(22.dp)
-                            )
+                        } else if (showNavText) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                modifier = Modifier.padding(horizontal = 10.dp)
+                            ) {
+                                Text(
+                                    text = item.label,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 13.sp,
+                                    lineHeight = 16.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (showBadge) {
+                                    Badge(
+                                        containerColor = MaterialTheme.colorScheme.primary,
+                                        contentColor = MaterialTheme.colorScheme.onPrimary
+                                    ) {
+                                        Text(badgeLabel)
+                                    }
+                                }
+                            }
+                        } else {
+                            BadgedBox(
+                                badge = {
+                                    if (showBadge) {
+                                        Badge(
+                                            containerColor = MaterialTheme.colorScheme.primary,
+                                            contentColor = MaterialTheme.colorScheme.onPrimary
+                                        ) {
+                                            Text(badgeLabel)
+                                        }
+                                    }
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = item.icon,
+                                    contentDescription = item.label,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
                     }
                 }

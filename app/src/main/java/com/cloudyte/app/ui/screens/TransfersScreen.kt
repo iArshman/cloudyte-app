@@ -1,5 +1,6 @@
 package com.cloudyte.app.ui.screens
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,6 +18,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
@@ -31,14 +33,17 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,6 +61,7 @@ import com.cloudyte.app.R
 import com.cloudyte.app.CloudyteApplication
 import com.cloudyte.app.core.transfer.TransferCommand
 import com.cloudyte.app.data.TransferRepository
+import com.cloudyte.app.data.formatStorageSize
 import com.cloudyte.app.db.AppDatabase
 import com.cloudyte.app.db.TransferStatus
 import com.cloudyte.app.domain.model.Transfer
@@ -64,11 +70,13 @@ import com.cloudyte.app.ui.components.EmptyState
 import com.cloudyte.app.ui.theme.MetricLabelTextStyle
 import kotlinx.coroutines.launch
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TransfersScreen(
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    showBackButton: Boolean = true
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -79,20 +87,53 @@ fun TransfersScreen(
     }
 
     var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf(
-        stringResource(R.string.transfers_tab_all),
-        stringResource(R.string.transfers_tab_active),
-        stringResource(R.string.transfers_tab_completed),
-        stringResource(R.string.transfers_tab_failed)
-    )
+    val allLabel = stringResource(R.string.transfers_tab_all)
+    val activeLabel = stringResource(R.string.transfers_tab_active)
+    val completedLabel = stringResource(R.string.transfers_tab_completed)
+    val failedLabel = stringResource(R.string.transfers_tab_failed)
 
     val allTransfers by coordinator.observeTransfers().collectAsStateWithLifecycle(initialValue = emptyList())
 
+    val activeTransfers = remember(allTransfers) {
+        allTransfers.filter {
+            it.status == TransferStatus.PENDING.name ||
+                it.status == TransferStatus.RUNNING.name ||
+                it.status == TransferStatus.PAUSED.name
+        }
+    }
+    val completedTransfers = remember(allTransfers) {
+        allTransfers.filter { it.status == TransferStatus.COMPLETED.name }
+    }
+    val failedTransfers = remember(allTransfers) {
+        allTransfers.filter {
+            it.status == TransferStatus.FAILED.name ||
+                it.status == TransferStatus.CANCELLED.name
+        }
+    }
+
+    val tabs = remember(allTransfers.size, activeTransfers.size, completedTransfers.size, failedTransfers.size) {
+        listOf(
+            if (allTransfers.isNotEmpty()) "$allLabel (${allTransfers.size})" else allLabel,
+            if (activeTransfers.isNotEmpty()) "$activeLabel (${activeTransfers.size})" else activeLabel,
+            if (completedTransfers.isNotEmpty()) "$completedLabel (${completedTransfers.size})" else completedLabel,
+            if (failedTransfers.isNotEmpty()) "$failedLabel (${failedTransfers.size})" else failedLabel
+        )
+    }
+
     val filteredTransfers = when (selectedTab) {
-        1 -> allTransfers.filter { it.status == TransferStatus.PENDING.name || it.status == TransferStatus.RUNNING.name || it.status == TransferStatus.PAUSED.name }
-        2 -> allTransfers.filter { it.status == TransferStatus.COMPLETED.name }
-        3 -> allTransfers.filter { it.status == TransferStatus.FAILED.name || it.status == TransferStatus.CANCELLED.name }
+        1 -> activeTransfers
+        2 -> completedTransfers
+        3 -> failedTransfers
         else -> allTransfers
+    }
+
+    val pausableActive = remember(activeTransfers) {
+        activeTransfers.filter {
+            it.status == TransferStatus.RUNNING.name || it.status == TransferStatus.PENDING.name
+        }
+    }
+    val retryableFailed = remember(failedTransfers) {
+        failedTransfers.filter { it.status == TransferStatus.FAILED.name }
     }
 
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
@@ -109,13 +150,42 @@ fun TransfersScreen(
                 TopAppBar(
                     title = { Text(stringResource(R.string.transfers_title), fontWeight = FontWeight.Bold) },
                     navigationIcon = {
-                        IconButton(onClick = onBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
+                        if (showBackButton) {
+                            IconButton(onClick = onBack) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
+                            }
                         }
                     },
                     actions = {
-                        IconButton(onClick = { scope.launch { repo.clearCompleted() } }) {
-                            Icon(Icons.Default.Clear, contentDescription = stringResource(R.string.transfers_clear_completed))
+                        if (selectedTab == 1 && pausableActive.isNotEmpty()) {
+                            TextButton(
+                                onClick = {
+                                    scope.launch {
+                                        pausableActive.forEach { t ->
+                                            coordinator.dispatch(TransferCommand.Pause(t.id))
+                                        }
+                                    }
+                                }
+                            ) {
+                                Text("Pause All", color = MaterialTheme.colorScheme.primary)
+                            }
+                        } else if (selectedTab == 3 && retryableFailed.isNotEmpty()) {
+                            TextButton(
+                                onClick = {
+                                    scope.launch {
+                                        retryableFailed.forEach { t ->
+                                            coordinator.dispatch(TransferCommand.Retry(t.id))
+                                        }
+                                    }
+                                }
+                            ) {
+                                Text("Retry All", color = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                        if (completedTransfers.isNotEmpty() || selectedTab == 0 || selectedTab == 2) {
+                            IconButton(onClick = { scope.launch { repo.clearCompleted() } }) {
+                                Icon(Icons.Default.Clear, contentDescription = stringResource(R.string.transfers_clear_completed))
+                            }
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
@@ -127,7 +197,14 @@ fun TransfersScreen(
                         Tab(
                             selected = selectedTab == index,
                             onClick = { selectedTab = index },
-                            text = { Text(title) }
+                            text = {
+                                Text(
+                                    text = title,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         )
                     }
                 }
@@ -210,15 +287,25 @@ fun TransferItemCard(
     var previousSample by remember(transfer.id) {
         mutableStateOf(TransferMetricSample(transfer.bytesTransferred, transfer.updatedAt))
     }
-    var speedBytesPerSecond by remember(transfer.id) { mutableStateOf(0L) }
-    LaunchedEffect(transfer.id, transfer.bytesTransferred, transfer.updatedAt) {
-        val elapsedMs = (transfer.updatedAt - previousSample.timestamp).coerceAtLeast(1L)
-        val deltaBytes = (transfer.bytesTransferred - previousSample.bytes).coerceAtLeast(0L)
-        if (deltaBytes > 0L) {
-            speedBytesPerSecond = (deltaBytes * 1000L) / elapsedMs
+    var emaSpeedBps by remember(transfer.id) { mutableDoubleStateOf(0.0) }
+    LaunchedEffect(transfer.id, transfer.bytesTransferred, transfer.updatedAt, transfer.status) {
+        if (transfer.status != TransferStatus.RUNNING.name) {
+            emaSpeedBps = 0.0
+            previousSample = TransferMetricSample(transfer.bytesTransferred, transfer.updatedAt)
+            return@LaunchedEffect
         }
-        previousSample = TransferMetricSample(transfer.bytesTransferred, transfer.updatedAt)
+        val elapsedMs = transfer.updatedAt - previousSample.timestamp
+        val deltaBytes = transfer.bytesTransferred - previousSample.bytes
+        if (deltaBytes > 0L && elapsedMs >= 150L) {
+            val instantBps = (deltaBytes * 1000.0) / elapsedMs.toDouble()
+            emaSpeedBps = if (emaSpeedBps <= 0.0) instantBps else (0.35 * instantBps + 0.65 * emaSpeedBps)
+            previousSample = TransferMetricSample(transfer.bytesTransferred, transfer.updatedAt)
+        } else if (deltaBytes < 0L) {
+            emaSpeedBps = 0.0
+            previousSample = TransferMetricSample(transfer.bytesTransferred, transfer.updatedAt)
+        }
     }
+    val speedBytesPerSecond = emaSpeedBps.toLong()
 
     Card(
         shape = MaterialTheme.shapes.medium,
@@ -235,13 +322,38 @@ fun TransferItemCard(
                 )
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = transfer.fileName,
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = transfer.fileName,
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        if (transfer.isEncrypted) {
+                            Surface(
+                                shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Lock,
+                                        contentDescription = "Encrypted",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(11.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = "${transfer.direction} • ${transfer.status}",
@@ -286,14 +398,30 @@ fun TransferItemCard(
                     progress = { progress },
                     modifier = Modifier.fillMaxWidth()
                 )
-                if (speedBytesPerSecond > 0L) {
+                Spacer(modifier = Modifier.height(8.dp))
+                val percentInt = (progress * 100f).roundToInt().coerceIn(0, 100)
+                val sizeProgressText = if (transfer.totalBytes > 0L) {
+                    "${formatStorageSize(transfer.bytesTransferred)} / ${formatStorageSize(transfer.totalBytes)} ($percentInt%)"
+                } else if (transfer.bytesTransferred > 0L) {
+                    formatStorageSize(transfer.bytesTransferred)
+                } else {
+                    null
+                }
+                val rateEtaText = if (speedBytesPerSecond > 0L) {
                     val remainingBytes = (transfer.totalBytes - transfer.bytesTransferred).coerceAtLeast(0L)
                     val etaSeconds = if (remainingBytes > 0L) remainingBytes / speedBytesPerSecond else 0L
-                    Spacer(modifier = Modifier.height(8.dp))
+                    "${formatTransferRate(speedBytesPerSecond)} • ${formatTransferEta(etaSeconds)} left"
+                } else {
+                    null
+                }
+                val metricsLine = listOfNotNull(sizeProgressText, rateEtaText).joinToString("  •  ")
+                if (metricsLine.isNotBlank()) {
                     Text(
-                        text = "${formatTransferRate(speedBytesPerSecond)} • ${formatTransferEta(etaSeconds)} remaining",
+                        text = metricsLine,
                         style = MetricLabelTextStyle,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }

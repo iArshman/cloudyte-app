@@ -82,7 +82,8 @@ data class Transfer(
     val checksum: String?,
     val idempotencyKey: String?,
     val attemptCount: Int,
-    val updatedAt: Long
+    val updatedAt: Long,
+    val isEncrypted: Boolean = false
 ) {
     companion object {
         fun fromLocal(value: LocalTransfer) = Transfer(
@@ -100,7 +101,8 @@ data class Transfer(
             checksum = value.checksum,
             idempotencyKey = value.idempotencyKey,
             attemptCount = value.attemptCount,
-            updatedAt = value.updatedAt
+            updatedAt = value.updatedAt,
+            isEncrypted = value.isEncrypted
         )
     }
 }

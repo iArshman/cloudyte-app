@@ -61,6 +61,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
@@ -73,6 +74,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -95,6 +97,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
@@ -339,11 +342,13 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     navController: NavController,
     rootNavController: NavController,
-    viewModel: HomeViewModel = viewModel()
+    viewModel: HomeViewModel = viewModel(),
+    onSearchClick: (() -> Unit)? = null
 ) {
     val profile by viewModel.profile.collectAsStateWithLifecycle()
     val accounts by viewModel.accounts.collectAsStateWithLifecycle()
@@ -362,8 +367,13 @@ fun HomeScreen(
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { androidx.compose.material3.SnackbarHostState() }
     var isUploading by remember { mutableStateOf(false) }
+    var isManualRefreshing by remember { mutableStateOf(false) }
     var showCreateFolderDialog by remember { mutableStateOf(false) }
     var folderNameInput by remember { mutableStateOf("") }
+
+    LaunchedEffect(isLoading) {
+        if (!isLoading) isManualRefreshing = false
+    }
 
     LaunchedEffect(Unit) {
         viewModel.loadData(forceStorageRefresh = false)
@@ -499,30 +509,37 @@ fun HomeScreen(
             )
         }
     ) { innerPadding ->
-        // Loading indicator pinned just below top bar
-        AnimatedVisibility(
-            visible = isLoading,
-            enter = expandVertically(),
-            exit = shrinkVertically(),
-            modifier = Modifier.padding(top = innerPadding.calculateTopPadding())
-        ) {
-            LinearProgressIndicator(
-                modifier = Modifier.fillMaxWidth(),
-                color = MaterialTheme.colorScheme.primary,
-                trackColor = MaterialTheme.colorScheme.surfaceVariant
-            )
-        }
-        LazyColumn(
+        PullToRefreshBox(
+            isRefreshing = isManualRefreshing && isLoading,
+            onRefresh = {
+                isManualRefreshing = true
+                viewModel.loadData(forceStorageRefresh = true)
+            },
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding),
-            contentPadding = PaddingValues(
-                start = 16.dp,
-                end = 16.dp,
-                top = 8.dp,
-                bottom = LocalBottomBarInset.current + 88.dp
-            )
+                .padding(innerPadding)
         ) {
+            // Loading indicator pinned just below top bar
+            AnimatedVisibility(
+                visible = isLoading && !isManualRefreshing,
+                enter = expandVertically(),
+                exit = shrinkVertically()
+            ) {
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            }
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    start = 16.dp,
+                    end = 16.dp,
+                    top = 8.dp,
+                    bottom = LocalBottomBarInset.current + 88.dp
+                )
+            ) {
             item {
                 Row(
                     modifier = Modifier
@@ -634,7 +651,9 @@ fun HomeScreen(
                 QuickActionsRow(
                     onUploadClick = { filePickerLauncher.launch(arrayOf("*/*")) },
                     onNewFolderClick = { showCreateFolderDialog = true },
-                    onSearchClick = { navController.navigateSingleTopRestore("files") },
+                    onSearchClick = {
+                        onSearchClick?.invoke() ?: navController.navigateSingleTopRestore("files")
+                    },
                     onDrivesClick = { navController.navigateSingleTopRestore("accounts") }
                 )
             }
@@ -674,6 +693,7 @@ fun HomeScreen(
                     }
                 }
             }
+        }
         }
     }
 }
@@ -1340,23 +1360,54 @@ fun FileListItem(
                 Text(
                     text = file.effectiveName,
                     color = MaterialTheme.colorScheme.onSurface,
-                    style = MaterialTheme.typography.titleSmall,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontSize = 14.sp,
+                    lineHeight = 18.sp,
+                    fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
                     Text(
                         text = if (file.isFolderItem) stringResource(R.string.files_type_folder) else file.formattedSize,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MetricLabelTextStyle
+                        style = MetricLabelTextStyle.copy(fontSize = 11.sp, lineHeight = 14.sp)
                     )
                     if (!file.isFolderItem) {
                         Text(
-                            text = " • ${file.effectiveType.uppercase()}",
+                            text = "• ${file.effectiveType.uppercase()}",
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                            style = MaterialTheme.typography.labelSmall
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, lineHeight = 14.sp)
                         )
+                    }
+                    if (file.isEncrypted) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Lock,
+                                    contentDescription = "Encrypted",
+                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.size(10.dp)
+                                )
+                                Text(
+                                    text = "E2EE",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
                     }
                 }
             }
