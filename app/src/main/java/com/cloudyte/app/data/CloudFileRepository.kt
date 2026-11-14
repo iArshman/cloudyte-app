@@ -29,6 +29,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.update
 import java.util.Locale
 import java.util.UUID
@@ -43,6 +45,7 @@ class CloudFileRepository @JvmOverloads constructor(
     private val metadataCodec: EncryptedMetadataCodec = EncryptedMetadataCodec()
 ) {
     private val etagMap = ConcurrentHashMap<String, String>()
+    private val folderMemoryCache = ConcurrentHashMap<String, List<CloudFile>>()
     private val storageRefreshTimestamps = ConcurrentHashMap<String, Long>()
     private val inFlightRefreshes = ConcurrentHashMap<String, CompletableDeferred<Result<Unit>>>()
 
@@ -70,12 +73,57 @@ class CloudFileRepository @JvmOverloads constructor(
         return "${accountMetaKey(accountId)}:${safeFolderId(folderId)}"
     }
 
+    /**
+     * Synchronous 0ms snapshot lookup for instant navigation without waiting for Room's async Flow.
+     */
+    fun getCachedFolderSnapshot(accountId: String?, folderId: String?): List<CloudFile>? {
+        val key = folderKey(accountId, folderId)
+        return folderMemoryCache[key]
+    }
+
+    /**
+     * Pre-warms in-memory snapshots from local Room DB for child folders so navigating into
+     * any already-synced subfolder happens in 0ms on the very first frame.
+     */
+    suspend fun warmSubfolderCachesFromDb(accountId: String?, subfolderIds: List<String>) {
+        val normalizedAccount = if (accountId.isNullOrBlank() || accountId == "root") null else accountId
+        for (subId in subfolderIds) {
+            val safeSub = safeFolderId(subId)
+            val key = folderKey(normalizedAccount, safeSub)
+            if (!folderMemoryCache.containsKey(key)) {
+                val localRows = db.cloudFileDao().getFilesForFolder(normalizedAccount, safeSub)
+                if (localRows.isNotEmpty()) {
+                    folderMemoryCache[key] = localRows.map { it.toCloudFile() }
+                }
+            }
+        }
+    }
+
+    /**
+     * Speculatively prefetches a subfolder over the network if not already fresh.
+     */
+    suspend fun prefetchSubfolder(accountId: String?, folderId: String?) {
+        if (folderId.isNullOrBlank()) return
+        val normalizedAccount = if (accountId.isNullOrBlank() || accountId == "root") null else accountId
+        val safeSub = safeFolderId(folderId)
+        if (!isFolderFresh(normalizedAccount, safeSub)) {
+            refresh(normalizedAccount, safeSub, force = false, maxPages = 1)
+        } else {
+            warmSubfolderCachesFromDb(normalizedAccount, listOf(safeSub))
+        }
+    }
+
     fun observeFolder(accountId: String?, folderId: String?): Flow<List<CloudFile>> {
         val safeFolder = safeFolderId(folderId)
         val normalizedAccount = if (accountId.isNullOrBlank() || accountId == "root") null else accountId
-        return db.cloudFileDao().getFilesForFolderFlow(normalizedAccount, safeFolder).map { list ->
-            list.map { it.toCloudFile() }
-        }
+        val key = folderKey(normalizedAccount, safeFolder)
+        return db.cloudFileDao().getFilesForFolderFlow(normalizedAccount, safeFolder)
+            .map { list -> list.map { it.toCloudFile() } }
+            .onEach { mapped -> folderMemoryCache[key] = mapped }
+            .onStart {
+                folderMemoryCache[key]?.let { cached -> emit(cached) }
+            }
+            .distinctUntilChanged()
     }
 
     /**
@@ -236,12 +284,24 @@ class CloudFileRepository @JvmOverloads constructor(
             val apiAccountId = normalizedAccount
 
             val allFiles = mutableListOf<CloudFile>()
+            val explicitDeletedIds = linkedSetOf<String>()
+            var isServerDeltaResponse = false
             var cursor: String? = resumeCursor
             var isFirstPage = resumeCursor == null
             val startedFromContinuation = resumeCursor != null
             var latestEtag: String? = storedEtag
             var pagesFetched = 0
             val pageBudget = maxPages.coerceAtLeast(1)
+
+            val pending = db.fileMutationDao().pendingForFolder(normalizedAccount, safeFolder)
+            val pendingDeletes = pending
+                .filter { it.operation == LocalFileMutation.DELETE }
+                .mapNotNull { it.fileId }
+                .toSet()
+            val pendingRenames = pending
+                .filter { it.operation == LocalFileMutation.RENAME }
+                .mapNotNull { mutation -> mutation.fileId?.let { it to mutation.name } }
+                .toMap()
 
             while (pagesFetched < pageBudget) {
                 val response = api.getFiles(
@@ -293,32 +353,35 @@ class CloudFileRepository @JvmOverloads constructor(
                     } else {
                         etagMap.remove(key)
                     }
+                    val syncModeHeader = response.headers()["X-Sync-Mode"]
+                    if (syncModeHeader.equals("delta", ignoreCase = true)) {
+                        isServerDeltaResponse = true
+                    }
                 }
 
-                val pageFiles = response.body().orEmpty()
-                allFiles.addAll(pageFiles)
+                response.headers()["X-Deleted-Ids"]
+                    ?.split(",")
+                    ?.map { it.trim() }
+                    ?.filter { it.isNotEmpty() }
+                    ?.let { explicitDeletedIds.addAll(it) }
+
+                val rawPageFiles = response.body().orEmpty()
+                val activePageFiles = ArrayList<CloudFile>(rawPageFiles.size)
+                for (item in rawPageFiles) {
+                    if (item.type.equals("deleted", ignoreCase = true)) {
+                        if (item.effectiveId.isNotBlank()) {
+                            explicitDeletedIds.add(item.effectiveId)
+                            isServerDeltaResponse = true
+                        }
+                    } else {
+                        activePageFiles.add(item)
+                    }
+                }
+                allFiles.addAll(activePageFiles)
                 pagesFetched++
 
                 val nextCursor = response.headers()["X-Next-Cursor"]?.takeIf { it.isNotBlank() && it != cursor }
                 currentContinuationToken = nextCursor
-                if (nextCursor != null) {
-                    db.folderSyncMetaDao().upsert(
-                        LocalFolderSyncMeta(
-                            accountKey = accKey,
-                            folderId = safeFolder,
-                            etag = latestEtag,
-                            lastSyncedAt = persistedMeta?.lastSyncedAt ?: 0L,
-                            providerType = resolvedProviderType,
-                            syncState = "RUNNING",
-                            lastRequestedAt = attemptAt,
-                            lastSuccessfulAt = persistedMeta?.lastSuccessfulAt,
-                            lastAttemptAt = attemptAt,
-                            isCompleteSnapshot = false,
-                            continuationToken = nextCursor,
-                            remoteRevision = latestEtag
-                        )
-                    )
-                }
                 if (nextCursor == null) {
                     break
                 }
@@ -327,15 +390,6 @@ class CloudFileRepository @JvmOverloads constructor(
             }
 
             val now = nowMillis()
-            val pending = db.fileMutationDao().pendingForFolder(normalizedAccount, safeFolder)
-            val pendingDeletes = pending
-                .filter { it.operation == LocalFileMutation.DELETE }
-                .mapNotNull { it.fileId }
-                .toSet()
-            val pendingRenames = pending
-                .filter { it.operation == LocalFileMutation.RENAME }
-                .mapNotNull { mutation -> mutation.fileId?.let { it to mutation.name } }
-                .toMap()
             val serverRows = allFiles
                 .filterNot { it.effectiveId in pendingDeletes }
                 .map { file ->
@@ -364,37 +418,44 @@ class CloudFileRepository @JvmOverloads constructor(
                     )
                 }
             val allLocal = (serverRows + optimisticFolders).distinctBy { it.id }
-            val isCompleteListing = currentContinuationToken == null && !startedFromContinuation
+            val isCompleteListing = currentContinuationToken == null && !startedFromContinuation && !isServerDeltaResponse
             val snapshot = com.cloudyte.app.core.sync.ReconciliationPolicy.Snapshot(
                 files = allLocal,
                 isComplete = isCompleteListing,
                 continuationToken = currentContinuationToken,
-                remoteRevision = latestEtag
+                remoteRevision = latestEtag,
+                isDeltaMode = isServerDeltaResponse,
+                explicitDeletedIds = explicitDeletedIds
             )
 
-            // Only a complete snapshot is allowed to generate tombstones or remove missing local rows.
+            // True Row-Level Delta Sync: only write added/modified rows and remove stale rows.
+            // If 0 rows changed and 0 rows were deleted, skip SQLite table writes completely.
+            val existingRows = db.cloudFileDao().getFilesForFolder(normalizedAccount, safeFolder)
+            val delta = com.cloudyte.app.core.sync.ReconciliationPolicy.computeDelta(existingRows, snapshot)
+
             db.withTransaction {
-                if (snapshot.isCompleteSnapshot) {
-                    val existingIds = db.cloudFileDao().getFileIdsForFolder(normalizedAccount, safeFolder)
-                    val staleIds = com.cloudyte.app.core.sync.ReconciliationPolicy.staleIds(existingIds, snapshot)
-                    if (staleIds.isNotEmpty()) {
-                        val tombstones = com.cloudyte.app.core.sync.ReconciliationPolicy.tombstonesFor(
-                            existingIds = existingIds,
-                            snapshot = snapshot,
-                            accountKey = accKey,
-                            providerType = resolvedProviderType,
-                            folderId = safeFolder,
-                            deletedAt = now
-                        )
+                if (delta.staleIds.isNotEmpty()) {
+                    val existingIds = existingRows.map { it.id }
+                    val tombstones = com.cloudyte.app.core.sync.ReconciliationPolicy.tombstonesFor(
+                        existingIds = existingIds,
+                        snapshot = snapshot,
+                        accountKey = accKey,
+                        providerType = resolvedProviderType,
+                        folderId = safeFolder,
+                        deletedAt = now
+                    )
+                    if (tombstones.isNotEmpty()) {
                         db.fileTombstoneDao().insertAll(tombstones)
-                        db.cloudFileDao().deleteByIds(staleIds)
                     }
+                    db.cloudFileDao().deleteByIds(delta.staleIds)
                 }
                 val currentIds = allLocal.map { it.id }
                 if (currentIds.isNotEmpty()) {
                     db.fileTombstoneDao().removeForRemoteIds(accKey, safeFolder, currentIds)
                 }
-                db.cloudFileDao().insertFiles(allLocal)
+                if (delta.toUpsert.isNotEmpty()) {
+                    db.cloudFileDao().insertFiles(delta.toUpsert)
+                }
             }
 
             val isFullySynced = currentContinuationToken == null
@@ -415,8 +476,14 @@ class CloudFileRepository @JvmOverloads constructor(
                 )
             )
 
-            // Cache files in memory so detail viewers continue working seamlessly
-            FileRepository.cacheFiles(allLocal.map { it.toCloudFile() })
+            // Cache files in memory so instant navigation and detail viewers work in 0ms
+            val cloudFileSnapshot = if (isCompleteListing) {
+                allLocal.map { it.toCloudFile() }
+            } else {
+                db.cloudFileDao().getFilesForFolder(normalizedAccount, safeFolder).map { it.toCloudFile() }
+            }
+            folderMemoryCache[key] = cloudFileSnapshot
+            FileRepository.cacheFiles(cloudFileSnapshot)
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
@@ -639,8 +706,13 @@ class CloudFileRepository @JvmOverloads constructor(
             db.fileMutationDao().insert(operation)
             db.folderSyncMetaDao().deleteForFolder(accountMetaKey(normalizedAccount), existing.folderId)
         }
-        etagMap.remove(folderKey(normalizedAccount, existing.folderId))
-        FileRepository.cacheFiles(listOf(existing.copy(name = newName).toCloudFile()))
+        val fKey = folderKey(normalizedAccount, existing.folderId)
+        etagMap.remove(fKey)
+        val updatedCloudFile = existing.copy(name = newName).toCloudFile()
+        folderMemoryCache.computeIfPresent(fKey) { _, list ->
+            list.map { if (it.effectiveId == fileId) updatedCloudFile else it }
+        }
+        FileRepository.cacheFiles(listOf(updatedCloudFile))
         FileMutationWorker.enqueue()
         return Result.success(Unit)
     }
@@ -665,7 +737,11 @@ class CloudFileRepository @JvmOverloads constructor(
             db.fileMutationDao().insert(operation)
             db.folderSyncMetaDao().deleteForFolder(accountMetaKey(normalizedAccount), parentFolderId)
         }
-        etagMap.remove(folderKey(normalizedAccount, parentFolderId))
+        val fKey = folderKey(normalizedAccount, parentFolderId)
+        etagMap.remove(fKey)
+        folderMemoryCache.computeIfPresent(fKey) { _, list ->
+            list.filterNot { it.effectiveId == fileId }
+        }
         FileRepository.removeCachedFile(fileId)
         FileMutationWorker.enqueue()
         return Result.success(Unit)
@@ -708,7 +784,12 @@ class CloudFileRepository @JvmOverloads constructor(
             db.fileMutationDao().insert(operation)
             db.folderSyncMetaDao().deleteForFolder(accountMetaKey(normalizedAccount), safeParentId)
         }
-        etagMap.remove(folderKey(normalizedAccount, safeParentId))
+        val fKey = folderKey(normalizedAccount, safeParentId)
+        etagMap.remove(fKey)
+        val newCloudFolder = tempFolder.toCloudFile()
+        folderMemoryCache.computeIfPresent(fKey) { _, list ->
+            list + newCloudFolder
+        }
         FileMutationWorker.enqueue()
         return Result.success(Unit)
     }

@@ -58,6 +58,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.DriveFileMove
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -158,7 +159,16 @@ import com.cloudyte.app.data.ViewMode
 import com.cloudyte.app.db.AppDatabase
 import com.cloudyte.app.db.LocalAccount
 import com.cloudyte.app.db.TransferDirection
+import androidx.compose.material.icons.filled.DownloadDone
+import androidx.compose.material.icons.filled.OfflinePin
+import androidx.compose.material3.CircularProgressIndicator
+import com.cloudyte.app.api.OfflineFileManager
+import com.cloudyte.app.features.player.GDriveInfoBottomSheet
+import com.cloudyte.app.features.player.performShareFileLink
 import com.cloudyte.app.ui.components.AppLoadingIndicator
+import com.cloudyte.app.ui.components.DriveItemActionSheet
+import com.cloudyte.app.ui.components.DriveQuickFilterBar
+import com.cloudyte.app.ui.components.FileQuickFilter
 import com.cloudyte.app.ui.components.FileThumb
 import com.cloudyte.app.ui.components.LocalBottomBarInset
 import com.cloudyte.app.ui.navigation.NavigationTransitions
@@ -282,16 +292,51 @@ class FilesViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     val files: StateFlow<List<CloudFile>> = combine(selectedFolder, folderSnapshot) { folderKey, snapshot ->
-        if (snapshot?.folderKey == folderKey) snapshot.files else emptyList()
+        if (snapshot?.folderKey == folderKey) {
+            snapshot.files
+        } else {
+            repo.getCachedFolderSnapshot(folderKey.first, folderKey.second) ?: emptyList()
+        }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    /** True once the database has answered for the currently selected folder. */
+    /** True once the database or hot memory cache has answered for the currently selected folder. */
     val isFolderDataLoaded: StateFlow<Boolean> = combine(selectedFolder, folderSnapshot) { folderKey, snapshot ->
-        snapshot?.folderKey == folderKey
+        snapshot?.folderKey == folderKey || repo.getCachedFolderSnapshot(folderKey.first, folderKey.second) != null
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    private val folderScrollPositions = java.util.concurrent.ConcurrentHashMap<String, Pair<Int, Int>>()
+
+    fun saveScrollPosition(folderId: String?, firstVisibleIndex: Int, firstVisibleOffset: Int) {
+        val accId = currentAccountId.value
+            ?: accounts.value.firstOrNull { it.isDefault == true }?.effectiveId
+            ?: accounts.value.firstOrNull()?.effectiveId
+            ?: "default"
+        folderScrollPositions["$accId:${folderId ?: "root"}"] = firstVisibleIndex to firstVisibleOffset
+    }
+
+    fun getScrollPosition(folderId: String?): Pair<Int, Int> {
+        val accId = currentAccountId.value
+            ?: accounts.value.firstOrNull { it.isDefault == true }?.effectiveId
+            ?: accounts.value.firstOrNull()?.effectiveId
+            ?: "default"
+        return folderScrollPositions["$accId:${folderId ?: "root"}"] ?: (0 to 0)
+    }
+
+    fun getInstantFolderSnapshot(folderId: String?): List<CloudFile>? {
+        val accId = currentAccountId.value
+            ?: accounts.value.firstOrNull { it.isDefault == true }?.effectiveId
+            ?: accounts.value.firstOrNull()?.effectiveId
+        return repo.getCachedFolderSnapshot(accId, folderId)
+    }
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
+    private val _quickFilter = MutableStateFlow(FileQuickFilter.ALL)
+    val quickFilter: StateFlow<FileQuickFilter> = _quickFilter.asStateFlow()
+
+    private val _globalSearchResults = MutableStateFlow<List<CloudFile>>(emptyList())
+    private var searchJob: Job? = null
 
     private val _searchFocusTrigger = MutableStateFlow(0)
     val searchFocusTrigger: StateFlow<Int> = _searchFocusTrigger.asStateFlow()
@@ -299,8 +344,13 @@ class FilesViewModel(
     val displayFoldersAndFiles: StateFlow<Pair<List<CloudFile>, List<CloudFile>>> = combine(
         files,
         _searchQuery,
-        UserPreferences.observe(application)
-    ) { currentFiles, query, prefs ->
+        _quickFilter,
+        _globalSearchResults,
+        combine(
+            UserPreferences.observe(application),
+            OfflineFileManager.downloadedFiles
+        ) { prefs, downloaded -> prefs to downloaded }
+    ) { currentFiles, query, filter, deepMatches, (prefs, downloadedIds) ->
         val sortOrder = when {
             prefs.sortField == SortField.NAME && prefs.sortDirection == SortDirection.ASC -> FileSortOrder.NAME_ASC
             prefs.sortField == SortField.NAME && prefs.sortDirection == SortDirection.DESC -> FileSortOrder.NAME_DESC
@@ -309,11 +359,17 @@ class FilesViewModel(
             prefs.sortField == SortField.DATE && prefs.sortDirection == SortDirection.ASC -> FileSortOrder.DATE_ASC
             else -> FileSortOrder.DATE_DESC
         }
-        val filtered = if (query.isBlank()) {
-            currentFiles
-        } else {
-            currentFiles.filter { it.effectiveName.contains(query, ignoreCase = true) }
+        val basePool = when {
+            query.isNotBlank() -> {
+                val localMatches = currentFiles.filter { it.effectiveName.contains(query, ignoreCase = true) }
+                (localMatches + deepMatches).distinctBy { it.effectiveId.ifEmpty { it.effectiveName } }
+            }
+            filter == FileQuickFilter.OFFLINE -> {
+                (currentFiles + deepMatches).distinctBy { it.effectiveId.ifEmpty { it.effectiveName } }
+            }
+            else -> currentFiles
         }
+        val filtered = basePool.filter { filter.matches(it, downloadedIds) }
         val sorted = when (sortOrder) {
             FileSortOrder.DATE_DESC -> filtered.sortedWith(compareByDescending<CloudFile> { it.isFolderItem }.thenByDescending { it.time ?: 0L })
             FileSortOrder.DATE_ASC -> filtered.sortedWith(compareByDescending<CloudFile> { it.isFolderItem }.thenBy { it.time ?: 0L })
@@ -329,8 +385,49 @@ class FilesViewModel(
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList<CloudFile>() to emptyList())
 
+    fun selectQuickFilter(filter: FileQuickFilter) {
+        _quickFilter.value = filter
+        if (filter == FileQuickFilter.OFFLINE) {
+            viewModelScope.launch(Dispatchers.IO) {
+                val accId = currentAccountId.value
+                    ?: accounts.value.firstOrNull { it.isDefault == true }?.effectiveId
+                    ?: accounts.value.firstOrNull()?.effectiveId
+                val allAccountFiles = if (!accId.isNullOrBlank()) {
+                    db.cloudFileDao().getFilesForAccount(accId).map { it.toCloudFile() }
+                } else {
+                    db.cloudFileDao().getAllFiles().map { it.toCloudFile() }
+                }
+                _globalSearchResults.value = allAccountFiles
+            }
+        } else if (_searchQuery.value.isBlank()) {
+            _globalSearchResults.value = emptyList()
+        }
+    }
+
     fun updateSearchQuery(query: String) {
         _searchQuery.value = query
+        searchJob?.cancel()
+        if (query.isBlank()) {
+            if (_quickFilter.value != FileQuickFilter.OFFLINE) {
+                _globalSearchResults.value = emptyList()
+            }
+            return
+        }
+        searchJob = viewModelScope.launch(Dispatchers.IO) {
+            val accId = currentAccountId.value
+                ?: accounts.value.firstOrNull { it.isDefault == true }?.effectiveId
+                ?: accounts.value.firstOrNull()?.effectiveId
+            val localDbMatches = runCatching { repo.searchFiles(accId, query) }.getOrDefault(emptyList())
+            _globalSearchResults.value = localDbMatches
+            kotlinx.coroutines.delay(250L)
+            val remoteMatches = runCatching {
+                val resp = api.getFiles(accountId = accId, folderId = null, search = query)
+                if (resp.isSuccessful) resp.body().orEmpty() else emptyList()
+            }.getOrDefault(emptyList())
+            if (remoteMatches.isNotEmpty()) {
+                _globalSearchResults.value = (localDbMatches + remoteMatches).distinctBy { it.effectiveId.ifEmpty { it.effectiveName } }
+            }
+        }
     }
 
     fun requestSearchFocus() {
@@ -413,6 +510,22 @@ class FilesViewModel(
                         refresh(force = true)
                     }
                 }
+        }
+        // Pre-warm child folder snapshots from Room into memory so tapping a cached subfolder renders in 0ms.
+        viewModelScope.launch {
+            files.collect { currentList ->
+                val subfolderIds = currentList.asSequence()
+                    .filter { it.isFolderItem && it.effectiveId.isNotBlank() }
+                    .map { it.effectiveId }
+                    .take(20)
+                    .toList()
+                if (subfolderIds.isNotEmpty()) {
+                    val accId = currentAccountId.value
+                        ?: accounts.value.firstOrNull { it.isDefault == true }?.effectiveId
+                        ?: accounts.value.firstOrNull()?.effectiveId
+                    repo.warmSubfolderCachesFromDb(accId, subfolderIds)
+                }
+            }
         }
     }
 
@@ -698,6 +811,58 @@ class FilesViewModel(
         }
     }
 
+    fun toggleOfflineAccess(file: CloudFile) {
+        if (file.isFolderItem) return
+        viewModelScope.launch {
+            val context = getApplication<Application>()
+            val accId = file.effectiveAccountId.ifBlank {
+                currentAccountId.value
+                    ?: accounts.value.firstOrNull { it.isDefault == true }?.effectiveId
+                    ?: accounts.value.firstOrNull()?.effectiveId
+                    ?: ""
+            }
+            if (OfflineFileManager.isDownloaded(context, accId, file.effectiveId)) {
+                OfflineFileManager.deleteOfflineFile(context, accId, file.effectiveId)
+                _userEvents.emit("Removed '${file.effectiveName}' from offline access")
+            } else {
+                _userEvents.emit("Making '${file.effectiveName}' available offline…")
+                val res = OfflineFileManager.downloadFile(context, accId, file)
+                if (res.isSuccess) {
+                    _userEvents.emit("Available offline: ${file.effectiveName}")
+                } else {
+                    _userEvents.emit(res.exceptionOrNull()?.message ?: "Offline download failed")
+                }
+            }
+        }
+    }
+
+    fun makeSelectedAvailableOffline(items: List<CloudFile>) {
+        val candidates = items.filter { !it.isFolderItem }
+        if (candidates.isEmpty()) {
+            viewModelScope.launch { _userEvents.emit("Select one or more files for offline access") }
+            return
+        }
+        viewModelScope.launch {
+            val context = getApplication<Application>()
+            val fallbackAcc = currentAccountId.value
+                ?: accounts.value.firstOrNull { it.isDefault == true }?.effectiveId
+                ?: accounts.value.firstOrNull()?.effectiveId
+                ?: ""
+            _userEvents.emit("Saving ${candidates.size} file(s) for offline access…")
+            var saved = 0
+            for (target in candidates) {
+                val accId = target.effectiveAccountId.ifBlank { fallbackAcc }
+                if (OfflineFileManager.downloadFile(context, accId, target).isSuccess) {
+                    saved++
+                }
+            }
+            _userEvents.emit(
+                if (saved > 0) "$saved file(s) available offline"
+                else "Could not save selected files offline"
+            )
+        }
+    }
+
     fun enqueueFolderUpload(treeUri: Uri) {
         viewModelScope.launch {
             try {
@@ -807,6 +972,40 @@ class FilesViewModel(
         return name to size
     }
 
+    fun enqueueCapturedPhoto(photoFile: java.io.File) {
+        if (!photoFile.exists() || photoFile.length() <= 0L) {
+            viewModelScope.launch { _userEvents.emit("Captured photo was empty") }
+            return
+        }
+        val context = getApplication<Application>()
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            photoFile
+        )
+        enqueueUploadUris(listOf(uri))
+    }
+
+    fun createAndUploadTextFile(fileName: String, content: String) {
+        viewModelScope.launch {
+            val context = getApplication<Application>()
+            val normalizedName = fileName.trim().let {
+                if (it.contains('.')) it else "$it.txt"
+            }
+            val uri = withContext(Dispatchers.IO) {
+                val notesDir = java.io.File(context.cacheDir, "created_notes").apply { mkdirs() }
+                val targetFile = java.io.File(notesDir, normalizedName)
+                targetFile.writeText(content)
+                androidx.core.content.FileProvider.getUriForFile(
+                    context,
+                    "${context.packageName}.fileprovider",
+                    targetFile
+                )
+            }
+            enqueueUploadUris(listOf(uri))
+        }
+    }
+
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -862,8 +1061,14 @@ fun FilesScreen(
     }
 
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
+    val quickFilter by viewModel.quickFilter.collectAsStateWithLifecycle()
+    val downloadedOfflineIds by OfflineFileManager.downloadedFiles.collectAsStateWithLifecycle()
+    val activeOfflineDownloads by OfflineFileManager.activeDownloads.collectAsStateWithLifecycle()
     val searchFocusTrigger by viewModel.searchFocusTrigger.collectAsStateWithLifecycle()
     val searchFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        OfflineFileManager.init(context)
+    }
     LaunchedEffect(searchFocusTrigger) {
         if (searchFocusTrigger > 0) {
             runCatching { searchFocusRequester.requestFocus() }
@@ -874,6 +1079,9 @@ fun FilesScreen(
     var showDriveDropdown by remember { mutableStateOf(false) }
     var showSelectionMoreMenu by remember { mutableStateOf(false) }
     var batchMoveCopyIsMove by remember { mutableStateOf<Boolean?>(null) }
+    var singleMoveCopyTarget by remember { mutableStateOf<Pair<CloudFile, Boolean>?>(null) }
+    var fileForActionSheet by remember { mutableStateOf<CloudFile?>(null) }
+    var fileForQuickInfo by remember { mutableStateOf<CloudFile?>(null) }
 
     val sortOrder = remember(prefsState.sortField, prefsState.sortDirection) {
         when {
@@ -940,6 +1148,10 @@ fun FilesScreen(
     var fileForDelete by remember { mutableStateOf<CloudFile?>(null) }
     var showCreateFolderDialog by remember { mutableStateOf(false) }
     var newFolderName by remember { mutableStateOf("") }
+    var showCreateTextFileDialog by remember { mutableStateOf(false) }
+    var newTextFileName by remember { mutableStateOf("Note.txt") }
+    var newTextFileContent by remember { mutableStateOf("") }
+    var pendingCameraPhotoFile by remember { mutableStateOf<java.io.File?>(null) }
     var showAddAccountDialog by remember { mutableStateOf(false) }
     var isFabExpanded by remember { mutableStateOf(false) }
 
@@ -948,6 +1160,13 @@ fun FilesScreen(
     }
     val folderPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let(viewModel::enqueueFolderUpload)
+    }
+    val cameraCaptureLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { captured ->
+        val photoFile = pendingCameraPhotoFile
+        pendingCameraPhotoFile = null
+        if (captured && photoFile != null) {
+            viewModel.enqueueCapturedPhoto(photoFile)
+        }
     }
 
 
@@ -1082,6 +1301,72 @@ fun FilesScreen(
         )
     }
 
+    // Create New Text / Note File Dialog
+    if (showCreateTextFileDialog) {
+        AlertDialog(
+            onDismissRequest = { showCreateTextFileDialog = false },
+            shape = MaterialTheme.shapes.extraLarge,
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            title = { Text("New text / note file", color = MaterialTheme.colorScheme.onSurface) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(
+                        value = newTextFileName,
+                        onValueChange = { newTextFileName = it },
+                        label = { Text("File name (.txt, .md, .json)") },
+                        singleLine = true,
+                        shape = MaterialTheme.shapes.medium,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = newTextFileContent,
+                        onValueChange = { newTextFileContent = it },
+                        label = { Text("Content") },
+                        minLines = 5,
+                        maxLines = 10,
+                        shape = MaterialTheme.shapes.medium,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (newTextFileName.isNotBlank()) {
+                            val name = newTextFileName.trim()
+                            val content = newTextFileContent
+                            showCreateTextFileDialog = false
+                            newTextFileName = "Note.txt"
+                            newTextFileContent = ""
+                            viewModel.createAndUploadTextFile(name, content)
+                        }
+                    },
+                    enabled = newTextFileName.isNotBlank(),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text("Save & Upload", color = MaterialTheme.colorScheme.onPrimary)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCreateTextFileDialog = false }) {
+                    Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        )
+    }
+
     if (showAddAccountDialog) {
         AddAccountDialog(
             onDismiss = { showAddAccountDialog = false },
@@ -1105,6 +1390,87 @@ fun FilesScreen(
                 snackbarMessage = msg
                 viewModel.refresh(force = true)
             }
+        )
+    }
+
+    singleMoveCopyTarget?.let { (targetFile, isMove) ->
+        MoveCopyDialog(
+            file = targetFile,
+            sourceAccountId = targetFile.effectiveAccountId.ifBlank { effectiveAccountId },
+            isMove = isMove,
+            onDismiss = { singleMoveCopyTarget = null },
+            onSuccess = { msg ->
+                singleMoveCopyTarget = null
+                snackbarMessage = msg
+                viewModel.refresh(force = true)
+            }
+        )
+    }
+
+    fileForQuickInfo?.let { infoFile ->
+        GDriveInfoBottomSheet(
+            file = infoFile,
+            accountId = infoFile.effectiveAccountId.ifBlank { effectiveAccountId },
+            isDownloadedOffline = infoFile.effectiveId in downloadedOfflineIds,
+            context = context,
+            onDismiss = { fileForQuickInfo = null }
+        )
+    }
+
+    fileForActionSheet?.let { sheetFile ->
+        val resolvedSheetAcc = sheetFile.effectiveAccountId.ifBlank { effectiveAccountId }
+        DriveItemActionSheet(
+            file = sheetFile,
+            accountId = resolvedSheetAcc,
+            isOfflinePinned = sheetFile.effectiveId in downloadedOfflineIds,
+            offlineDownloadProgress = activeOfflineDownloads[sheetFile.effectiveId],
+            onDismiss = { fileForActionSheet = null },
+            onOpen = {
+                if (sheetFile.isFolderItem) {
+                    viewModel.enterFolder(sheetFile.effectiveId, sheetFile.effectiveName)
+                } else {
+                    openFileInViewer(sheetFile, resolvedSheetAcc, rootNavController, regularFiles)
+                }
+            },
+            onToggleOffline = { viewModel.toggleOfflineAccess(sheetFile) },
+            onShare = {
+                coroutineScope.launch {
+                    val err = performShareFileLink(context, resolvedSheetAcc, sheetFile)
+                    if (!err.isNullOrBlank()) snackbarMessage = err
+                }
+            },
+            onSendFileCopy = {
+                coroutineScope.launch {
+                    snackbarMessage = "Preparing '${sheetFile.effectiveName}' for sharing…"
+                    val err = com.cloudyte.app.features.player.performSendFileCopy(context, resolvedSheetAcc, sheetFile)
+                    if (!err.isNullOrBlank()) snackbarMessage = err
+                }
+            },
+            onOpenWithExternal = {
+                coroutineScope.launch {
+                    val err = com.cloudyte.app.features.player.performOpenWithExternalApp(context, resolvedSheetAcc, sheetFile)
+                    if (!err.isNullOrBlank()) snackbarMessage = err
+                }
+            },
+            onDownload = { viewModel.downloadSelected(listOf(sheetFile)) },
+            onMove = { singleMoveCopyTarget = sheetFile to true },
+            onCopy = { singleMoveCopyTarget = sheetFile to false },
+            onRename = {
+                fileForRename = sheetFile
+                renameInput = sheetFile.effectiveName
+            },
+            onEncryptOrDecrypt = {
+                if (sheetFile.isEncrypted) {
+                    viewModel.decryptAndExportFile(sheetFile)
+                } else {
+                    viewModel.createEncryptedCopy(sheetFile)
+                }
+            },
+            onQuickInfo = { fileForQuickInfo = sheetFile },
+            onOpenFullDetails = {
+                rootNavController.navigate("file_detail/$resolvedSheetAcc/${sheetFile.effectiveId}")
+            },
+            onDelete = { fileForDelete = sheetFile }
         )
     }
 
@@ -1202,6 +1568,20 @@ fun FilesScreen(
                                 onDismissRequest = { showSelectionMoreMenu = false },
                                 modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer)
                             ) {
+                                if (hasDownloadableFiles) {
+                                    DropdownMenuItem(
+                                        text = { Text("Make available offline", color = MaterialTheme.colorScheme.onSurface) },
+                                        leadingIcon = {
+                                            Icon(Icons.Default.OfflinePin, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                        },
+                                        onClick = {
+                                            showSelectionMoreMenu = false
+                                            val targets = selectedFilesList
+                                            selectedFileIds = emptySet()
+                                            viewModel.makeSelectedAvailableOffline(targets)
+                                        }
+                                    )
+                                }
                                 DropdownMenuItem(
                                     text = { Text("Move to…", color = MaterialTheme.colorScheme.onSurface) },
                                     leadingIcon = {
@@ -1278,6 +1658,11 @@ fun FilesScreen(
                         }
                     }
                 )
+                DriveQuickFilterBar(
+                    selectedFilter = quickFilter,
+                    onSelectFilter = viewModel::selectQuickFilter,
+                    offlineCount = downloadedOfflineIds.size
+                )
             }
             // M3 LinearProgressIndicator below header when refreshing or uploading
             AnimatedVisibility(
@@ -1317,6 +1702,36 @@ fun FilesScreen(
                             icon = Icons.Default.Folder,
                             label = "Upload folder",
                             onClick = { isFabExpanded = false; folderPickerLauncher.launch(null) }
+                        )
+                        SpeedDialPillButton(
+                            icon = Icons.Default.Edit,
+                            label = "Take photo",
+                            onClick = {
+                                isFabExpanded = false
+                                runCatching {
+                                    val cameraDir = java.io.File(context.cacheDir, "camera_captures").apply { mkdirs() }
+                                    val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US)
+                                        .format(java.util.Date())
+                                    val photoFile = java.io.File(cameraDir, "IMG_$stamp.jpg")
+                                    pendingCameraPhotoFile = photoFile
+                                    val uri = androidx.core.content.FileProvider.getUriForFile(
+                                        context,
+                                        "${context.packageName}.fileprovider",
+                                        photoFile
+                                    )
+                                    cameraCaptureLauncher.launch(uri)
+                                }.onFailure { err ->
+                                    snackbarMessage = err.localizedMessage ?: "Camera unavailable"
+                                }
+                            }
+                        )
+                        SpeedDialPillButton(
+                            icon = Icons.Default.Edit,
+                            label = "New text file",
+                            onClick = {
+                                isFabExpanded = false
+                                showCreateTextFileDialog = true
+                            }
                         )
                         SpeedDialPillButton(
                             icon = Icons.Default.CreateNewFolder,
@@ -1395,12 +1810,27 @@ fun FilesScreen(
             indicator = {},
             modifier = Modifier.fillMaxSize()
         ) {
+            val instantSnapshot = if (!isFolderDataLoaded) {
+                viewModel.getInstantFolderSnapshot(currentFolderId)
+            } else {
+                null
+            }
+            val effectiveFolders = if (isFolderDataLoaded) {
+                folders
+            } else {
+                instantSnapshot?.filter { it.isFolderItem } ?: emptyList()
+            }
+            val effectiveRegularFiles = if (isFolderDataLoaded) {
+                regularFiles
+            } else {
+                instantSnapshot?.filter { !it.isFolderItem } ?: emptyList()
+            }
             val currentPane = FolderPane(
                 folderId = currentFolderId,
-                folders = folders,
-                regularFiles = regularFiles,
-                hasFiles = files.isNotEmpty(),
-                loaded = isFolderDataLoaded,
+                folders = effectiveFolders,
+                regularFiles = effectiveRegularFiles,
+                hasFiles = if (isFolderDataLoaded) files.isNotEmpty() else !instantSnapshot.isNullOrEmpty(),
+                loaded = isFolderDataLoaded || instantSnapshot != null,
                 busy = isRefreshing || isResolving,
                 breadcrumbs = breadcrumbs
             )
@@ -1415,9 +1845,33 @@ fun FilesScreen(
                 label = "FolderNavigationTransition",
                 modifier = Modifier.fillMaxSize()
             ) { pane ->
-                // Each pane owns its scroll position, so folders never inherit each other's offset.
-                val listState = rememberLazyListState()
-                val gridState = rememberLazyGridState()
+                // Each pane owns its scroll position and restores saved offset on Back/Breadcrumb navigation.
+                val savedScroll = remember(pane.folderId) { viewModel.getScrollPosition(pane.folderId) }
+                val listState = rememberLazyListState(
+                    initialFirstVisibleItemIndex = savedScroll.first,
+                    initialFirstVisibleItemScrollOffset = savedScroll.second
+                )
+                val gridState = rememberLazyGridState(
+                    initialFirstVisibleItemIndex = savedScroll.first,
+                    initialFirstVisibleItemScrollOffset = savedScroll.second
+                )
+                DisposableEffect(pane.folderId, isGridView) {
+                    onDispose {
+                        if (isGridView) {
+                            viewModel.saveScrollPosition(
+                                pane.folderId,
+                                gridState.firstVisibleItemIndex,
+                                gridState.firstVisibleItemScrollOffset
+                            )
+                        } else {
+                            viewModel.saveScrollPosition(
+                                pane.folderId,
+                                listState.firstVisibleItemIndex,
+                                listState.firstVisibleItemScrollOffset
+                            )
+                        }
+                    }
+                }
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -1512,6 +1966,7 @@ fun FilesScreen(
                                         navDirection = FilesNavDirection.FORWARD
                                         viewModel.enterFolder(folder.effectiveId, folder.effectiveName)
                                     },
+                                    onMoreClick = { fileForActionSheet = folder },
                                     onRenameClick = {
                                         fileForRename = folder
                                         renameInput = folder.effectiveName
@@ -1536,8 +1991,11 @@ fun FilesScreen(
                                     isCompact = isCompactDensity,
                                     isSelected = selectedFileIds.contains(file.effectiveId),
                                     isSelectionMode = isSelectionMode,
+                                    isOfflinePinned = file.effectiveId in downloadedOfflineIds,
+                                    offlineProgress = activeOfflineDownloads[file.effectiveId],
                                     onToggleSelect = { toggleSelection(file.effectiveId) },
                                     onClick = { openFileInViewer(file, effectiveAccountId, rootNavController, pane.regularFiles) },
+                                    onMoreClick = { fileForActionSheet = file },
                                     onRenameClick = {
                                         fileForRename = file
                                         renameInput = file.effectiveName
@@ -1558,7 +2016,7 @@ fun FilesScreen(
                                     )
                                 } else {
                                     FilesEmptyState(
-                                        isSearch = searchQuery.isNotBlank(),
+                                        isSearch = searchQuery.isNotBlank() || quickFilter != FileQuickFilter.ALL,
                                         onCreateFolder = { showCreateFolderDialog = true },
                                         onUploadFile = { filePickerLauncher.launch(arrayOf("*/*")) }
                                     )
@@ -1626,6 +2084,7 @@ fun FilesScreen(
                                         navDirection = FilesNavDirection.FORWARD
                                         viewModel.enterFolder(folder.effectiveId, folder.effectiveName)
                                     },
+                                    onMoreClick = { fileForActionSheet = folder },
                                     onRenameClick = {
                                         fileForRename = folder
                                         renameInput = folder.effectiveName
@@ -1658,8 +2117,11 @@ fun FilesScreen(
                                     isCompact = isCompactDensity,
                                     isSelected = selectedFileIds.contains(file.effectiveId),
                                     isSelectionMode = isSelectionMode,
+                                    isOfflinePinned = file.effectiveId in downloadedOfflineIds,
+                                    offlineProgress = activeOfflineDownloads[file.effectiveId],
                                     onToggleSelect = { toggleSelection(file.effectiveId) },
                                     onClick = { openFileInViewer(file, effectiveAccountId, rootNavController, pane.regularFiles) },
+                                    onMoreClick = { fileForActionSheet = file },
                                     onRenameClick = {
                                         fileForRename = file
                                         renameInput = file.effectiveName
@@ -1680,7 +2142,7 @@ fun FilesScreen(
                                     )
                                 } else {
                                     FilesEmptyState(
-                                        isSearch = searchQuery.isNotBlank(),
+                                        isSearch = searchQuery.isNotBlank() || quickFilter != FileQuickFilter.ALL,
                                         onCreateFolder = { showCreateFolderDialog = true },
                                         onUploadFile = { filePickerLauncher.launch(arrayOf("*/*")) }
                                     )
@@ -2140,6 +2602,7 @@ fun FolderGridItem(
     isSelectionMode: Boolean = false,
     onToggleSelect: (() -> Unit)? = null,
     onClick: (() -> Unit)? = null,
+    onMoreClick: (() -> Unit)? = null,
     onRenameClick: (() -> Unit)? = null,
     onDeleteClick: (() -> Unit)? = null,
     onEncryptClick: (() -> Unit)? = null
@@ -2173,7 +2636,6 @@ fun FolderGridItem(
             )
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
-            // Top full-bleed preview box with centered Folder icon (no border around preview)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2229,7 +2691,6 @@ fun FolderGridItem(
                 }
             }
 
-            // Bottom row: Folder name + "Folder" subtitle on left, 3-dot menu on right
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2259,7 +2720,9 @@ fun FolderGridItem(
 
                 Box {
                     IconButton(
-                        onClick = { showMenu = true },
+                        onClick = {
+                            if (onMoreClick != null) onMoreClick() else showMenu = true
+                        },
                         modifier = Modifier.size(48.dp)
                     ) {
                         Icon(
@@ -2325,8 +2788,11 @@ fun FileGridItem(
     isSelected: Boolean = false,
     isCompact: Boolean = false,
     isSelectionMode: Boolean = false,
+    isOfflinePinned: Boolean = false,
+    offlineProgress: Float? = null,
     onToggleSelect: (() -> Unit)? = null,
     onClick: (() -> Unit)? = null,
+    onMoreClick: (() -> Unit)? = null,
     onRenameClick: (() -> Unit)? = null,
     onDeleteClick: (() -> Unit)? = null,
     onEncryptClick: (() -> Unit)? = null,
@@ -2361,7 +2827,6 @@ fun FileGridItem(
             )
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
-            // Full-bleed top preview thumbnail (no border around thumbnail)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2376,6 +2841,45 @@ fun FileGridItem(
                     showTypeBadgeInGrid = true,
                     modifier = Modifier.fillMaxSize()
                 )
+
+                if (offlineProgress != null) {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.9f),
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(8.dp)
+                            .size(24.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(
+                                progress = { offlineProgress.coerceIn(0f, 1f) },
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                } else if (isOfflinePinned) {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        shadowElevation = 2.dp,
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(8.dp)
+                            .size(22.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.DownloadDone,
+                                contentDescription = "Available offline",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(13.dp)
+                            )
+                        }
+                    }
+                }
 
                 if (isSelected) {
                     Box(
@@ -2397,7 +2901,6 @@ fun FileGridItem(
                 }
             }
 
-            // Bottom row: File name + formatted size on left, 3-dot menu on right
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2426,6 +2929,14 @@ fun FileGridItem(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1
                         )
+                        if (isOfflinePinned) {
+                            Icon(
+                                imageVector = Icons.Default.DownloadDone,
+                                contentDescription = "Available offline",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(12.dp)
+                            )
+                        }
                         if (file.isEncrypted) {
                             Icon(
                                 imageVector = Icons.Default.Lock,
@@ -2439,7 +2950,9 @@ fun FileGridItem(
 
                 Box {
                     IconButton(
-                        onClick = { showMenu = true },
+                        onClick = {
+                            if (onMoreClick != null) onMoreClick() else showMenu = true
+                        },
                         modifier = Modifier.size(48.dp)
                     ) {
                         Icon(
@@ -2520,8 +3033,11 @@ fun FileRow(
     isSelected: Boolean = false,
     isCompact: Boolean = false,
     isSelectionMode: Boolean = false,
+    isOfflinePinned: Boolean = false,
+    offlineProgress: Float? = null,
     onToggleSelect: (() -> Unit)? = null,
     onClick: (() -> Unit)? = null,
+    onMoreClick: (() -> Unit)? = null,
     onRenameClick: (() -> Unit)? = null,
     onDeleteClick: (() -> Unit)? = null,
     onEncryptClick: (() -> Unit)? = null,
@@ -2604,10 +3120,11 @@ fun FileRow(
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(modifier = Modifier.height(2.dp))
+                val locPrefix = file.path?.takeIf { it.isNotBlank() && it != "/" }?.let { "$it • " }.orEmpty()
                 val subtitle = if (file.isFolderItem) {
-                    "${file.formattedDate} • Folder"
+                    "$locPrefix${file.formattedDate} • Folder"
                 } else {
-                    "${file.formattedDate} • ${file.formattedSize}"
+                    "$locPrefix${file.formattedDate} • ${file.formattedSize}"
                 }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -2621,6 +3138,21 @@ fun FileRow(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false)
                     )
+                    if (offlineProgress != null) {
+                        CircularProgressIndicator(
+                            progress = { offlineProgress.coerceIn(0f, 1f) },
+                            strokeWidth = 1.8.dp,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(12.dp)
+                        )
+                    } else if (isOfflinePinned && !file.isFolderItem) {
+                        Icon(
+                            imageVector = Icons.Default.DownloadDone,
+                            contentDescription = "Available offline",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(13.dp)
+                        )
+                    }
                     if (file.isEncrypted) {
                         Surface(
                             shape = RoundedCornerShape(6.dp),
@@ -2650,7 +3182,9 @@ fun FileRow(
             }
 
             Box {
-                IconButton(onClick = { showMenu = true }) {
+                IconButton(onClick = {
+                    if (onMoreClick != null) onMoreClick() else showMenu = true
+                }) {
                     Icon(
                         imageVector = Icons.Default.MoreVert,
                         contentDescription = "Options",

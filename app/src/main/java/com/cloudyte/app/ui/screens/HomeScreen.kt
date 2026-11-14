@@ -43,6 +43,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -1319,7 +1320,116 @@ fun FileListItem(
     onEncryptClick: (() -> Unit)? = null,
     onDecryptExportClick: (() -> Unit)? = null
 ) {
-    var showMenu by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val downloadedIds by com.cloudyte.app.api.OfflineFileManager.downloadedFiles.collectAsStateWithLifecycle()
+    val activeOfflineDownloads by com.cloudyte.app.api.OfflineFileManager.activeDownloads.collectAsStateWithLifecycle()
+    val isOfflinePinned = !file.isFolderItem && file.effectiveId in downloadedIds
+    val offlineProgress = activeOfflineDownloads[file.effectiveId]
+
+    var showActionSheet by remember { mutableStateOf(false) }
+    var showQuickInfo by remember { mutableStateOf(false) }
+    var showMoveCopy by remember { mutableStateOf<Boolean?>(null) }
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
+
+    val resolvedAcc = file.effectiveAccountId.ifBlank { accountId }
+    val app = context.applicationContext as? com.cloudyte.app.CloudyteApplication
+
+    if (showQuickInfo) {
+        com.cloudyte.app.features.player.GDriveInfoBottomSheet(
+            file = file,
+            accountId = resolvedAcc,
+            isDownloadedOffline = isOfflinePinned,
+            context = context,
+            onDismiss = { showQuickInfo = false }
+        )
+    }
+
+    if (showMoveCopy != null) {
+        MoveCopyDialog(
+            file = file,
+            sourceAccountId = resolvedAcc,
+            isMove = showMoveCopy!!,
+            onDismiss = { showMoveCopy = null },
+            onSuccess = {
+                showMoveCopy = null
+            }
+        )
+    }
+
+    if (showRenameDialog && app != null) {
+        com.cloudyte.app.features.player.GDriveRenameDialog(
+            initialName = file.effectiveName,
+            onDismiss = { showRenameDialog = false },
+            onConfirm = { newName ->
+                showRenameDialog = false
+                coroutineScope.launch {
+                    app.container.cloudFileRepository.rename(file.effectiveId, resolvedAcc.ifBlank { null }, newName)
+                }
+            }
+        )
+    }
+
+    if (showDeleteDialog && app != null) {
+        com.cloudyte.app.features.player.GDriveDeleteConfirmDialog(
+            fileName = file.effectiveName,
+            onDismiss = { showDeleteDialog = false },
+            onConfirm = {
+                showDeleteDialog = false
+                coroutineScope.launch {
+                    app.container.cloudFileRepository.delete(file.effectiveId, resolvedAcc.ifBlank { null })
+                }
+            }
+        )
+    }
+
+    if (showActionSheet) {
+        com.cloudyte.app.ui.components.DriveItemActionSheet(
+            file = file,
+            accountId = resolvedAcc,
+            isOfflinePinned = isOfflinePinned,
+            offlineDownloadProgress = offlineProgress,
+            onDismiss = { showActionSheet = false },
+            onOpen = {
+                openFileInViewer(file, resolvedAcc, navController, files)
+            },
+            onToggleOffline = {
+                coroutineScope.launch {
+                    if (isOfflinePinned) {
+                        com.cloudyte.app.api.OfflineFileManager.deleteOfflineFile(context, resolvedAcc, file.effectiveId)
+                    } else {
+                        com.cloudyte.app.api.OfflineFileManager.downloadFile(context, resolvedAcc, file)
+                    }
+                }
+            },
+            onShare = {
+                coroutineScope.launch {
+                    com.cloudyte.app.features.player.performShareFileLink(context, resolvedAcc, file)
+                }
+            },
+            onDownload = {
+                onDecryptExportClick?.invoke() ?: coroutineScope.launch {
+                    com.cloudyte.app.features.player.performInAppDownload(context, resolvedAcc, file)
+                }
+            },
+            onMove = { showMoveCopy = true },
+            onCopy = { showMoveCopy = false },
+            onRename = { showRenameDialog = true },
+            onEncryptOrDecrypt = {
+                if (file.isEncrypted) {
+                    onDecryptExportClick?.invoke()
+                } else {
+                    onEncryptClick?.invoke()
+                }
+            },
+            onQuickInfo = { showQuickInfo = true },
+            onOpenFullDetails = {
+                navController.navigate("file_detail/$resolvedAcc/${file.effectiveId}")
+            },
+            onDelete = { showDeleteDialog = true }
+        )
+    }
 
     Card(
         shape = MaterialTheme.shapes.large,
@@ -1373,6 +1483,21 @@ fun FileListItem(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+                    if (offlineProgress != null) {
+                        androidx.compose.material3.CircularProgressIndicator(
+                            progress = { offlineProgress.coerceIn(0f, 1f) },
+                            modifier = Modifier.size(12.dp),
+                            strokeWidth = 1.6.dp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    } else if (isOfflinePinned) {
+                        Icon(
+                            imageVector = androidx.compose.material.icons.Icons.Default.DownloadDone,
+                            contentDescription = "Available offline",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(13.dp)
+                        )
+                    }
                     Text(
                         text = if (file.isFolderItem) stringResource(R.string.files_type_folder) else file.formattedSize,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1412,61 +1537,12 @@ fun FileListItem(
                     }
                 }
             }
-            Box {
-                IconButton(onClick = { showMenu = true }) {
-                    Icon(
-                        imageVector = Icons.Default.MoreVert,
-                        contentDescription = stringResource(R.string.action_options),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                DropdownMenu(
-                    expanded = showMenu,
-                    onDismissRequest = { showMenu = false },
-                    modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer)
-                ) {
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                text = when {
-                                    file.isEncrypted -> "Decrypt / Export"
-                                    file.isFolderItem -> "Encrypt to new folder"
-                                    else -> "Create encrypted copy"
-                                },
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                        },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = if (file.isEncrypted) Icons.Default.LockOpen else Icons.Default.Lock,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        },
-                        onClick = {
-                            showMenu = false
-                            if (file.isEncrypted) {
-                                onDecryptExportClick?.invoke()
-                            } else {
-                                onEncryptClick?.invoke()
-                            }
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Details", color = MaterialTheme.colorScheme.onSurface) },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.Info,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        },
-                        onClick = {
-                            showMenu = false
-                            navController.navigate("file_detail/$accountId/${file.effectiveId}")
-                        }
-                    )
-                }
+            IconButton(onClick = { showActionSheet = true }) {
+                Icon(
+                    imageVector = Icons.Default.MoreVert,
+                    contentDescription = stringResource(R.string.action_options),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }

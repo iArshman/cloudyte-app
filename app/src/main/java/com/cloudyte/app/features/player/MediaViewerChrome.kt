@@ -78,12 +78,15 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import android.webkit.MimeTypeMap
+import androidx.core.content.FileProvider
 import com.cloudyte.app.CloudyteApplication
 import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.api.CloudFile
 import com.cloudyte.app.api.OfflineFileManager
 import com.cloudyte.app.api.ShareRequest
 import com.cloudyte.app.api.formatByteCount
+import com.cloudyte.app.core.cache.PreviewFetcher
 import com.cloudyte.app.data.FileCryptoActions
 import com.cloudyte.app.ui.components.FileThumb
 import com.cloudyte.app.ui.theme.FileAudio
@@ -92,8 +95,11 @@ import com.cloudyte.app.ui.theme.FileDoc
 import com.cloudyte.app.ui.theme.FilePdf
 import com.cloudyte.app.ui.theme.FileVideo
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.Date
+import java.util.Locale
 
 val ViewerDarkBackdrop = Color(0xFF000000)
 val ViewerDocumentBackdrop = Color(0xFF121318)
@@ -269,8 +275,12 @@ fun GDriveActionsBottomSheet(
     onCopy: () -> Unit,
     onEncryptCopy: (() -> Unit)? = null,
     onToggleMediaFilter: (() -> Unit)? = null,
+    onSendFileCopy: (() -> Unit)? = null,
+    onOpenWithExternal: (() -> Unit)? = null,
     onDelete: () -> Unit
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -331,13 +341,45 @@ fun GDriveActionsBottomSheet(
                 testTag = "viewer_action_share"
             )
             ViewerActionSheetRow(
+                icon = Icons.Default.Share,
+                title = "Send file copy",
+                subtitle = if (file.isEncrypted) "Decrypts & shares via Android Share Sheet" else "Share actual file to other apps",
+                onClick = {
+                    onDismiss()
+                    if (onSendFileCopy != null) {
+                        onSendFileCopy()
+                    } else {
+                        coroutineScope.launch {
+                            performSendFileCopy(context, accountId, file)
+                        }
+                    }
+                },
+                testTag = "viewer_action_send_copy"
+            )
+            ViewerActionSheetRow(
+                icon = Icons.Default.OpenInNew,
+                title = "Open with…",
+                subtitle = "Open in an external app",
+                onClick = {
+                    onDismiss()
+                    if (onOpenWithExternal != null) {
+                        onOpenWithExternal()
+                    } else {
+                        coroutineScope.launch {
+                            performOpenWithExternalApp(context, accountId, file)
+                        }
+                    }
+                },
+                testTag = "viewer_action_open_with"
+            )
+            ViewerActionSheetRow(
                 icon = if (isDownloadedOffline) Icons.Default.DownloadDone else Icons.Default.Download,
                 title = if (isDownloadedOffline) "Export another copy" else "Download",
                 onClick = { onDismiss(); onDownload() },
                 testTag = "viewer_action_download"
             )
             ViewerActionSheetRow(
-                icon = Icons.Default.OpenInNew,
+                icon = Icons.Outlined.Info,
                 title = "File details",
                 onClick = { onDismiss(); onOpenDetails() },
                 testTag = "viewer_action_details"
@@ -655,8 +697,110 @@ suspend fun performShareFileLink(
     return null
 }
 
+private fun resolveFileMimeType(file: CloudFile): String {
+    file.mimeType?.takeIf { it.isNotBlank() && it != "application/octet-stream" }?.let { return it }
+    val ext = file.effectiveName.substringAfterLast('.', "").lowercase(Locale.US)
+    if (ext.isNotBlank()) {
+        MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)?.let { return it }
+    }
+    return when {
+        file.isImage -> "image/*"
+        file.isVideo -> "video/*"
+        file.isAudio -> "audio/*"
+        file.isPdf -> "application/pdf"
+        file.isTextOrCode -> "text/plain"
+        else -> "*/*"
+    }
+}
+
+private suspend fun prepareExportShareFile(
+    context: Context,
+    accountId: String,
+    file: CloudFile
+): Result<File> = withContext(Dispatchers.IO) {
+    val acc = PreviewFetcher.resolveAccountId(context, accountId, file)
+    val resolvedResult = PreviewFetcher.resolvePreviewFile(context, acc, file)
+    resolvedResult.mapCatching { sourceFile ->
+        val shareDir = File(context.cacheDir, "shared_exports").apply { mkdirs() }
+        val cleanName = file.effectiveName
+            .replace(Regex("[\\\\/:*?\"<>|]"), "_")
+            .ifBlank { "shared_file_${file.effectiveId}" }
+        val destFile = File(shareDir, cleanName)
+        if (sourceFile.absolutePath != destFile.absolutePath) {
+            sourceFile.copyTo(destFile, overwrite = true)
+        }
+        destFile
+    }
+}
+
+suspend fun performSendFileCopy(
+    context: Context,
+    accountId: String,
+    file: CloudFile
+): String? {
+    if (file.isFolderItem) return "Cannot send a folder directly"
+    val prepared = prepareExportShareFile(context, accountId, file)
+    val localFile = prepared.getOrElse { err ->
+        return err.localizedMessage ?: "Could not prepare file for sharing"
+    }
+    return runCatching {
+        val uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            localFile
+        )
+        val mime = resolveFileMimeType(file)
+        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+            type = mime
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, file.effectiveName)
+            clipData = ClipData.newRawUri(file.effectiveName, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val chooser = Intent.createChooser(sendIntent, "Send ${file.effectiveName}").apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(chooser)
+        null
+    }.getOrElse { err ->
+        err.localizedMessage ?: "No app available to share this file"
+    }
+}
+
+suspend fun performOpenWithExternalApp(
+    context: Context,
+    accountId: String,
+    file: CloudFile
+): String? {
+    if (file.isFolderItem) return "Cannot open folder in external app"
+    val prepared = prepareExportShareFile(context, accountId, file)
+    val localFile = prepared.getOrElse { err ->
+        return err.localizedMessage ?: "Could not prepare file"
+    }
+    return runCatching {
+        val uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            localFile
+        )
+        val mime = resolveFileMimeType(file)
+        val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mime)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val chooser = Intent.createChooser(viewIntent, "Open with").apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(chooser)
+        null
+    }.getOrElse { err ->
+        err.localizedMessage ?: "No external app found to open this file"
+    }
+}
+
 fun formatFileSubtitle(file: CloudFile, pageInfo: String? = null): String {
     val parts = mutableListOf(file.formattedSize, file.effectiveType.uppercase())
     if (!pageInfo.isNullOrBlank()) parts += pageInfo
     return parts.joinToString(" • ")
 }
+

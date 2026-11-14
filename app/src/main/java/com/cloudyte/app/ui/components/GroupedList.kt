@@ -69,13 +69,13 @@ fun GroupedList(
             val isLast = isVisible && visibleIndex == totalVisible - 1
 
             val topRadius by animateDpAsState(
-                targetValue = if (isFirst) 24.dp else 6.dp,
+                targetValue = if (isFirst) 28.dp else 4.dp,
                 animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
                 label = "topCornerRadius"
             )
 
             val bottomRadius by animateDpAsState(
-                targetValue = if (isLast) 24.dp else 6.dp,
+                targetValue = if (isLast) 28.dp else 4.dp,
                 animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
                 label = "bottomCornerRadius"
             )

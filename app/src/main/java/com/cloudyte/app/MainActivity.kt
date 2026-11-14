@@ -2,8 +2,13 @@ package com.cloudyte.app
 
 import android.app.KeyguardManager
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.OpenableColumns
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -50,11 +55,16 @@ import coil.ImageLoader
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import com.cloudyte.app.api.ApiClient
+import com.cloudyte.app.core.transfer.TransferCommand
 import com.cloudyte.app.data.UserPreferences
 import com.cloudyte.app.data.UserPreferencesState
+import com.cloudyte.app.db.TransferDirection
 import com.cloudyte.app.navigation.AppNavHost
 import com.cloudyte.app.ui.theme.CloudyteTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 
@@ -64,6 +74,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         lifecycleScope.launch {
             UserPreferences.migrateIfNeeded(this@MainActivity)
+        }
+        if (savedInstanceState == null) {
+            handleIncomingShareIntent(intent)
         }
         // Configure Coil global ImageLoader with memory and disk cache for high-speed previews
         val imageLoader = ImageLoader.Builder(this)
@@ -168,6 +181,118 @@ class MainActivity : ComponentActivity() {
                         AppNavHost()
                     }
                 }
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncomingShareIntent(intent)
+    }
+
+    private fun handleIncomingShareIntent(incoming: Intent?) {
+        if (incoming == null) return
+        val action = incoming.action ?: return
+        if (action != Intent.ACTION_SEND && action != Intent.ACTION_SEND_MULTIPLE) return
+
+        val uris = buildList<Uri> {
+            when (action) {
+                Intent.ACTION_SEND -> {
+                    val single = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        incoming.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        incoming.getParcelableExtra(Intent.EXTRA_STREAM)
+                    }
+                    if (single != null) add(single)
+                }
+                Intent.ACTION_SEND_MULTIPLE -> {
+                    val multiple = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        incoming.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        incoming.getParcelableArrayListExtra(Intent.EXTRA_STREAM)
+                    }
+                    if (!multiple.isNullOrEmpty()) addAll(multiple.filterNotNull())
+                }
+            }
+            val clip = incoming.clipData
+            if (isEmpty() && clip != null) {
+                for (i in 0 until clip.itemCount) {
+                    clip.getItemAt(i)?.uri?.let { add(it) }
+                }
+            }
+        }.distinct()
+
+        if (uris.isEmpty()) return
+
+        lifecycleScope.launch {
+            val app = applicationContext as? CloudyteApplication ?: return@launch
+            val drivePrefs = getSharedPreferences("cloudyte_drive_state", Context.MODE_PRIVATE)
+            val savedAccId = drivePrefs.getString("last_active_account_id", null)
+            val targetAccId = withContext(Dispatchers.IO) {
+                val cached = app.container.database.accountDao().getAllAccounts()
+                savedAccId?.takeIf { id -> cached.any { it.id == id } }
+                    ?: cached.find { it.isDefault == true }?.id
+                    ?: cached.firstOrNull()?.id
+            }
+            if (targetAccId.isNullOrBlank()) {
+                Toast.makeText(this@MainActivity, "Connect a drive in Cloudyte before sharing files", Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            val encryptUploads = runCatching {
+                UserPreferences.observe(this@MainActivity).first().isUploadEncryptionEnabled
+            }.getOrDefault(false)
+
+            var queuedCount = 0
+            withContext(Dispatchers.IO) {
+                for (uri in uris) {
+                    var name = "shared_${System.currentTimeMillis()}"
+                    var size = 0L
+                    runCatching {
+                        contentResolver.query(
+                            uri,
+                            arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE),
+                            null,
+                            null,
+                            null
+                        )?.use { cursor ->
+                            if (cursor.moveToFirst()) {
+                                val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                                if (nameIdx >= 0 && !cursor.isNull(nameIdx)) {
+                                    cursor.getString(nameIdx)?.let { name = it }
+                                }
+                                val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
+                                if (sizeIdx >= 0 && !cursor.isNull(sizeIdx)) {
+                                    size = cursor.getLong(sizeIdx)
+                                }
+                            }
+                        }
+                    }
+                    val mimeType = runCatching { contentResolver.getType(uri) }.getOrNull()
+                    val transferId = app.container.transferRepository.enqueueTransfer(
+                        accountId = targetAccId,
+                        fileName = name,
+                        localPath = uri.toString(),
+                        remotePath = null,
+                        direction = TransferDirection.UPLOAD,
+                        totalBytes = size,
+                        isEncrypted = encryptUploads,
+                        originalName = if (encryptUploads) name else null,
+                        originalMimeType = if (encryptUploads) mimeType else null,
+                        originalSize = if (encryptUploads) size else null
+                    )
+                    app.container.transferCoordinator.dispatch(TransferCommand.Start(transferId))
+                    queuedCount++
+                }
+            }
+            if (queuedCount > 0) {
+                Toast.makeText(
+                    this@MainActivity,
+                    "Uploading $queuedCount shared file(s) to Cloudyte",
+                    Toast.LENGTH_SHORT
+                ).show()
             }
         }
     }
