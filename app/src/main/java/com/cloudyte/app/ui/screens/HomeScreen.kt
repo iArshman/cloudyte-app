@@ -578,12 +578,13 @@ fun HomeScreen(
                         modifier = Modifier
                             .size(48.dp)
                             .clip(CircleShape)
-                            .clickable { navController.navigateSingleTopRestore("settings") }
+                            .clickable { navController.navigateSingleTopRestore("accounts") }
+                            .testTag("home_accounts_button")
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
-                                imageVector = Icons.Default.Settings,
-                                contentDescription = stringResource(R.string.nav_settings),
+                                imageVector = Icons.Default.Cloud,
+                                contentDescription = stringResource(R.string.nav_accounts),
                                 tint = MaterialTheme.colorScheme.onPrimaryContainer,
                                 modifier = Modifier.size(22.dp)
                             )

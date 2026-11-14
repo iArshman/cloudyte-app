@@ -76,7 +76,7 @@ fun NavController.navigateSingleTopRestore(route: String) {
     }
 }
 
-private val tabOrder = listOf("home", "files", "transfers", "accounts", "settings")
+private val tabOrder = listOf("home", "files", "transfers", "settings", "accounts")
 
 @Composable
 fun MainScreen(rootNavController: NavController) {
