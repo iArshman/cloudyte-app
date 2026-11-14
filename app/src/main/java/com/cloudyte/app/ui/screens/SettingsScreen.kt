@@ -33,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.cloudyte.app.data.AccountSessionHelper
 import com.cloudyte.app.ui.components.GroupedList
@@ -115,6 +116,27 @@ fun SettingsScreen(
 
     val scrollState = rememberScrollState()
 
+    val sectionGroups = remember {
+        listOf(
+            listOf(
+                SettingsSectionType.ACCOUNT,
+                SettingsSectionType.STORAGE
+            ),
+            listOf(
+                SettingsSectionType.APPEARANCE,
+                SettingsSectionType.PLAYBACK,
+                SettingsSectionType.BACKUP,
+                SettingsSectionType.NOTIFICATIONS
+            ),
+            listOf(
+                SettingsSectionType.SECURITY,
+                SettingsSectionType.PERMISSIONS,
+                SettingsSectionType.ADVANCED,
+                SettingsSectionType.ABOUT
+            )
+        )
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -125,34 +147,27 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .verticalScroll(scrollState)
         ) {
-            // Spacer for status bar
             Spacer(modifier = Modifier.statusBarsPadding())
 
-            // Leafit-style header: big title + subtitle left, icon buttons right
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 16.dp),
+                    .padding(start = 24.dp, end = 16.dp, top = 28.dp, bottom = 20.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Top
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Settings",
-                        style = MaterialTheme.typography.displayLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Drives, security, backup & appearance",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                Text(
+                    text = "Settings",
+                    style = MaterialTheme.typography.displayLarge.copy(
+                        fontSize = 36.sp,
+                        lineHeight = 44.sp,
+                        fontWeight = FontWeight.Medium
+                    ),
+                    color = MaterialTheme.colorScheme.onBackground
+                )
                 Surface(
                     shape = CircleShape,
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    color = MaterialTheme.colorScheme.primaryContainer,
                     modifier = Modifier.size(48.dp),
                     onClick = { currentSubScreen = "DIAGNOSTICS" }
                 ) {
@@ -160,28 +175,31 @@ fun SettingsScreen(
                         Icon(
                             Icons.Default.BugReport,
                             contentDescription = "Open diagnostics",
-                            tint = MaterialTheme.colorScheme.onSurface,
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
                             modifier = Modifier.size(20.dp)
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-
-            val sectionItems = SettingsSectionType.entries.map { section ->
-                GroupedListItem(key = section.name) {
-                    SectionRow(
-                        section = section,
-                        onClick = {
-                            selectedSection = section
-                            onNavigateSection(section)
-                        }
-                    )
+            sectionGroups.forEachIndexed { groupIndex, group ->
+                val groupItems = group.map { section ->
+                    GroupedListItem(key = section.name) {
+                        SectionRow(
+                            section = section,
+                            onClick = {
+                                selectedSection = section
+                                onNavigateSection(section)
+                            }
+                        )
+                    }
+                }
+                GroupedList(items = groupItems)
+                if (groupIndex < sectionGroups.lastIndex) {
+                    Spacer(modifier = Modifier.height(14.dp))
                 }
             }
 
-            GroupedList(items = sectionItems)
             Spacer(modifier = Modifier.height(24.dp + LocalBottomBarInset.current))
         }
     }

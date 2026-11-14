@@ -1,5 +1,6 @@
 package com.cloudyte.app.features.player
 
+import android.content.Context
 import android.net.Uri
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -9,6 +10,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -31,12 +33,15 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -123,6 +128,29 @@ fun GDriveVideoContent(
     var attemptedFallback by remember(file.effectiveId) { mutableStateOf(false) }
     var retryCounter by remember { mutableIntStateOf(0) }
     var autoPlayVideo by remember { mutableStateOf(true) }
+    var isControlsLocked by remember { mutableStateOf(false) }
+    var seekOverlayText by remember { mutableStateOf<String?>(null) }
+    var seekOverlayIsForward by remember { mutableStateOf(true) }
+    var resumedFromMs by remember(file.effectiveId) { mutableStateOf<Long?>(null) }
+    var didApplyInitialResume by remember(file.effectiveId) { mutableStateOf(false) }
+
+    val playbackPrefs = remember(context) {
+        context.getSharedPreferences("cloudyte_video_playback", Context.MODE_PRIVATE)
+    }
+
+    LaunchedEffect(seekOverlayText) {
+        if (seekOverlayText != null) {
+            delay(650L)
+            seekOverlayText = null
+        }
+    }
+
+    LaunchedEffect(resumedFromMs) {
+        if (resumedFromMs != null) {
+            delay(5000L)
+            resumedFromMs = null
+        }
+    }
 
     val exoPlayer = remember {
         ExoPlayer.Builder(context)
@@ -192,7 +220,19 @@ fun GDriveVideoContent(
             override fun onPlaybackStateChanged(state: Int) {
                 isBuffering = (state == Player.STATE_BUFFERING)
                 if (state == Player.STATE_READY) {
-                    duration = exoPlayer.duration.coerceAtLeast(0L)
+                    val totalDur = exoPlayer.duration.coerceAtLeast(0L)
+                    duration = totalDur
+                    if (!didApplyInitialResume && file.effectiveId.isNotBlank() && totalDur > 10_000L) {
+                        didApplyInitialResume = true
+                        val savedPos = playbackPrefs.getLong("pos_${file.effectiveId}", 0L)
+                        if (savedPos in 3_000L..(totalDur - 5_000L)) {
+                            exoPlayer.seekTo(savedPos)
+                            currentPosition = savedPos
+                            resumedFromMs = savedPos
+                        }
+                    }
+                } else if (state == Player.STATE_ENDED && file.effectiveId.isNotBlank()) {
+                    playbackPrefs.edit().remove("pos_${file.effectiveId}").apply()
                 }
             }
 
@@ -226,15 +266,29 @@ fun GDriveVideoContent(
         }
         exoPlayer.addListener(listener)
         onDispose {
+            if (file.effectiveId.isNotBlank()) {
+                val pos = exoPlayer.currentPosition
+                val dur = exoPlayer.duration
+                if (dur > 10_000L && pos in 3_000L..(dur - 5_000L)) {
+                    playbackPrefs.edit().putLong("pos_${file.effectiveId}", pos).apply()
+                } else if (dur > 0L && pos >= dur - 5_000L) {
+                    playbackPrefs.edit().remove("pos_${file.effectiveId}").apply()
+                }
+            }
             exoPlayer.removeListener(listener)
             exoPlayer.release()
         }
     }
 
     LaunchedEffect(isPlaying) {
+        var tick = 0
         while (isPlaying) {
             currentPosition = exoPlayer.currentPosition.coerceAtLeast(0L)
             duration = exoPlayer.duration.coerceAtLeast(0L)
+            tick++
+            if (tick % 5 == 0 && file.effectiveId.isNotBlank() && duration > 10_000L && currentPosition > 3_000L) {
+                playbackPrefs.edit().putLong("pos_${file.effectiveId}", currentPosition).apply()
+            }
             delay(400)
         }
     }
@@ -291,11 +345,36 @@ fun GDriveVideoContent(
         modifier = modifier
             .fillMaxSize()
             .background(ViewerDarkBackdrop)
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onToggleControls
-            )
+            .pointerInput(isControlsLocked) {
+                detectTapGestures(
+                    onTap = { onToggleControls() },
+                    onDoubleTap = { offset ->
+                        if (isControlsLocked) return@detectTapGestures
+                        val width = size.width.toFloat().coerceAtLeast(1f)
+                        val fraction = offset.x / width
+                        when {
+                            fraction < 0.38f -> {
+                                val newPos = (exoPlayer.currentPosition - 10_000L).coerceAtLeast(0L)
+                                exoPlayer.seekTo(newPos)
+                                currentPosition = newPos
+                                seekOverlayIsForward = false
+                                seekOverlayText = "-10s"
+                            }
+                            fraction > 0.62f -> {
+                                val maxPos = exoPlayer.duration.takeIf { it > 0L } ?: Long.MAX_VALUE
+                                val newPos = (exoPlayer.currentPosition + 10_000L).coerceAtMost(maxPos)
+                                exoPlayer.seekTo(newPos)
+                                currentPosition = newPos
+                                seekOverlayIsForward = true
+                                seekOverlayText = "+10s"
+                            }
+                            else -> {
+                                if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                            }
+                        }
+                    }
+                )
+            }
     ) {
         AndroidView(
             factory = { ctx ->
@@ -374,7 +453,71 @@ fun GDriveVideoContent(
         }
 
         AnimatedVisibility(
-            visible = showControls && playbackError == null,
+            visible = seekOverlayText != null,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(if (seekOverlayIsForward) Alignment.CenterEnd else Alignment.CenterStart)
+                .padding(horizontal = 40.dp)
+        ) {
+            Surface(
+                color = Color.Black.copy(alpha = 0.72f),
+                shape = CircleShape
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = if (seekOverlayIsForward) Icons.Default.Forward10 else Icons.Default.Replay10,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Text(
+                        text = seekOverlayText.orEmpty(),
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+
+        AnimatedVisibility(
+            visible = showControls && isControlsLocked && playbackError == null,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(bottom = 28.dp)
+        ) {
+            Surface(
+                color = Color.Black.copy(alpha = 0.78f),
+                shape = RoundedCornerShape(24.dp),
+                modifier = Modifier
+                    .heightIn(min = 48.dp)
+                    .clickable { isControlsLocked = false }
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(Icons.Default.Lock, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    Text(
+                        text = "Controls locked • Tap to unlock",
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                }
+            }
+        }
+
+        AnimatedVisibility(
+            visible = showControls && !isControlsLocked && playbackError == null,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.fillMaxSize()
@@ -502,6 +645,37 @@ fun GDriveVideoContent(
                     var isDragging by remember { mutableStateOf(false) }
                     var dragFraction by remember { mutableFloatStateOf(0f) }
 
+                    resumedFromMs?.let { resumedMs ->
+                        Surface(
+                            color = Color.Black.copy(alpha = 0.78f),
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Text(
+                                    text = "Resumed from ${formatVideoTime(resumedMs)}",
+                                    color = Color.White.copy(alpha = 0.9f),
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                                Text(
+                                    text = "Start over",
+                                    color = Color(0xFF8AB4F8),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.clickable {
+                                        exoPlayer.seekTo(0L)
+                                        currentPosition = 0L
+                                        resumedFromMs = null
+                                    }
+                                )
+                            }
+                        }
+                    }
+
                     val sliderValue = if (isDragging) {
                         dragFraction
                     } else if (duration > 0L) {
@@ -548,6 +722,18 @@ fun GDriveVideoContent(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
+                            IconButton(
+                                onClick = { isControlsLocked = true },
+                                modifier = Modifier.size(48.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.LockOpen,
+                                    contentDescription = "Lock controls",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+
                             IconButton(
                                 onClick = {
                                     isMuted = !isMuted

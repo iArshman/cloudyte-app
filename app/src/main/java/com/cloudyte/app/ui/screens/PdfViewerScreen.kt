@@ -582,6 +582,55 @@ fun PdfViewerScreen(
                     )
                 }
             }
+
+            // Bottom Interactive Page Scrubber Bar (Google Drive PDF Scrubber)
+            AnimatedVisibility(
+                visible = showControls && !isLoading && errorMessage == null && pageCount > 2,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(horizontal = 20.dp, vertical = 12.dp)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color.Black.copy(alpha = 0.78f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    androidx.compose.foundation.layout.Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = "P. ${currentVisiblePage + 1}",
+                            color = Color.White,
+                            style = MetricLabelTextStyle
+                        )
+                        Spacer(modifier = Modifier.size(12.dp))
+                        androidx.compose.material3.Slider(
+                            value = currentVisiblePage.toFloat(),
+                            onValueChange = { target ->
+                                val idx = target.toInt().coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+                                coroutineScope.launch { listState.scrollToItem(idx) }
+                            },
+                            valueRange = 0f..(pageCount - 1).coerceAtLeast(1).toFloat(),
+                            colors = androidx.compose.material3.SliderDefaults.colors(
+                                thumbColor = MaterialTheme.colorScheme.primary,
+                                activeTrackColor = MaterialTheme.colorScheme.primary,
+                                inactiveTrackColor = Color.White.copy(alpha = 0.24f)
+                            ),
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(modifier = Modifier.size(12.dp))
+                        Text(
+                            text = "$pageCount",
+                            color = Color.White.copy(alpha = 0.72f),
+                            style = MetricLabelTextStyle
+                        )
+                    }
+                }
+            }
         }
     }
 }

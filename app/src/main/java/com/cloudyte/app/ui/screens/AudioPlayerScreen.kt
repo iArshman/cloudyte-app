@@ -36,6 +36,8 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.Replay10
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -147,6 +149,23 @@ fun AudioPlayerScreen(
     var resolvedPrefs by remember { mutableStateOf<UserPreferencesState?>(null) }
     LaunchedEffect(Unit) {
         resolvedPrefs = runCatching { UserPreferences.observe(context).first() }.getOrDefault(UserPreferencesState())
+    }
+
+    val audioPrefs = remember(context) {
+        context.getSharedPreferences("cloudyte_audio_playback", android.content.Context.MODE_PRIVATE)
+    }
+    var hasRestoredAudioPos by remember(fileId) { mutableStateOf(false) }
+    val audioQueue = remember(fileId) {
+        FileRepository.getActiveList().filter { it.isAudio }
+    }
+    val currentQueueIndex = remember(audioQueue, fileId) {
+        audioQueue.indexOfFirst { it.effectiveId == fileId }
+    }
+    val prevTrack = remember(audioQueue, currentQueueIndex) {
+        if (currentQueueIndex > 0) audioQueue[currentQueueIndex - 1] else null
+    }
+    val nextTrack = remember(audioQueue, currentQueueIndex) {
+        if (currentQueueIndex >= 0 && currentQueueIndex < audioQueue.lastIndex) audioQueue[currentQueueIndex + 1] else null
     }
 
     var activePlayer by remember { mutableStateOf<Player?>(null) }
@@ -289,7 +308,7 @@ fun AudioPlayerScreen(
         }
     }
 
-    DisposableEffect(activePlayer) {
+    DisposableEffect(activePlayer, fileId) {
         val player = activePlayer ?: return@DisposableEffect onDispose {}
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) {
@@ -299,7 +318,19 @@ fun AudioPlayerScreen(
             override fun onPlaybackStateChanged(state: Int) {
                 isBuffering = (state == Player.STATE_BUFFERING)
                 if (state == Player.STATE_READY) {
-                    duration = player.duration.coerceAtLeast(0L)
+                    val dur = player.duration.coerceAtLeast(0L)
+                    duration = dur
+                    if (!hasRestoredAudioPos) {
+                        hasRestoredAudioPos = true
+                        val savedPos = audioPrefs.getLong("pos_$fileId", 0L)
+                        if (savedPos > 10_000L && (dur <= 0L || savedPos < dur - 5_000L)) {
+                            player.seekTo(savedPos)
+                            currentPosition = savedPos
+                            statusNote = "Resumed from ${formatAudioTime(savedPos)}"
+                        }
+                    }
+                } else if (state == Player.STATE_ENDED && fileId.isNotBlank()) {
+                    audioPrefs.edit().remove("pos_$fileId").apply()
                 }
             }
 
@@ -332,15 +363,25 @@ fun AudioPlayerScreen(
         currentPosition = player.currentPosition.coerceAtLeast(0L)
 
         onDispose {
+            if (fileId.isNotBlank()) {
+                val pos = player.currentPosition
+                val dur = player.duration
+                if (pos > 10_000L && (dur <= 0L || pos < dur - 5_000L)) {
+                    audioPrefs.edit().putLong("pos_$fileId", pos).apply()
+                }
+            }
             player.removeListener(listener)
         }
     }
 
-    LaunchedEffect(activePlayer, isPlaying) {
+    LaunchedEffect(activePlayer, isPlaying, fileId) {
         val player = activePlayer ?: return@LaunchedEffect
         while (isPlaying) {
             currentPosition = player.currentPosition.coerceAtLeast(0L)
             duration = player.duration.coerceAtLeast(0L)
+            if (fileId.isNotBlank() && currentPosition > 10_000L && (duration <= 0L || currentPosition < duration - 5_000L)) {
+                audioPrefs.edit().putLong("pos_$fileId", currentPosition).apply()
+            }
             delay(500)
         }
     }
