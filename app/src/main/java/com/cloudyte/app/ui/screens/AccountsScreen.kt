@@ -230,6 +230,9 @@ fun AccountsScreen(
     viewModel: AccountsViewModel = viewModel(),
     onBack: (() -> Unit)? = null
 ) {
+    androidx.activity.compose.BackHandler(enabled = onBack != null) {
+        onBack?.invoke()
+    }
     val accounts by viewModel.accounts.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
