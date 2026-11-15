@@ -20,9 +20,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 data class GroupedListItem(
@@ -43,7 +45,7 @@ fun SettingsSectionTitle(
         fontWeight = FontWeight.Bold,
         modifier = modifier
             .fillMaxWidth()
-            .padding(start = 16.dp, top = 20.dp, bottom = 4.dp, end = 16.dp)
+            .padding(start = 20.dp, top = 16.dp, bottom = 6.dp, end = 20.dp)
             .semantics { heading() }
     )
 }
@@ -51,7 +53,12 @@ fun SettingsSectionTitle(
 @Composable
 fun GroupedList(
     items: List<GroupedListItem>,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    containerColor: Color = MaterialTheme.colorScheme.surfaceContainer,
+    outerCornerRadius: Dp = 20.dp,
+    innerCornerRadius: Dp = 4.dp,
+    itemSpacing: Dp = 2.dp,
+    horizontalPadding: Dp = 16.dp
 ) {
     val visibleItems = items.filter { it.visible }
     val totalVisible = visibleItems.size
@@ -59,7 +66,7 @@ fun GroupedList(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp)
+            .padding(horizontal = horizontalPadding)
     ) {
         items.forEachIndexed { _, item ->
             val isVisible = item.visible
@@ -69,13 +76,13 @@ fun GroupedList(
             val isLast = isVisible && visibleIndex == totalVisible - 1
 
             val topRadius by animateDpAsState(
-                targetValue = if (isFirst) 28.dp else 4.dp,
+                targetValue = if (isFirst) outerCornerRadius else innerCornerRadius,
                 animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
                 label = "topCornerRadius"
             )
 
             val bottomRadius by animateDpAsState(
-                targetValue = if (isLast) 28.dp else 4.dp,
+                targetValue = if (isLast) outerCornerRadius else innerCornerRadius,
                 animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
                 label = "bottomCornerRadius"
             )
@@ -87,7 +94,7 @@ fun GroupedList(
             ) {
                 Column {
                     Surface(
-                        color = MaterialTheme.colorScheme.surfaceContainer,
+                        color = containerColor,
                         shape = RoundedCornerShape(
                             topStart = topRadius,
                             topEnd = topRadius,
@@ -99,7 +106,7 @@ fun GroupedList(
                         item.content()
                     }
                     if (visibleIndex in 0 until totalVisible - 1) {
-                        Spacer(modifier = Modifier.height(2.dp))
+                        Spacer(modifier = Modifier.height(itemSpacing))
                     }
                 }
             }

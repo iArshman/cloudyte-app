@@ -186,10 +186,22 @@ fun FileThumb(
     val playIconSize = (badgeSize * 0.62f).coerceIn(12.dp, 28.dp)
     val lockBadgeSize = if (sizeDp >= 96.dp) 24.dp else 18.dp
 
+    val ext = file.effectiveName.substringAfterLast('.', "").lowercase()
+    val isApkOrArchiveOrCode = !file.isFolderItem && !file.isImage && !file.isVideo &&
+        (ext == "apk" || ext == "zip" || ext == "rar" || ext == "7z" || file.isTextOrCode)
+
+    val containerBg = when {
+        file.isFolderItem -> MaterialTheme.colorScheme.primaryContainer
+        file.isEncrypted && !file.originalMetadataAvailable -> MaterialTheme.colorScheme.primaryContainer
+        ext == "apk" -> com.cloudyte.app.ui.theme.LocalCloudyteColors.current.mintContainer
+        isApkOrArchiveOrCode -> MaterialTheme.colorScheme.surfaceContainerHighest
+        else -> MaterialTheme.colorScheme.surfaceContainerHigh
+    }
+
     Box(
         modifier = containerModifier
             .clip(RoundedCornerShape(cornerRadius))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)),
+            .background(containerBg),
         contentAlignment = Alignment.Center
     ) {
         if (isPreviewable && imageModel != null) {
@@ -254,16 +266,36 @@ fun FileThumb(
 
 @Composable
 private fun FileTypeFallbackContent(file: CloudFile, iconSize: Dp, showTypeBadgeInGrid: Boolean) {
+    val extColors = com.cloudyte.app.ui.theme.LocalCloudyteColors.current
+    val ext = file.effectiveName.substringAfterLast('.', "").uppercase().take(4)
     if (file.isEncrypted && !file.originalMetadataAvailable) {
         Icon(Icons.Default.Lock, file.effectiveName, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(iconSize))
     } else if (showTypeBadgeInGrid && !file.isFolderItem && !file.isImage && !file.isVideo) {
-        val rawLabel = file.effectiveType.uppercase().take(4).ifBlank { "FILE" }
-        Text(rawLabel, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        val rawLabel = ext.ifBlank { file.effectiveType.uppercase().take(4).ifBlank { "FILE" } }
+        val (pillBg, pillFg) = when (rawLabel) {
+            "APK" -> extColors.mintSuccess to extColors.onMintSuccess
+            "PDF" -> extColors.categoryMedia to extColors.onCategoryMedia
+            "ZIP", "RAR", "7Z" -> extColors.categoryZipped to extColors.onCategoryZipped
+            "DOC", "DOCX", "TXT", "MD" -> extColors.categoryDocs to extColors.onCategoryDocs
+            else -> extColors.mintSuccess to extColors.onMintSuccess
+        }
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = pillBg
+        ) {
+            Text(
+                text = rawLabel,
+                color = pillFg,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.ExtraBold,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+            )
+        }
     } else {
         val (icon, tint) = when {
-            file.isFolderItem -> Icons.Default.Folder to MaterialTheme.colorScheme.primary
+            file.isFolderItem -> Icons.Default.Folder to extColors.accentBlue
             file.isVideo -> Icons.Default.Movie to FileVideo
-            file.isImage -> Icons.Default.Image to FileDoc
+            file.isImage -> Icons.Default.Image to extColors.categoryImages
             file.isAudio -> Icons.Default.MusicNote to FileAudio
             file.isPdf -> Icons.Default.PictureAsPdf to FilePdf
             file.isTextOrCode -> Icons.Default.Code to FileCode

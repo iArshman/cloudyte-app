@@ -868,7 +868,7 @@ fun SettingsSectionScreen(
                 title = { Text(stringResource(R.string.settings_open_source_licenses), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) },
                 text = {
                     Text(
-                        text = "Built with open-source software:\n• Jetpack Compose & Material 3 (Apache-2.0)\n• AndroidX Room, WorkManager & Security (Apache-2.0)\n• Retrofit & OkHttp (Apache-2.0)\n• AndroidX Media3 ExoPlayer & MediaSession (Apache-2.0)\n• Coil Image Loading (Apache-2.0)\n• Kotlinx Serialization & Coroutines (Apache-2.0)\n• Plus Jakarta Sans & JetBrains Mono (OFL-1.1)",
+                        text = "Built with open-source software:\n• Jetpack Compose & Material 3 (Apache-2.0)\n• AndroidX Room, WorkManager & Security (Apache-2.0)\n• Retrofit & OkHttp (Apache-2.0)\n• AndroidX Media3 ExoPlayer & MediaSession (Apache-2.0)\n• Coil Image Loading (Apache-2.0)\n• Kotlinx Serialization & Coroutines (Apache-2.0)\n• Roboto Flex & JetBrains Mono (OFL-1.1)",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
