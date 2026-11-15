@@ -142,6 +142,22 @@ object SecureFileCleanup {
             }
         }
 
+        for (subDirName in listOf("shared_exports", "created_notes", "camera_captures")) {
+            val dir = File(context.cacheDir, subDirName)
+            if (dir.exists()) {
+                dir.listFiles()?.forEach { file ->
+                    val isStale = (nowMs - file.lastModified()) > VIEW_CACHE_MAX_AGE_MS
+                    if (activeTransferIds.isEmpty() || isStale) {
+                        if (file.isDirectory) {
+                            if (file.deleteRecursively()) deletedCount++
+                        } else if (deleteFileSafely(file)) {
+                            deletedCount++
+                        }
+                    }
+                }
+            }
+        }
+
         return deletedCount
     }
 
@@ -152,6 +168,18 @@ object SecureFileCleanup {
         val dir = File(context.cacheDir, CryptoConstants.DECRYPTED_VIEW_CACHE_DIR)
         if (dir.exists()) {
             dir.listFiles()?.forEach { deleteFileSafely(it) }
+        }
+    }
+
+    /**
+     * Purges exported share copies, note drafts, and camera capture temp files.
+     */
+    fun clearShareAndTempDirs(context: Context) {
+        for (subDirName in listOf("shared_exports", "created_notes", "camera_captures")) {
+            val dir = File(context.cacheDir, subDirName)
+            if (dir.exists()) {
+                runCatching { dir.deleteRecursively() }
+            }
         }
     }
 

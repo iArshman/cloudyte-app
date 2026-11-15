@@ -27,4 +27,7 @@ interface ExclusionDao {
 
     @Query("DELETE FROM exclusions WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    @Query("DELETE FROM exclusions")
+    suspend fun clearAll()
 }

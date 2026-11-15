@@ -8,14 +8,32 @@
         <exclude domain="sharedpref" path="cloudyte_secure_prefs.xml" />
         <exclude domain="sharedpref" path="cloudyte_secure_fallback.xml" />
         <exclude domain="sharedpref" path="cloudyte_prefs.xml" />
+        <exclude domain="sharedpref" path="cloudyte_drive_state.xml" />
+        <exclude domain="sharedpref" path="sync_logger_prefs.xml" />
+        <exclude domain="sharedpref" path="cloudyte_audio_playback.xml" />
         <exclude domain="database" path="cloud_app_database" />
+        <exclude domain="database" path="cloud_app_database-wal" />
+        <exclude domain="database" path="cloud_app_database-shm" />
         <exclude domain="file" path="offline_vault" />
+        <exclude domain="file" path="crypto" />
+        <exclude domain="file" path="cloudyte_thumbnails" />
+        <exclude domain="file" path="datastore" />
+        <exclude domain="file" path="logs" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="cloudyte_secure_prefs.xml" />
         <exclude domain="sharedpref" path="cloudyte_secure_fallback.xml" />
         <exclude domain="sharedpref" path="cloudyte_prefs.xml" />
+        <exclude domain="sharedpref" path="cloudyte_drive_state.xml" />
+        <exclude domain="sharedpref" path="sync_logger_prefs.xml" />
+        <exclude domain="sharedpref" path="cloudyte_audio_playback.xml" />
         <exclude domain="database" path="cloud_app_database" />
+        <exclude domain="database" path="cloud_app_database-wal" />
+        <exclude domain="database" path="cloud_app_database-shm" />
         <exclude domain="file" path="offline_vault" />
+        <exclude domain="file" path="crypto" />
+        <exclude domain="file" path="cloudyte_thumbnails" />
+        <exclude domain="file" path="datastore" />
+        <exclude domain="file" path="logs" />
     </device-transfer>
 </data-extraction-rules>

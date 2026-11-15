@@ -15,4 +15,7 @@ interface FileTombstoneDao {
 
     @Query("DELETE FROM file_tombstones WHERE accountId = :accountId AND folderId = :folderId AND remoteId IN (:remoteIds)")
     suspend fun removeForRemoteIds(accountId: String, folderId: String, remoteIds: List<String>)
+
+    @Query("DELETE FROM file_tombstones")
+    suspend fun clearAll()
 }

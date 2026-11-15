@@ -44,4 +44,7 @@ interface FileMutationDao {
 
     @Query("SELECT * FROM file_mutations WHERE operationId = :operationId LIMIT 1")
     suspend fun get(operationId: String): LocalFileMutation?
+
+    @Query("DELETE FROM file_mutations")
+    suspend fun clearAll()
 }

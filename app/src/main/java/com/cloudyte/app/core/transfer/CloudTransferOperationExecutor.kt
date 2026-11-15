@@ -44,6 +44,7 @@ import java.io.FileNotFoundException
 import java.io.FileOutputStream
 import java.io.IOException
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 /** Executes persisted transfer rows through the account-selected provider/API path. */
 class CloudTransferOperationExecutor @JvmOverloads constructor(
@@ -66,18 +67,24 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
     private val onLocalDeletionFailed: (suspend (LocalTransfer, String) -> Unit)? = null
 ) : TransferOperationExecutor {
 
+    private val inFlightPlaintextHashes = ConcurrentHashMap<String, String>()
+    private val lastInterruptionDbCheckMs = ConcurrentHashMap<String, Long>()
+
     override suspend fun onCompleted(transfer: LocalTransfer) {
+        val latest = database.transferDao().getById(transfer.id) ?: transfer
+        val cachedPlaintextHash = inFlightPlaintextHashes.remove(transfer.id)
+        lastInterruptionDbCheckMs.remove(transfer.id)
         SecureFileCleanup.cleanupTransferStaging(
             context = context,
-            transferId = transfer.id,
-            customStagePath = transfer.encryptedStagePath
+            transferId = latest.id,
+            customStagePath = latest.encryptedStagePath ?: transfer.encryptedStagePath
         )
         SecureFileCleanup.cleanupDownloadTemp(
             context = context,
-            transferId = transfer.id,
+            transferId = latest.id,
             removePartFile = true
         )
-        val rawUri = transfer.localUri ?: transfer.localPath ?: return
+        val rawUri = latest.localUri ?: latest.localPath ?: return
         val uri = Uri.parse(rawUri)
         if (uri.scheme == "file") {
             val filePath = uri.path
@@ -92,24 +99,25 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
             }
         }
 
-        if (transfer.direction != TransferDirection.DOWNLOAD.name) {
-            val plaintextSize = transfer.plaintextSizeBytes ?: transfer.totalBytes
-            val lastModified = resolveSourceLastModified(uri, transfer.createdAt)
-            val contentHash = if (!transfer.isEncrypted && !transfer.checksum.isNullOrBlank()) {
-                transfer.checksum
-            } else {
-                computeSha256Safely(uri)
-            }
+        if (latest.direction != TransferDirection.DOWNLOAD.name) {
+            val plaintextSize = latest.plaintextSizeBytes ?: latest.totalBytes
+            val lastModified = resolveSourceLastModified(uri, latest.createdAt)
+            val contentHash = cachedPlaintextHash
+                ?: if (!latest.isEncrypted && !latest.checksum.isNullOrBlank()) {
+                    latest.checksum
+                } else {
+                    computeSha256Safely(uri)
+                }
             runCatching {
                 database.uploadRecordDao().insertRecord(
                     com.cloudyte.app.db.LocalUploadRecord(
                         localUri = rawUri,
-                        fileName = transfer.fileName,
+                        fileName = latest.fileName,
                         fileSize = plaintextSize,
                         lastModified = lastModified,
-                        targetAccountId = transfer.accountId,
-                        targetFolderId = transfer.parentFolderId ?: transfer.remotePath ?: "root",
-                        cloudFileId = transfer.remoteId ?: transfer.fileId,
+                        targetAccountId = latest.accountId,
+                        targetFolderId = latest.parentFolderId ?: latest.remotePath ?: "root",
+                        cloudFileId = latest.remoteId ?: latest.fileId,
                         uploadedAt = System.currentTimeMillis(),
                         status = "SUCCESS",
                         contentHash = contentHash
@@ -118,8 +126,8 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
             }
         }
 
-        if (transfer.direction == TransferDirection.BACKUP.name && runCatching { shouldDeleteAfterBackupUpload() }.getOrDefault(false)) {
-            deleteEligibleLocalBackupSource(transfer, uri)
+        if (latest.direction == TransferDirection.BACKUP.name && runCatching { shouldDeleteAfterBackupUpload() }.getOrDefault(false)) {
+            deleteEligibleLocalBackupSource(latest, uri)
         }
     }
 
@@ -177,11 +185,11 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
             } ?: return null
             stream.use { input ->
                 val digest = java.security.MessageDigest.getInstance("SHA-256")
-                val buffer = ByteArray(64 * 1024)
+                val buffer = ByteArray(256 * 1024)
                 while (true) {
                     val read = input.read(buffer)
-                    if (read <= 0) break
-                    digest.update(buffer, 0, read)
+                    if (read < 0) break
+                    if (read > 0) digest.update(buffer, 0, read)
                 }
                 digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
             }
@@ -189,6 +197,8 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
     }
 
     override suspend fun onCancelled(transfer: LocalTransfer) {
+        inFlightPlaintextHashes.remove(transfer.id)
+        lastInterruptionDbCheckMs.remove(transfer.id)
         val latest = database.transferDao().getById(transfer.id) ?: transfer
         SecureFileCleanup.cleanupTransferStaging(
             context = context,
@@ -505,6 +515,11 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
                     actualSha256.equals(expectedSha256, ignoreCase = true) &&
                     envelope.keyId == keyMaterial.keyId
                 ) {
+                    runCatching {
+                        metadataCodec.decryptMetadata(envelope, keyMaterial).plaintextChecksum
+                    }.getOrNull()?.takeIf { it.isNotBlank() }?.let { checksum ->
+                        inFlightPlaintextHashes[transfer.id] = checksum
+                    }
                     val opaqueName = transfer.opaqueRemoteName?.takeIf {
                         it.startsWith(CryptoConstants.OPAQUE_FILE_PREFIX) && it.endsWith(CryptoConstants.OPAQUE_FILE_SUFFIX)
                     } ?: streamFileCrypto.generateOpaqueRemoteFileName()
@@ -576,6 +591,8 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
             plaintextSizeBytes = stagingResult.plaintextSizeBytes,
             originalMetadataAvailable = true
         )
+
+        inFlightPlaintextHashes[transfer.id] = stagingResult.plaintextSha256
 
         return PreparedEncryptedUpload(
             stagingFile = stagingResult.stagingFile,
@@ -714,7 +731,7 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
                 val progressCalculator = TransferProgressCalculator()
                 while (true) {
                     currentCoroutineContext().ensureActive()
-                    checkInterruptedOutcome(transfer.id)?.let { outcome ->
+                    checkInterruptedOutcomeInLoop(transfer.id)?.let { outcome ->
                         out.flush()
                         if (outcome == TransferOutcome.Cancelled) {
                             partFile.delete()
@@ -926,6 +943,21 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
         val totalPart = contentRange.substring(slashIndex + 1).trim()
         if (totalPart == "*") return null
         return totalPart.toLongOrNull()
+    }
+
+    private suspend fun checkInterruptedOutcomeInLoop(transferId: String): TransferOutcome? {
+        when (ActiveTransferSignalRegistry.currentSignal(transferId)) {
+            ActiveTransferSignal.CANCEL -> return TransferOutcome.Cancelled
+            ActiveTransferSignal.PAUSE -> return TransferOutcome.Paused
+            null -> Unit
+        }
+        val now = System.currentTimeMillis()
+        val lastChecked = lastInterruptionDbCheckMs[transferId] ?: 0L
+        if (lastChecked > 0L && now >= lastChecked && (now - lastChecked) < 250L) {
+            return null
+        }
+        lastInterruptionDbCheckMs[transferId] = now
+        return checkInterruptedOutcome(transferId)
     }
 
     private suspend fun checkInterruptedOutcome(transferId: String): TransferOutcome? {

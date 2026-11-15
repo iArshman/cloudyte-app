@@ -34,6 +34,7 @@ object CryptoConstants {
     const val PBKDF2_ALGORITHM = "PBKDF2WithHmacSHA256"
     const val PBKDF2_HEADER_NAME = "PBKDF2-HMAC-SHA256"
     const val PBKDF2_ITERATIONS = 310_000
+    const val MAX_PBKDF2_ITERATIONS = 10_000_000
     const val PBKDF2_SALT_LENGTH_BYTES = 16
 
     const val KEYSTORE_PROVIDER = "AndroidKeyStore"

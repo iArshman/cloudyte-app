@@ -29,8 +29,8 @@ object PassphraseKdf {
         if (salt.size != CryptoConstants.PBKDF2_SALT_LENGTH_BYTES) {
             throw KeyBackupException("Invalid KDF salt length: ${salt.size}")
         }
-        if (iterations < CryptoConstants.PBKDF2_ITERATIONS) {
-            throw KeyBackupException("KDF iteration count ($iterations) is below minimum required (${CryptoConstants.PBKDF2_ITERATIONS})")
+        if (iterations < CryptoConstants.PBKDF2_ITERATIONS || iterations > CryptoConstants.MAX_PBKDF2_ITERATIONS) {
+            throw KeyBackupException("KDF iteration count ($iterations) must be between ${CryptoConstants.PBKDF2_ITERATIONS} and ${CryptoConstants.MAX_PBKDF2_ITERATIONS}")
         }
         val spec = PBEKeySpec(passphrase, salt, iterations, keyLengthBits)
         return try {
