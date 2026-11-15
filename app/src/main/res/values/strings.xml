@@ -281,5 +281,67 @@
     <!-- App Lock Screen -->
     <string name="lock_screen_title">Cloudyte Locked</string>
     <string name="lock_screen_subtitle">Unlock to access your cloud drives</string>
-    <string name="lock_screen_unlock_button">Unlock App</string>
+    <string name="lock_screen_unlock_button">Unlock app</string>
+
+    <!-- Redesign Additions -->
+    <string name="splash_tagline">All your drives. One secure place.</string>
+    <string name="login_title">Welcome back</string>
+    <string name="login_subtitle">Log in to access your linked drives</string>
+    <string name="register_title">Create account</string>
+    <string name="register_subtitle">Sign up to start organizing your cloud storage</string>
+    <string name="login_username_label">Username</string>
+    <string name="login_password_label">Password</string>
+    <string name="login_remember_me">Remember me</string>
+    <string name="login_cta">Log in</string>
+    <string name="register_cta">Sign up</string>
+    <string name="login_no_account">No account yet?</string>
+    <string name="login_have_account">Already have an account?</string>
+    <string name="login_register_action">Register</string>
+
+    <string name="home_welcome_lower">Welcome back</string>
+    <string name="home_storage_used_caps">STORAGE USED</string>
+    <string name="home_of_available_format">of %1$s available</string>
+    <string name="home_accounts_pill_format">%1$d accounts</string>
+    <string name="home_account_pill_single">1 account</string>
+    <string name="home_total_files_label">Total files</string>
+    <string name="home_linked_drives_label">Linked drives</string>
+    <string name="home_quick_actions_label">Quick actions</string>
+    <string name="home_new_folder_short">New folder</string>
+    <string name="home_recent_files_label">Recent files</string>
+    <string name="category_other">Other</string>
+    <string name="category_images">Images</string>
+    <string name="category_docs">Docs</string>
+    <string name="category_media">Media</string>
+    <string name="category_zipped">Zipped</string>
+    <string name="category_unknown">Unknown</string>
+
+    <string name="files_new_fab">New</string>
+    <string name="files_items_count_format">%1$d items</string>
+    <string name="files_all_drives">All Drives</string>
+
+    <string name="transfers_cancelled">Cancelled</string>
+    <string name="transfers_failed_status">Failed</string>
+
+    <string name="detail_title_sentence">File details</string>
+    <string name="detail_create_encrypted_copy">Create encrypted copy</string>
+    <string name="detail_decrypt_export">Decrypt / Export file</string>
+
+    <string name="settings_subtitle">Drives, security, backup &amp; appearance</string>
+    <string name="settings_group_cloud">Account &amp; Storage</string>
+    <string name="settings_group_security">Privacy &amp; Security</string>
+    <string name="settings_group_preferences">App &amp; Media</string>
+    <string name="settings_group_system">System &amp; Info</string>
+
+    <string name="drives_title">Drives</string>
+    <string name="drives_subtitle_format">%1$d linked · %2$s used</string>
+    <string name="drives_add_fab">Add drive</string>
+    <string name="drives_default_badge">Default</string>
+    <string name="add_drive_title">Add a drive</string>
+    <string name="add_drive_subtitle">Choose where your files live</string>
+    <string name="provider_telegram_title">Telegram Cloud</string>
+    <string name="provider_telegram_desc">Unlimited private channel vault</string>
+    <string name="provider_google_title">Google Drive</string>
+    <string name="provider_google_desc">15 GB free · OAuth2 link</string>
+    <string name="provider_onedrive_title">OneDrive</string>
+    <string name="provider_onedrive_desc">5 GB free · Microsoft link</string>
 </resources>

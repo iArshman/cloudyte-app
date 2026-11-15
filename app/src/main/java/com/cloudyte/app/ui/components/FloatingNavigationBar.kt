@@ -2,27 +2,39 @@ package com.cloudyte.app.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.SwapVert
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -35,6 +47,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -48,10 +61,16 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import androidx.navigation.compose.currentBackStackEntryAsState
 import com.cloudyte.app.R
+import com.cloudyte.app.ui.theme.cloudyteColors
 
 val LocalBottomBarInset = staticCompositionLocalOf { 0.dp }
 
-data class FloatingNavItem(val route: String, val label: String, val icon: ImageVector)
+data class FloatingNavItem(
+    val route: String,
+    val label: String,
+    val icon: ImageVector,
+    val selectedIcon: ImageVector = icon
+)
 
 @Composable
 fun FloatingNavigationBar(
@@ -62,10 +81,10 @@ fun FloatingNavigationBar(
     onNavigate: ((String) -> Unit)? = null
 ) {
     val items = listOf(
-        FloatingNavItem("home", stringResource(R.string.nav_home), Icons.Default.Home),
-        FloatingNavItem("files", stringResource(R.string.nav_files), Icons.Default.Folder),
-        FloatingNavItem("transfers", stringResource(R.string.nav_transfers), Icons.Default.SwapVert),
-        FloatingNavItem("settings", stringResource(R.string.nav_settings), Icons.Default.Settings)
+        FloatingNavItem("home", stringResource(R.string.nav_home), Icons.Outlined.Home, Icons.Filled.Home),
+        FloatingNavItem("files", stringResource(R.string.nav_files), Icons.Outlined.Folder, Icons.Filled.Folder),
+        FloatingNavItem("transfers", stringResource(R.string.nav_transfers), Icons.Outlined.SwapVert, Icons.Filled.SwapVert),
+        FloatingNavItem("settings", stringResource(R.string.nav_settings), Icons.Outlined.Settings, Icons.Filled.Settings)
     )
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -85,93 +104,93 @@ fun FloatingNavigationBar(
                 .testTag("floating_bottom_bar"),
             shape = CircleShape,
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            tonalElevation = 4.dp,
-            shadowElevation = 12.dp
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)),
+            tonalElevation = 6.dp,
+            shadowElevation = 16.dp
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(60.dp)
-                    .padding(horizontal = 5.dp, vertical = 5.dp),
+                    .height(66.dp)
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 items.forEachIndexed { index, item ->
                     val isSelected = index == selectedIndex
+                    val itemWeight by animateFloatAsState(
+                        targetValue = if (isSelected && showNavText) 2.25f else 1f,
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioNoBouncy,
+                            stiffness = Spring.StiffnessMediumLow
+                        ),
+                        label = "navItemWeight_${item.route}"
+                    )
                     val pillColor by animateColorAsState(
-                        targetValue = if (isSelected) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0f)
-                        },
+                        targetValue = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
                         label = "navPillColor_${item.route}"
                     )
+                    val contentColor = if (isSelected) {
+                        MaterialTheme.colorScheme.onPrimary
+                    } else {
+                        MaterialTheme.cloudyteColors.navInactive
+                    }
 
-                    Box(
+                    Row(
                         modifier = Modifier
-                            .weight(1f)
+                            .weight(itemWeight)
                             .fillMaxHeight()
                             .clip(CircleShape)
-                            .background(color = pillColor, shape = CircleShape)
-                            .then(
-                                if (!isSelected) {
-                                    Modifier.clickable(
-                                        interactionSource = remember { MutableInteractionSource() },
-                                        indication = ripple(bounded = true),
-                                        role = Role.Tab
-                                    ) { onNavigate?.invoke(item.route) }
-                                } else {
-                                    Modifier
-                                }
-                            )
-                            .semantics { contentDescription = item.label }
-                            .testTag("nav_item_${item.route}"),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (isSelected) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                modifier = Modifier.padding(horizontal = 6.dp)
+                            .background(pillColor)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = ripple(bounded = true),
+                                role = Role.Tab
                             ) {
-                                Icon(
-                                    imageVector = item.icon,
-                                    contentDescription = item.label,
-                                    tint = MaterialTheme.colorScheme.onPrimary,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                if (showNavText) {
-                                    Text(
-                                        text = item.label,
-                                        color = MaterialTheme.colorScheme.onPrimary,
-                                        fontSize = 12.sp,
-                                        lineHeight = 15.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1,
-                                        softWrap = false,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
+                                if (!isSelected) {
+                                    onNavigate?.invoke(item.route)
                                 }
                             }
-                        } else if (showNavText) {
-                            Text(
-                                text = item.label,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 12.sp,
-                                lineHeight = 15.sp,
-                                fontWeight = FontWeight.Medium,
-                                maxLines = 1,
-                                softWrap = false,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(horizontal = 6.dp)
+                            .padding(horizontal = if (isSelected) 12.dp else 4.dp)
+                            .semantics { contentDescription = item.label }
+                            .testTag("nav_item_${item.route}"),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = if (isSelected) item.selectedIcon else item.icon,
+                            contentDescription = null,
+                            tint = contentColor,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        AnimatedVisibility(
+                            visible = isSelected && showNavText,
+                            enter = fadeIn() + expandHorizontally(
+                                animationSpec = spring(
+                                    dampingRatio = Spring.DampingRatioNoBouncy,
+                                    stiffness = Spring.StiffnessMediumLow
+                                )
+                            ),
+                            exit = fadeOut() + shrinkHorizontally(
+                                animationSpec = spring(
+                                    dampingRatio = Spring.DampingRatioNoBouncy,
+                                    stiffness = Spring.StiffnessMediumLow
+                                )
                             )
-                        } else {
-                            Icon(
-                                imageVector = item.icon,
-                                contentDescription = item.label,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                                modifier = Modifier.size(20.dp)
-                            )
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = item.label,
+                                    color = contentColor,
+                                    fontSize = 13.sp,
+                                    lineHeight = 16.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
                     }
                 }

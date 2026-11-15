@@ -300,43 +300,5 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun AppLockScreen(onUnlockRequest: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Box(
-            modifier = Modifier
-                .size(72.dp)
-                .background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Default.Lock,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(36.dp)
-            )
-        }
-        Spacer(modifier = Modifier.height(20.dp))
-        Text(
-            text = stringResource(R.string.lock_screen_title),
-            style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.onBackground,
-            fontWeight = FontWeight.Bold
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = stringResource(R.string.lock_screen_subtitle),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(modifier = Modifier.height(24.dp))
-        Button(onClick = onUnlockRequest) {
-            Text(text = stringResource(R.string.lock_screen_unlock_button))
-        }
-    }
+    com.cloudyte.app.ui.screens.CloudyteAppLockContent(onUnlock = onUnlockRequest)
 }

@@ -3,31 +3,74 @@ package com.cloudyte.app.ui.screens
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.CloudQueue
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.OpenInBrowser
+import androidx.compose.material.icons.filled.Send
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
+import com.cloudyte.app.R
 import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.api.TgDriveRegisterRequest
-import com.cloudyte.app.ui.theme.*
+import com.cloudyte.app.ui.components.AppLoadingIndicator
+import com.cloudyte.app.ui.theme.cloudyteColors
 import kotlinx.coroutines.launch
 
 enum class CloudProviderType(val displayName: String, val subtitle: String) {
@@ -40,11 +83,16 @@ enum class CloudProviderType(val displayName: String, val subtitle: String) {
 @Composable
 fun AddAccountDialog(
     initialProvider: CloudProviderType = CloudProviderType.GOOGLE_DRIVE,
+    showChooserFirst: Boolean = true,
     onDismiss: () -> Unit,
     onSuccess: () -> Unit
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+    val ext = MaterialTheme.cloudyteColors
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    var isChooserStep by remember(initialProvider, showChooserFirst) { mutableStateOf(showChooserFirst) }
     var selectedProvider by remember(initialProvider) { mutableStateOf(initialProvider) }
 
     // Telegram inputs
@@ -55,210 +103,371 @@ fun AddAccountDialog(
     var errorMsg by remember { mutableStateOf<String?>(null) }
     var oauthWaitingForReturn by remember { mutableStateOf(false) }
 
-    Dialog(onDismissRequest = { if (!isLoading) onDismiss() }) {
-        Card(
-            shape = MaterialTheme.shapes.extraLarge,
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+    ModalBottomSheet(
+        onDismissRequest = { if (!isLoading) onDismiss() },
+        sheetState = sheetState,
+        shape = RoundedCornerShape(topStart = 40.dp, topEnd = 40.dp),
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        dragHandle = {
+            Box(
+                modifier = Modifier
+                    .padding(top = 12.dp, bottom = 8.dp)
+                    .size(width = 40.dp, height = 5.dp)
+                    .clip(CircleShape)
+                    .background(ext.dragHandle)
+            )
+        }
+    ) {
+        AnimatedContent(
+            targetState = isChooserStep,
+            transitionSpec = { fadeIn() togetherWith fadeOut() },
+            label = "AddDriveStepTransition",
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 8.dp)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(24.dp)
-            ) {
-                // Header
-                Row(
+                .verticalScroll(rememberScrollState())
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp)
+        ) { chooser ->
+            if (chooser) {
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
                         Text(
-                            "Link Cloud Drive",
-                            color = MaterialTheme.colorScheme.onSurface,
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
+                            text = stringResource(R.string.add_drive_title),
+                            fontSize = 30.sp,
+                            lineHeight = 33.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = (-0.03).em,
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            "Add a new storage provider to Cloudyte",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodySmall
+                            text = stringResource(R.string.add_drive_subtitle),
+                            fontSize = 15.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    IconButton(
+
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        ProviderChoiceRow(
+                            title = stringResource(R.string.provider_telegram_title),
+                            subtitle = stringResource(R.string.provider_telegram_desc),
+                            icon = Icons.AutoMirrored.Filled.Send,
+                            iconTint = ext.providerTelegram,
+                            badgeBg = ext.providerTelegramBg,
+                            badgeShape = RoundedCornerShape(20.dp),
+                            cardShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp, bottomStart = 8.dp, bottomEnd = 8.dp),
+                            onClick = {
+                                selectedProvider = CloudProviderType.TELEGRAM
+                                errorMsg = null
+                                oauthWaitingForReturn = false
+                                isChooserStep = false
+                            }
+                        )
+                        ProviderChoiceRow(
+                            title = stringResource(R.string.provider_google_title),
+                            subtitle = stringResource(R.string.provider_google_desc),
+                            icon = Icons.Default.Cloud,
+                            iconTint = ext.providerGoogle,
+                            badgeBg = ext.providerGoogleBg,
+                            badgeShape = CircleShape,
+                            cardShape = RoundedCornerShape(8.dp),
+                            onClick = {
+                                selectedProvider = CloudProviderType.GOOGLE_DRIVE
+                                errorMsg = null
+                                oauthWaitingForReturn = false
+                                isChooserStep = false
+                            }
+                        )
+                        ProviderChoiceRow(
+                            title = stringResource(R.string.provider_onedrive_title),
+                            subtitle = stringResource(R.string.provider_onedrive_desc),
+                            icon = Icons.Default.CloudQueue,
+                            iconTint = ext.providerOneDrive,
+                            badgeBg = ext.providerOneDriveBg,
+                            badgeShape = RoundedCornerShape(20.dp),
+                            cardShape = RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp, bottomStart = 28.dp, bottomEnd = 28.dp),
+                            onClick = {
+                                selectedProvider = CloudProviderType.ONEDRIVE
+                                errorMsg = null
+                                oauthWaitingForReturn = false
+                                isChooserStep = false
+                            }
+                        )
+                    }
+
+                    TextButton(
                         onClick = onDismiss,
                         enabled = !isLoading,
-                        modifier = Modifier.size(48.dp)
+                        shape = RoundedCornerShape(28.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp)
                     ) {
-                        Icon(Icons.Default.Close, contentDescription = "Close", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            text = stringResource(R.string.action_cancel),
+                            color = ext.lightAccent,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Provider Selection Pills
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(MaterialTheme.shapes.medium)
-                        .background(MaterialTheme.colorScheme.surfaceContainer)
-                        .padding(4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    CloudProviderType.values().forEach { provider ->
-                        val isSelected = provider == selectedProvider
-                        Box(
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
                             modifier = Modifier
-                                .weight(1f)
-                                .heightIn(min = 48.dp)
-                                .clip(MaterialTheme.shapes.small)
-                                .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
-                                .clickable {
-                                    if (!isLoading) {
-                                        selectedProvider = provider
-                                        errorMsg = null
-                                        oauthWaitingForReturn = false
-                                    }
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .clickable(enabled = !isLoading) {
+                                    errorMsg = null
+                                    oauthWaitingForReturn = false
+                                    isChooserStep = true
                                 }
-                                .padding(vertical = 12.dp),
-                            contentAlignment = Alignment.Center
                         ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                    contentDescription = stringResource(R.string.action_back),
+                                    tint = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = when (provider) {
-                                    CloudProviderType.GOOGLE_DRIVE -> "Google"
-                                    CloudProviderType.ONEDRIVE -> "OneDrive"
-                                    CloudProviderType.TELEGRAM -> "Telegram"
-                                },
-                                color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                text = selectedProvider.displayName,
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = (-0.02).em,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = selectedProvider.subtitle,
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
-                }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                    if (errorMsg != null) {
+                        Surface(
+                            color = ext.errorDeepBox,
+                            shape = RoundedCornerShape(20.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = errorMsg!!,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(14.dp)
+                            )
+                        }
+                    }
 
-                if (errorMsg != null) {
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f)),
-                        shape = MaterialTheme.shapes.small,
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+                    when (selectedProvider) {
+                        CloudProviderType.GOOGLE_DRIVE -> {
+                            GoogleDriveLinkPanel(
+                                isLoading = isLoading,
+                                oauthWaiting = oauthWaitingForReturn,
+                                onConnectClick = {
+                                    isLoading = true
+                                    errorMsg = null
+                                    coroutineScope.launch {
+                                        try {
+                                            val resp = ApiClient.apiService.getGoogleDriveLink()
+                                            val url = resp.url
+                                            if (!url.isNullOrBlank()) {
+                                                oauthWaitingForReturn = true
+                                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                                }
+                                                context.startActivity(intent)
+                                            } else {
+                                                errorMsg = "Server did not return a valid Google authorization URL."
+                                            }
+                                        } catch (e: Exception) {
+                                            Log.e("AddAccountDialog", "Google link error", e)
+                                            errorMsg = e.localizedMessage ?: "Failed to initiate Google Drive linking."
+                                        } finally {
+                                            isLoading = false
+                                        }
+                                    }
+                                },
+                                onVerifyCompleted = onSuccess
+                            )
+                        }
+                        CloudProviderType.ONEDRIVE -> {
+                            OneDriveLinkPanel(
+                                isLoading = isLoading,
+                                oauthWaiting = oauthWaitingForReturn,
+                                onConnectClick = {
+                                    isLoading = true
+                                    errorMsg = null
+                                    coroutineScope.launch {
+                                        try {
+                                            val resp = ApiClient.apiService.getOneDriveLink()
+                                            val url = resp.url
+                                            if (!url.isNullOrBlank()) {
+                                                oauthWaitingForReturn = true
+                                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                                }
+                                                context.startActivity(intent)
+                                            } else {
+                                                errorMsg = "Server did not return a valid OneDrive authorization URL."
+                                            }
+                                        } catch (e: Exception) {
+                                            Log.e("AddAccountDialog", "OneDrive link error", e)
+                                            errorMsg = e.localizedMessage ?: "Failed to initiate OneDrive linking."
+                                        } finally {
+                                            isLoading = false
+                                        }
+                                    }
+                                },
+                                onVerifyCompleted = onSuccess
+                            )
+                        }
+                        CloudProviderType.TELEGRAM -> {
+                            TelegramLinkPanel(
+                                driveName = driveName,
+                                onDriveNameChange = { driveName = it },
+                                channelId = channelId,
+                                onChannelIdChange = { channelId = it },
+                                isLoading = isLoading,
+                                onSubmit = {
+                                    if (channelId.isBlank()) {
+                                        errorMsg = "Channel ID is required (e.g. -1001987654321)"
+                                        return@TelegramLinkPanel
+                                    }
+                                    isLoading = true
+                                    errorMsg = null
+                                    coroutineScope.launch {
+                                        try {
+                                            val response = ApiClient.apiService.registerTgDrive(
+                                                TgDriveRegisterRequest(channelId.trim(), driveName.trim())
+                                            )
+                                            if (response.isSuccessful) {
+                                                onSuccess()
+                                            } else {
+                                                errorMsg = "Failed to register Telegram Drive. Please verify the bot is an admin in your channel."
+                                            }
+                                        } catch (e: Exception) {
+                                            Log.e("AddAccountDialog", "TG register error", e)
+                                            errorMsg = e.localizedMessage ?: "Network error"
+                                        } finally {
+                                            isLoading = false
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                    }
+
+                    TextButton(
+                        onClick = onDismiss,
+                        enabled = !isLoading,
+                        shape = RoundedCornerShape(28.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp)
                     ) {
                         Text(
-                            text = errorMsg!!,
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.padding(12.dp)
-                        )
-                    }
-                }
-
-                when (selectedProvider) {
-                    CloudProviderType.GOOGLE_DRIVE -> {
-                        GoogleDriveLinkPanel(
-                            isLoading = isLoading,
-                            oauthWaiting = oauthWaitingForReturn,
-                            onConnectClick = {
-                                isLoading = true
-                                errorMsg = null
-                                coroutineScope.launch {
-                                    try {
-                                        val resp = ApiClient.apiService.getGoogleDriveLink()
-                                        val url = resp.url
-                                        if (!url.isNullOrBlank()) {
-                                            oauthWaitingForReturn = true
-                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
-                                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                            }
-                                            context.startActivity(intent)
-                                        } else {
-                                            errorMsg = "Server did not return a valid Google authorization URL."
-                                        }
-                                    } catch (e: Exception) {
-                                        Log.e("AddAccountDialog", "Google link error", e)
-                                        errorMsg = e.localizedMessage ?: "Failed to initiate Google Drive linking."
-                                    } finally {
-                                        isLoading = false
-                                    }
-                                }
-                            },
-                            onVerifyCompleted = {
-                                onSuccess()
-                            }
-                        )
-                    }
-                    CloudProviderType.ONEDRIVE -> {
-                        OneDriveLinkPanel(
-                            isLoading = isLoading,
-                            oauthWaiting = oauthWaitingForReturn,
-                            onConnectClick = {
-                                isLoading = true
-                                errorMsg = null
-                                coroutineScope.launch {
-                                    try {
-                                        val resp = ApiClient.apiService.getOneDriveLink()
-                                        val url = resp.url
-                                        if (!url.isNullOrBlank()) {
-                                            oauthWaitingForReturn = true
-                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
-                                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                            }
-                                            context.startActivity(intent)
-                                        } else {
-                                            errorMsg = "Server did not return a valid OneDrive authorization URL."
-                                        }
-                                    } catch (e: Exception) {
-                                        Log.e("AddAccountDialog", "OneDrive link error", e)
-                                        errorMsg = e.localizedMessage ?: "Failed to initiate OneDrive linking."
-                                    } finally {
-                                        isLoading = false
-                                    }
-                                }
-                            },
-                            onVerifyCompleted = {
-                                onSuccess()
-                            }
-                        )
-                    }
-                    CloudProviderType.TELEGRAM -> {
-                        TelegramLinkPanel(
-                            driveName = driveName,
-                            onDriveNameChange = { driveName = it },
-                            channelId = channelId,
-                            onChannelIdChange = { channelId = it },
-                            isLoading = isLoading,
-                            onSubmit = {
-                                if (channelId.isBlank()) {
-                                    errorMsg = "Channel ID is required (e.g. -1001987654321)"
-                                    return@TelegramLinkPanel
-                                }
-                                isLoading = true
-                                errorMsg = null
-                                coroutineScope.launch {
-                                    try {
-                                        val response = ApiClient.apiService.registerTgDrive(
-                                            TgDriveRegisterRequest(channelId.trim(), driveName.trim())
-                                        )
-                                        if (response.isSuccessful) {
-                                            onSuccess()
-                                        } else {
-                                            errorMsg = "Failed to register Telegram Drive. Please verify the bot is an admin in your channel."
-                                        }
-                                    } catch (e: Exception) {
-                                        Log.e("AddAccountDialog", "TG register error", e)
-                                        errorMsg = e.localizedMessage ?: "Network error"
-                                    } finally {
-                                        isLoading = false
-                                    }
-                                }
-                            }
+                            text = stringResource(R.string.action_cancel),
+                            color = ext.lightAccent,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ProviderChoiceRow(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    iconTint: Color,
+    badgeBg: Color,
+    badgeShape: Shape,
+    cardShape: Shape,
+    onClick: () -> Unit
+) {
+    Surface(
+        shape = cardShape,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 84.dp)
+            .clip(cardShape)
+            .clickable(onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(badgeShape)
+                    .background(badgeBg),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = iconTint,
+                    modifier = Modifier.size(28.dp)
+                )
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    text = title,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = subtitle,
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(22.dp)
+            )
         }
     }
 }
@@ -270,41 +479,36 @@ fun GoogleDriveLinkPanel(
     onConnectClick: () -> Unit,
     onVerifyCompleted: () -> Unit
 ) {
+    val ext = MaterialTheme.cloudyteColors
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
             modifier = Modifier
-                .size(56.dp)
-                .background(ProviderGoogle.copy(alpha = 0.15f), CircleShape),
+                .size(64.dp)
+                .clip(CircleShape)
+                .background(ext.providerGoogleBg),
             contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.Default.Cloud, contentDescription = "Google Drive", tint = ProviderGoogle, modifier = Modifier.size(32.dp))
+            Icon(Icons.Default.Cloud, contentDescription = "Google Drive", tint = ext.providerGoogle, modifier = Modifier.size(32.dp))
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
         Text(
-            "Link Google Drive",
-            color = MaterialTheme.colorScheme.onSurface,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            "Securely connect your personal or workspace Google Drive account via OAuth 2.0.",
+            text = "Securely connect your personal or workspace Google Drive account via OAuth 2.0.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.bodyMedium,
             textAlign = TextAlign.Center
         )
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(18.dp))
 
         if (oauthWaiting) {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-                shape = MaterialTheme.shapes.medium,
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                shape = RoundedCornerShape(24.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
@@ -312,7 +516,7 @@ fun GoogleDriveLinkPanel(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        "Browser window opened. Once you approve permissions, tap 'Done' below to refresh your linked drives.",
+                        text = "Browser window opened. Once you approve permissions, tap 'Done' below to refresh your linked drives.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall,
                         textAlign = TextAlign.Center
@@ -320,15 +524,18 @@ fun GoogleDriveLinkPanel(
                     Spacer(modifier = Modifier.height(16.dp))
                     Button(
                         onClick = onVerifyCompleted,
+                        shape = CircleShape,
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp)
                     ) {
-                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            "Done / Refresh Drives",
+                            text = "Done / Refresh Drives",
                             color = MaterialTheme.colorScheme.onPrimary,
-                            style = MaterialTheme.typography.labelLarge
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }
@@ -336,18 +543,21 @@ fun GoogleDriveLinkPanel(
         } else {
             Button(
                 onClick = onConnectClick,
-                colors = ButtonDefaults.buttonColors(containerColor = ProviderGoogle, contentColor = Color.White),
-                modifier = Modifier.fillMaxWidth(),
+                shape = CircleShape,
+                colors = ButtonDefaults.buttonColors(containerColor = ext.providerGoogle, contentColor = Color.White),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
                 enabled = !isLoading
             ) {
                 if (isLoading) {
-                    com.cloudyte.app.ui.components.AppLoadingIndicator(size = 20.dp, color = Color.White)
+                    AppLoadingIndicator(size = 20.dp, color = Color.White)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Opening Google...", color = Color.White, style = MaterialTheme.typography.labelLarge)
+                    Text("Opening Google...", color = Color.White, fontWeight = FontWeight.Bold)
                 } else {
                     Icon(Icons.Default.OpenInBrowser, contentDescription = null, modifier = Modifier.size(18.dp), tint = Color.White)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Connect Google Drive", color = Color.White, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                    Text("Connect Google Drive", color = Color.White, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -361,41 +571,36 @@ fun OneDriveLinkPanel(
     onConnectClick: () -> Unit,
     onVerifyCompleted: () -> Unit
 ) {
+    val ext = MaterialTheme.cloudyteColors
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
             modifier = Modifier
-                .size(56.dp)
-                .background(ProviderOneDrive.copy(alpha = 0.15f), CircleShape),
+                .size(64.dp)
+                .clip(RoundedCornerShape(22.dp))
+                .background(ext.providerOneDriveBg),
             contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.Default.CloudQueue, contentDescription = "OneDrive", tint = ProviderOneDrive, modifier = Modifier.size(32.dp))
+            Icon(Icons.Default.CloudQueue, contentDescription = "OneDrive", tint = ext.providerOneDrive, modifier = Modifier.size(32.dp))
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
         Text(
-            "Link Microsoft OneDrive",
-            color = MaterialTheme.colorScheme.onSurface,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            "Access Microsoft OneDrive and Office 365 cloud files seamlessly with Microsoft Graph.",
+            text = "Access Microsoft OneDrive and Office 365 cloud files seamlessly with Microsoft Graph.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.bodyMedium,
             textAlign = TextAlign.Center
         )
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(18.dp))
 
         if (oauthWaiting) {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-                shape = MaterialTheme.shapes.medium,
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                shape = RoundedCornerShape(24.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
@@ -403,7 +608,7 @@ fun OneDriveLinkPanel(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        "Browser window opened. Once you approve permissions, tap 'Done' below to refresh your linked drives.",
+                        text = "Browser window opened. Once you approve permissions, tap 'Done' below to refresh your linked drives.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall,
                         textAlign = TextAlign.Center
@@ -411,15 +616,18 @@ fun OneDriveLinkPanel(
                     Spacer(modifier = Modifier.height(16.dp))
                     Button(
                         onClick = onVerifyCompleted,
+                        shape = CircleShape,
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp)
                     ) {
-                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            "Done / Refresh Drives",
+                            text = "Done / Refresh Drives",
                             color = MaterialTheme.colorScheme.onPrimary,
-                            style = MaterialTheme.typography.labelLarge
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }
@@ -427,18 +635,21 @@ fun OneDriveLinkPanel(
         } else {
             Button(
                 onClick = onConnectClick,
-                colors = ButtonDefaults.buttonColors(containerColor = ProviderOneDrive, contentColor = Color.White),
-                modifier = Modifier.fillMaxWidth(),
+                shape = CircleShape,
+                colors = ButtonDefaults.buttonColors(containerColor = ext.providerOneDrive, contentColor = Color.White),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
                 enabled = !isLoading
             ) {
                 if (isLoading) {
-                    com.cloudyte.app.ui.components.AppLoadingIndicator(size = 20.dp, color = Color.White)
+                    AppLoadingIndicator(size = 20.dp, color = Color.White)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Opening Microsoft...", color = Color.White, style = MaterialTheme.typography.labelLarge)
+                    Text("Opening Microsoft...", color = Color.White, fontWeight = FontWeight.Bold)
                 } else {
                     Icon(Icons.Default.OpenInBrowser, contentDescription = null, modifier = Modifier.size(18.dp), tint = Color.White)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Connect OneDrive", color = Color.White, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                    Text("Connect OneDrive", color = Color.White, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -454,18 +665,21 @@ fun TelegramLinkPanel(
     isLoading: Boolean,
     onSubmit: () -> Unit
 ) {
+    val ext = MaterialTheme.cloudyteColors
     Column(modifier = Modifier.fillMaxWidth()) {
-        Card(
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-            shape = MaterialTheme.shapes.medium,
-            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            shape = RoundedCornerShape(22.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 14.dp)
         ) {
             Row(
-                modifier = Modifier.padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier.padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Icon(Icons.Default.Info, contentDescription = null, tint = ProviderTelegram, modifier = Modifier.size(20.dp))
-                Spacer(modifier = Modifier.width(8.dp))
+                Icon(Icons.Default.Info, contentDescription = null, tint = ext.providerTelegram, modifier = Modifier.size(20.dp))
                 Text(
                     text = "Ensure the Cloudyte Bot is added as an Administrator with upload permissions in your Telegram channel.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -477,49 +691,58 @@ fun TelegramLinkPanel(
         OutlinedTextField(
             value = driveName,
             onValueChange = onDriveNameChange,
-            label = { Text("Drive Name (Optional)", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium) },
-            placeholder = { Text("e.g. My Personal Cloud", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f), style = MaterialTheme.typography.bodySmall) },
+            label = { Text("Drive Name (Optional)") },
+            placeholder = { Text("e.g. My Personal Cloud") },
+            shape = RoundedCornerShape(22.dp),
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             colors = OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                 focusedTextColor = MaterialTheme.colorScheme.onSurface,
                 unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                focusedBorderColor = ProviderTelegram,
-                unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                focusedBorderColor = ext.providerTelegram,
+                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
             )
         )
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(10.dp))
         OutlinedTextField(
             value = channelId,
             onValueChange = onChannelIdChange,
-            label = { Text("Channel ID *", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium) },
-            placeholder = { Text("e.g. -1001987654321", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f), style = MaterialTheme.typography.bodySmall) },
+            label = { Text("Channel ID *") },
+            placeholder = { Text("e.g. -1001987654321") },
+            shape = RoundedCornerShape(22.dp),
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             colors = OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                 focusedTextColor = MaterialTheme.colorScheme.onSurface,
                 unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                focusedBorderColor = ProviderTelegram,
-                unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                focusedBorderColor = ext.providerTelegram,
+                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
             )
         )
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(18.dp))
 
         Button(
             onClick = onSubmit,
-            colors = ButtonDefaults.buttonColors(containerColor = ProviderTelegram, contentColor = Color.White),
-            modifier = Modifier.fillMaxWidth(),
+            shape = CircleShape,
+            colors = ButtonDefaults.buttonColors(containerColor = ext.providerTelegram, contentColor = Color.White),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
             enabled = !isLoading
         ) {
             if (isLoading) {
-                com.cloudyte.app.ui.components.AppLoadingIndicator(size = 20.dp, color = Color.White)
+                AppLoadingIndicator(size = 20.dp, color = Color.White)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Registering...", color = Color.White, style = MaterialTheme.typography.labelLarge)
+                Text("Registering...", color = Color.White, fontWeight = FontWeight.Bold)
             } else {
-                Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(16.dp))
+                Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Register Telegram Drive", color = Color.White, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                Text("Register Telegram Drive", color = Color.White, fontWeight = FontWeight.Bold)
             }
         }
     }

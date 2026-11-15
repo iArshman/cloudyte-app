@@ -1,12 +1,14 @@
 package com.cloudyte.app.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -15,13 +17,19 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
@@ -29,22 +37,16 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Upload
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -56,7 +58,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -75,12 +81,13 @@ import com.cloudyte.app.domain.model.Transfer
 import com.cloudyte.app.sync.AutoSyncManager
 import com.cloudyte.app.ui.components.EmptyState
 import com.cloudyte.app.ui.components.FileThumb
+import com.cloudyte.app.ui.components.LocalBottomBarInset
+import com.cloudyte.app.ui.theme.cloudyteColors
 import kotlinx.coroutines.launch
 import java.io.File
 import kotlin.math.max
 import kotlin.math.roundToInt
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TransfersScreen(
     onBack: () -> Unit,
@@ -139,151 +146,159 @@ fun TransfersScreen(
         failedTransfers.filter { it.status == TransferStatus.FAILED.name }
     }
 
-    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
-    val isScrolled by remember {
-        androidx.compose.runtime.derivedStateOf {
-            listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0
-        }
-    }
-    val topBarContainerColor by androidx.compose.animation.animateColorAsState(
-        targetValue = if (isScrolled) MaterialTheme.colorScheme.surfaceContainer else MaterialTheme.colorScheme.surface,
-        animationSpec = androidx.compose.animation.core.tween(durationMillis = 200),
-        label = "transfersTopBarColor"
-    )
+    val listState = rememberLazyListState()
+    val ext = MaterialTheme.cloudyteColors
 
     Scaffold(
-        topBar = {
-            Column {
-                TopAppBar(
-                    title = { Text(stringResource(R.string.transfers_title), fontWeight = FontWeight.Bold) },
-                    navigationIcon = {
-                        if (showBackButton) {
-                            IconButton(onClick = onBack) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
-                            }
-                        }
-                    },
-                    actions = {
-                        if (selectedTab == 1 && pausableActive.isNotEmpty()) {
-                            TextButton(
-                                onClick = {
-                                    scope.launch {
-                                        pausableActive.forEach { t ->
-                                            coordinator.dispatch(TransferCommand.Pause(t.id))
-                                        }
-                                    }
-                                }
-                            ) {
-                                Text("Pause All", color = MaterialTheme.colorScheme.primary)
-                            }
-                        } else if (selectedTab == 3 && retryableFailed.isNotEmpty()) {
-                            TextButton(
-                                onClick = {
-                                    scope.launch {
-                                        retryableFailed.forEach { t ->
-                                            coordinator.dispatch(TransferCommand.Retry(t.id))
-                                        }
-                                    }
-                                }
-                            ) {
-                                Text("Retry All", color = MaterialTheme.colorScheme.primary)
-                            }
-                        }
-                        if (completedTransfers.isNotEmpty() || pausableActive.isNotEmpty() || retryableFailed.isNotEmpty()) {
-                            Box {
-                                IconButton(onClick = { showOverflowMenu = true }) {
-                                    Icon(
-                                        imageVector = Icons.Default.MoreVert,
-                                        contentDescription = stringResource(R.string.action_options)
-                                    )
-                                }
-                                DropdownMenu(
-                                    expanded = showOverflowMenu,
-                                    onDismissRequest = { showOverflowMenu = false },
-                                    modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer)
-                                ) {
-                                    if (pausableActive.isNotEmpty()) {
-                                        DropdownMenuItem(
-                                            text = { Text("Pause all active (${pausableActive.size})") },
-                                            leadingIcon = { Icon(Icons.Default.Pause, contentDescription = null) },
-                                            onClick = {
-                                                showOverflowMenu = false
-                                                scope.launch {
-                                                    pausableActive.forEach { t ->
-                                                        coordinator.dispatch(TransferCommand.Pause(t.id))
-                                                    }
-                                                }
-                                            }
-                                        )
-                                    }
-                                    if (retryableFailed.isNotEmpty()) {
-                                        DropdownMenuItem(
-                                            text = { Text("Retry all failed (${retryableFailed.size})") },
-                                            leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) },
-                                            onClick = {
-                                                showOverflowMenu = false
-                                                scope.launch {
-                                                    retryableFailed.forEach { t ->
-                                                        coordinator.dispatch(TransferCommand.Retry(t.id))
-                                                    }
-                                                }
-                                            }
-                                        )
-                                    }
-                                    if (completedTransfers.isNotEmpty()) {
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.transfers_clear_completed)) },
-                                            leadingIcon = { Icon(Icons.Default.DeleteSweep, contentDescription = null) },
-                                            onClick = {
-                                                showOverflowMenu = false
-                                                scope.launch { repo.clearCompleted() }
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = topBarContainerColor
-                    )
-                )
-                PrimaryTabRow(selectedTabIndex = selectedTab) {
-                    tabs.forEachIndexed { index, title ->
-                        val isSelected = selectedTab == index
-                        Tab(
-                            selected = isSelected,
-                            onClick = { selectedTab = index }
+        containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0)
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+        ) {
+            // Expressive Header Row
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    if (showBackButton) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceContainer,
+                            onClick = onBack,
+                            modifier = Modifier.size(48.dp)
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .heightIn(min = 48.dp)
-                                    .padding(horizontal = 4.dp, vertical = 12.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = title,
-                                    style = MaterialTheme.typography.titleSmall.copy(
-                                        fontSize = 13.sp,
-                                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium
-                                    ),
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    overflow = TextOverflow.Ellipsis
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                    contentDescription = stringResource(R.string.action_back),
+                                    tint = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        text = stringResource(R.string.transfers_title),
+                        style = MaterialTheme.typography.displayMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                if (completedTransfers.isNotEmpty() || pausableActive.isNotEmpty() || retryableFailed.isNotEmpty()) {
+                    Box {
+                        Surface(
+                            shape = RoundedCornerShape(20.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainer,
+                            onClick = { showOverflowMenu = true },
+                            modifier = Modifier.size(52.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.MoreVert,
+                                    contentDescription = stringResource(R.string.action_options),
+                                    tint = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                        DropdownMenu(
+                            expanded = showOverflowMenu,
+                            onDismissRequest = { showOverflowMenu = false },
+                            modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        ) {
+                            if (pausableActive.isNotEmpty()) {
+                                DropdownMenuItem(
+                                    text = { Text("Pause all active (${pausableActive.size})") },
+                                    leadingIcon = { Icon(Icons.Default.Pause, contentDescription = null) },
+                                    onClick = {
+                                        showOverflowMenu = false
+                                        scope.launch {
+                                            pausableActive.forEach { t ->
+                                                coordinator.dispatch(TransferCommand.Pause(t.id))
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+                            if (retryableFailed.isNotEmpty()) {
+                                DropdownMenuItem(
+                                    text = { Text("Retry all failed (${retryableFailed.size})") },
+                                    leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null) },
+                                    onClick = {
+                                        showOverflowMenu = false
+                                        scope.launch {
+                                            retryableFailed.forEach { t ->
+                                                coordinator.dispatch(TransferCommand.Retry(t.id))
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+                            if (completedTransfers.isNotEmpty()) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.transfers_clear_completed)) },
+                                    leadingIcon = { Icon(Icons.Default.DeleteSweep, contentDescription = null) },
+                                    onClick = {
+                                        showOverflowMenu = false
+                                        scope.launch { repo.clearCompleted() }
+                                    }
                                 )
                             }
                         }
                     }
                 }
             }
-        }
-    ) { innerPadding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-        ) {
+
+            // Pill Filter Chips Row
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                tabs.forEachIndexed { index, title ->
+                    val isSelected = selectedTab == index
+                    Surface(
+                        shape = CircleShape,
+                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainer,
+                        onClick = { selectedTab = index },
+                        modifier = Modifier
+                            .heightIn(min = 44.dp)
+                            .testTag("transfers_filter_$index")
+                    ) {
+                        Box(
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = title,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isSelected) MaterialTheme.colorScheme.onPrimary else ext.lightAccent,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
             if (filteredTransfers.isEmpty()) {
                 val (emptyTitle, emptySubtitle) = when (selectedTab) {
                     1 -> "No active transfers" to "Uploads and downloads currently running appear here"
@@ -297,7 +312,7 @@ fun TransfersScreen(
                     subtitle = emptySubtitle,
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(bottom = com.cloudyte.app.ui.components.LocalBottomBarInset.current)
+                        .padding(bottom = LocalBottomBarInset.current)
                 )
             } else {
                 LazyColumn(
@@ -306,23 +321,30 @@ fun TransfersScreen(
                     contentPadding = PaddingValues(
                         start = 16.dp,
                         end = 16.dp,
-                        top = 12.dp,
-                        bottom = com.cloudyte.app.ui.components.LocalBottomBarInset.current + 24.dp
-                    )
+                        top = 6.dp,
+                        bottom = LocalBottomBarInset.current + 36.dp
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    items(filteredTransfers, key = { it.id }) { transfer ->
+                    itemsIndexed(filteredTransfers, key = { _, item -> item.id }) { index, transfer ->
+                        val topRadius = if (index == 0) 28.dp else 10.dp
+                        val bottomRadius = if (index == filteredTransfers.lastIndex) 28.dp else 10.dp
+                        val itemShape = RoundedCornerShape(
+                            topStart = topRadius,
+                            topEnd = topRadius,
+                            bottomStart = bottomRadius,
+                            bottomEnd = bottomRadius
+                        )
+
                         TransferItemCard(
                             transfer = transfer,
+                            shape = itemShape,
                             onPause = { scope.launch { coordinator.dispatch(TransferCommand.Pause(transfer.id)) } },
                             onResume = {
-                                scope.launch {
-                                    coordinator.dispatch(TransferCommand.Resume(transfer.id))
-                                }
+                                scope.launch { coordinator.dispatch(TransferCommand.Resume(transfer.id)) }
                             },
                             onRetry = {
-                                scope.launch {
-                                    coordinator.dispatch(TransferCommand.Retry(transfer.id))
-                                }
+                                scope.launch { coordinator.dispatch(TransferCommand.Retry(transfer.id)) }
                             },
                             onCancel = {
                                 scope.launch {
@@ -336,7 +358,6 @@ fun TransfersScreen(
                                 }
                             }
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
                     }
                 }
             }
@@ -344,14 +365,17 @@ fun TransfersScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun TransferItemCard(
     transfer: Transfer,
+    shape: Shape = RoundedCornerShape(24.dp),
     onPause: () -> Unit,
     onResume: () -> Unit,
     onRetry: () -> Unit,
     onCancel: () -> Unit
 ) {
+    val ext = MaterialTheme.cloudyteColors
     var previousSample by remember(transfer.id) {
         mutableStateOf(TransferMetricSample(transfer.bytesTransferred, transfer.updatedAt))
     }
@@ -408,39 +432,62 @@ fun TransferItemCard(
         } else null
     }
 
-    Card(
-        shape = MaterialTheme.shapes.medium,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+    val isImageFile = previewExt in listOf("jpg", "jpeg", "png", "webp", "gif", "heic", "bmp")
+    val isFailed = transfer.status == TransferStatus.FAILED.name
+
+    Surface(
+        shape = shape,
+        color = MaterialTheme.colorScheme.surfaceContainer,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (previewCloudFile != null) {
+                if (previewCloudFile != null && !isFailed) {
                     FileThumb(
                         file = previewCloudFile,
                         accountId = transfer.accountId,
-                        sizeDp = 44.dp,
-                        cornerRadius = 10.dp,
+                        sizeDp = 52.dp,
+                        cornerRadius = if (isImageFile) 26.dp else 18.dp,
                         showEncryptedBadge = false,
                         localSource = previewLocalFile
                     )
                 } else {
+                    val iconShape = if (isImageFile && !isFailed) CircleShape else RoundedCornerShape(18.dp)
+                    val iconBg = when {
+                        isFailed -> MaterialTheme.colorScheme.errorContainer
+                        isImageFile -> ext.categoryImages
+                        else -> ext.unknownFileBg
+                    }
+                    val iconTint = when {
+                        isFailed -> MaterialTheme.colorScheme.error
+                        isImageFile -> ext.onCategoryImages
+                        else -> ext.accentBlue
+                    }
+                    val leadingIcon = when {
+                        isFailed -> Icons.Default.ErrorOutline
+                        isImageFile -> Icons.Default.Image
+                        transfer.direction == "UPLOAD" || transfer.direction == "BACKUP" -> Icons.Default.Upload
+                        previewExt in listOf("pdf", "doc", "docx", "txt", "md") -> Icons.Default.Description
+                        else -> Icons.Default.Download
+                    }
                     Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
-                        modifier = Modifier.size(44.dp)
+                        shape = iconShape,
+                        color = iconBg,
+                        modifier = Modifier.size(52.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
-                                imageVector = if (transfer.direction == "UPLOAD" || transfer.direction == "BACKUP") Icons.Default.Upload else Icons.Default.Download,
+                                imageVector = leadingIcon,
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(22.dp)
+                                tint = iconTint,
+                                modifier = Modifier.size(24.dp)
                             )
                         }
                     }
                 }
-                Spacer(modifier = Modifier.width(12.dp))
+
+                Spacer(modifier = Modifier.width(14.dp))
+
                 Column(modifier = Modifier.weight(1f)) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -448,10 +495,9 @@ fun TransferItemCard(
                     ) {
                         Text(
                             text = transfer.fileName,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontSize = 14.sp,
-                            lineHeight = 18.sp,
-                            fontWeight = FontWeight.Medium,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontSize = 16.5.sp,
+                            fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -459,34 +505,108 @@ fun TransferItemCard(
                         )
                         if (transfer.isEncrypted) {
                             Surface(
-                                shape = RoundedCornerShape(6.dp),
+                                shape = RoundedCornerShape(8.dp),
                                 color = MaterialTheme.colorScheme.primaryContainer
                             ) {
                                 Row(
-                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Lock,
                                         contentDescription = "Encrypted",
-                                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        tint = ext.lightAccent,
                                         modifier = Modifier.size(11.dp)
                                     )
                                 }
                             }
                         }
                     }
-                    Spacer(modifier = Modifier.height(2.dp))
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
                     val sizeLabel = if (transfer.totalBytes > 0L) formatStorageSize(transfer.totalBytes) else null
-                    val subtitleText = when (transfer.status) {
-                        TransferStatus.COMPLETED.name -> listOfNotNull(directionLabel, sizeLabel).joinToString(" • ")
-                        TransferStatus.FAILED.name -> listOfNotNull("$directionLabel failed", sizeLabel).joinToString(" • ")
-                        TransferStatus.CANCELLED.name -> "$directionLabel • Cancelled"
+
+                    when (transfer.status) {
+                        TransferStatus.CANCELLED.name -> {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = listOfNotNull(directionLabel, sizeLabel).joinToString(" • "),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Surface(
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.surfaceContainerHigh
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.transfers_cancelled),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                        }
+                        TransferStatus.FAILED.name -> {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.errorContainer
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.transfers_failed_status),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onErrorContainer,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                    )
+                                }
+                                if (sizeLabel != null) {
+                                    Text(
+                                        text = sizeLabel,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                        TransferStatus.COMPLETED.name -> {
+                            Text(
+                                text = listOfNotNull(directionLabel, sizeLabel).joinToString(" • "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                         TransferStatus.PAUSED.name -> {
                             val pct = (progress * 100f).roundToInt().coerceIn(0, 100)
-                            if (transfer.totalBytes > 0L) "$directionLabel paused • $pct%" else "$directionLabel paused"
+                            Text(
+                                text = if (transfer.totalBytes > 0L) "$directionLabel paused • $pct%" else "$directionLabel paused",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
-                        TransferStatus.PENDING.name -> listOfNotNull("$directionLabel queued", sizeLabel).joinToString(" • ")
+                        TransferStatus.PENDING.name -> {
+                            Text(
+                                text = listOfNotNull("$directionLabel queued", sizeLabel).joinToString(" • "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                         else -> {
                             val verb = if (transfer.direction == "UPLOAD" || transfer.direction == "BACKUP") "Uploading" else "Downloading"
                             val pct = (progress * 100f).roundToInt().coerceIn(0, 100)
@@ -500,23 +620,20 @@ fun TransferItemCard(
                                 val eta = if (remaining > 0L) remaining / speedBytesPerSecond else 0L
                                 "${formatTransferRate(speedBytesPerSecond)} • ${formatTransferEta(eta)} left"
                             } else null
-                            listOfNotNull(verb, progText, rateText).joinToString(" • ")
+                            Text(
+                                text = listOfNotNull(verb, progText, rateText).joinToString(" • "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                     }
-                    Text(
-                        text = subtitleText,
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 16.sp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                if (isActiveOrPaused || transfer.status == TransferStatus.FAILED.name) {
-                    Spacer(modifier = Modifier.width(4.dp))
                 }
 
                 when (transfer.status) {
                     TransferStatus.RUNNING.name, TransferStatus.PENDING.name -> {
+                        Spacer(modifier = Modifier.width(6.dp))
                         IconButton(onClick = onPause) {
                             Icon(Icons.Default.Pause, contentDescription = stringResource(R.string.action_pause))
                         }
@@ -525,6 +642,7 @@ fun TransferItemCard(
                         }
                     }
                     TransferStatus.PAUSED.name -> {
+                        Spacer(modifier = Modifier.width(6.dp))
                         IconButton(onClick = onResume) {
                             Icon(Icons.Default.PlayArrow, contentDescription = stringResource(R.string.action_resume))
                         }
@@ -533,17 +651,29 @@ fun TransferItemCard(
                         }
                     }
                     TransferStatus.FAILED.name -> {
-                        IconButton(onClick = onRetry) {
-                            Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.action_retry))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                            onClick = onRetry,
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = stringResource(R.string.action_retry),
+                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
                         }
                     }
                 }
             }
 
             if (isActiveOrPaused) {
-                Spacer(modifier = Modifier.height(8.dp))
-                @OptIn(androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
-                androidx.compose.material3.LinearWavyProgressIndicator(
+                Spacer(modifier = Modifier.height(10.dp))
+                LinearWavyProgressIndicator(
                     progress = { progress },
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -551,19 +681,26 @@ fun TransferItemCard(
 
             val displayError = transfer.errorMessage?.takeIf { it.isNotBlank() }
             if (displayError != null && transfer.status == TransferStatus.FAILED.name) {
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = displayError,
-                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.5.sp),
-                    color = MaterialTheme.colorScheme.error,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = ext.errorDeepBox,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = displayError,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                    )
+                }
             } else if (displayError != null && transfer.status == TransferStatus.PENDING.name) {
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     text = "Retrying: $displayError",
-                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.5.sp),
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis

@@ -14,14 +14,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -31,15 +31,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
+import com.cloudyte.app.R
 import com.cloudyte.app.data.AccountSessionHelper
 import com.cloudyte.app.ui.components.GroupedList
 import com.cloudyte.app.ui.components.GroupedListItem
 import com.cloudyte.app.ui.components.LocalBottomBarInset
 import com.cloudyte.app.ui.components.SectionRow
+import com.cloudyte.app.ui.components.SettingsSectionTitle
+import com.cloudyte.app.ui.theme.cloudyteColors
 import kotlinx.coroutines.launch
 
 @Composable
@@ -104,10 +108,7 @@ fun SettingsScreen(
             section = section,
             onBack = { selectedSection = null },
             onNavigateExclusions = { currentSubScreen = "EXCLUSIONS" },
-            onNavigateAccounts = {
-                // Accounts are managed from Settings, not the primary navigation bar.
-                currentSubScreen = "ACCOUNTS"
-            },
+            onNavigateAccounts = { currentSubScreen = "ACCOUNTS" },
             onNavigateBackup = { selectedSection = SettingsSectionType.BACKUP },
             onLogout = effectiveLogout
         )
@@ -115,22 +116,25 @@ fun SettingsScreen(
     }
 
     val scrollState = rememberScrollState()
+    val ext = MaterialTheme.cloudyteColors
 
-    val sectionGroups = remember {
+    val groups = remember {
         listOf(
-            listOf(
+            R.string.settings_group_cloud to listOf(
                 SettingsSectionType.ACCOUNT,
+                SettingsSectionType.BACKUP,
                 SettingsSectionType.STORAGE
             ),
-            listOf(
+            R.string.settings_group_security to listOf(
+                SettingsSectionType.PERMISSIONS,
+                SettingsSectionType.SECURITY
+            ),
+            R.string.settings_group_preferences to listOf(
                 SettingsSectionType.APPEARANCE,
                 SettingsSectionType.PLAYBACK,
-                SettingsSectionType.BACKUP,
                 SettingsSectionType.NOTIFICATIONS
             ),
-            listOf(
-                SettingsSectionType.SECURITY,
-                SettingsSectionType.PERMISSIONS,
+            R.string.settings_group_system to listOf(
                 SettingsSectionType.ADVANCED,
                 SettingsSectionType.ABOUT
             )
@@ -152,41 +156,50 @@ fun SettingsScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 24.dp, end = 16.dp, top = 28.dp, bottom = 20.dp),
+                    .padding(start = 20.dp, end = 16.dp, top = 16.dp, bottom = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Settings",
-                    style = MaterialTheme.typography.displayLarge.copy(
-                        fontSize = 36.sp,
-                        lineHeight = 44.sp,
-                        fontWeight = FontWeight.Medium
-                    ),
-                    color = MaterialTheme.colorScheme.onBackground
-                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.settings_title),
+                        style = MaterialTheme.typography.headlineLarge,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = stringResource(R.string.settings_subtitle),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 Surface(
-                    shape = CircleShape,
+                    shape = RoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.primaryContainer,
-                    modifier = Modifier.size(48.dp),
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("settings_diagnostics_button"),
                     onClick = { currentSubScreen = "DIAGNOSTICS" }
                 ) {
                     Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                         Icon(
-                            Icons.Default.BugReport,
+                            imageVector = Icons.Default.BugReport,
                             contentDescription = "Open diagnostics",
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.size(20.dp)
+                            tint = ext.lightAccent,
+                            modifier = Modifier.size(22.dp)
                         )
                     }
                 }
             }
 
-            sectionGroups.forEachIndexed { groupIndex, group ->
-                val groupItems = group.map { section ->
+            groups.forEach { (groupTitleRes, sections) ->
+                SettingsSectionTitle(title = stringResource(groupTitleRes))
+                val items = sections.mapIndexed { index, section ->
                     GroupedListItem(key = section.name) {
                         SectionRow(
                             section = section,
+                            index = index,
                             onClick = {
                                 selectedSection = section
                                 onNavigateSection(section)
@@ -194,13 +207,10 @@ fun SettingsScreen(
                         )
                     }
                 }
-                GroupedList(items = groupItems)
-                if (groupIndex < sectionGroups.lastIndex) {
-                    Spacer(modifier = Modifier.height(14.dp))
-                }
+                GroupedList(items = items)
             }
 
-            Spacer(modifier = Modifier.height(24.dp + LocalBottomBarInset.current))
+            Spacer(modifier = Modifier.height(28.dp + LocalBottomBarInset.current))
         }
     }
 }

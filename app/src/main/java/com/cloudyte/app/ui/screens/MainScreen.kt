@@ -91,7 +91,7 @@ fun MainScreen(rootNavController: NavController) {
             .safeDrawingPadding()
     ) {
         val useNavigationRail = maxWidth >= 600.dp
-        val bottomInset = if (useNavigationRail) 0.dp else 88.dp
+        val bottomInset = if (useNavigationRail) 0.dp else 90.dp
 
         CompositionLocalProvider(LocalBottomBarInset provides bottomInset) {
             if (useNavigationRail) {
@@ -153,11 +153,10 @@ fun MainScreen(rootNavController: NavController) {
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
-                            .padding(bottom = 6.dp),
+                            .padding(bottom = 2.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         ActiveTransferPill(navController = bottomNavController)
-                        androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(4.dp))
                         FloatingNavigationBar(
                             navController = bottomNavController,
                             showNavText = prefsState.showNavText,
@@ -245,7 +244,7 @@ private fun ActiveTransferPill(navController: NavController) {
         visible = firstActive != null && currentRoute != "transfers",
         enter = androidx.compose.animation.slideInVertically { it } + androidx.compose.animation.fadeIn(),
         exit = androidx.compose.animation.slideOutVertically { it } + androidx.compose.animation.fadeOut(),
-        modifier = Modifier.padding(horizontal = 24.dp)
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
     ) {
         if (firstActive != null) {
             val progress = if (firstActive.totalBytes > 0) {
@@ -255,34 +254,34 @@ private fun ActiveTransferPill(navController: NavController) {
             val typeLabel = if (firstActive.direction == "UPLOAD") "Uploading" else "Downloading"
 
             androidx.compose.material3.Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.primaryContainer,
                 tonalElevation = 6.dp,
                 shadowElevation = 8.dp,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(44.dp)
-                    .clip(RoundedCornerShape(20.dp))
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(24.dp))
                     .clickable { navController.navigateSingleTopRestore("transfers") }
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 14.dp),
+                        .padding(horizontal = 16.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Icon(
                         imageVector = if (firstActive.direction == "UPLOAD") Icons.Default.Upload else Icons.Default.Download,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
                         modifier = Modifier.size(18.dp)
                     )
                     Text(
                         text = "$typeLabel ${firstActive.fileName}",
                         style = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
@@ -290,9 +289,9 @@ private fun ActiveTransferPill(navController: NavController) {
                     Text(
                         text = "$percent%",
                         style = com.cloudyte.app.ui.theme.MetricTextStyle,
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        fontWeight = FontWeight.ExtraBold
                     )
                 }
             }

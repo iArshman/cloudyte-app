@@ -131,7 +131,7 @@ fun DriveQuickFilterBar(
                     Text(
                         text = chipLabel,
                         style = MaterialTheme.typography.labelMedium,
-                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold
                     )
                 },
                 leadingIcon = {
@@ -149,23 +149,196 @@ fun DriveQuickFilterBar(
                         )
                     }
                 },
-                shape = RoundedCornerShape(20.dp),
+                shape = CircleShape,
                 colors = FilterChipDefaults.filterChipColors(
                     containerColor = MaterialTheme.colorScheme.surfaceContainer,
                     labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    iconColor = MaterialTheme.colorScheme.primary,
-                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    iconColor = com.cloudyte.app.ui.theme.LocalCloudyteColors.current.lightAccent,
+                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                    selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimary
                 ),
-                border = FilterChipDefaults.filterChipBorder(
-                    enabled = true,
-                    selected = selected,
-                    borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
-                    selectedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
-                ),
-                modifier = Modifier.testTag("filter_chip_${filter.name.lowercase(Locale.US)}")
+                border = null,
+                modifier = Modifier
+                    .heightIn(min = 48.dp)
+                    .testTag("filter_chip_${filter.name.lowercase(Locale.US)}")
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+fun FilesFilterSortSheet(
+    selectedFilter: FileQuickFilter,
+    onSelectFilter: (FileQuickFilter) -> Unit,
+    offlineCount: Int,
+    sortOptions: List<Pair<String, Boolean>>,
+    onSelectSort: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val ext = com.cloudyte.app.ui.theme.LocalCloudyteColors.current
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        dragHandle = {
+            Box(
+                modifier = Modifier
+                    .padding(top = 12.dp, bottom = 6.dp)
+                    .size(width = 40.dp, height = 5.dp)
+                    .clip(CircleShape)
+                    .background(ext.dragHandle)
+            )
+        }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .navigationBarsPadding()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 24.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Filter & Sort",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                if (selectedFilter != FileQuickFilter.ALL) {
+                    androidx.compose.material3.TextButton(
+                        onClick = { onSelectFilter(FileQuickFilter.ALL) }
+                    ) {
+                        Text(
+                            text = "Reset filter",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = "Filter by type",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            androidx.compose.foundation.layout.FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FileQuickFilter.entries.forEach { filter ->
+                    val selected = filter == selectedFilter
+                    val chipLabel = if (filter == FileQuickFilter.OFFLINE && offlineCount > 0) {
+                        "${filter.label} ($offlineCount)"
+                    } else {
+                        filter.label
+                    }
+                    FilterChip(
+                        selected = selected,
+                        onClick = {
+                            onSelectFilter(if (selected && filter != FileQuickFilter.ALL) FileQuickFilter.ALL else filter)
+                        },
+                        label = {
+                            Text(
+                                text = chipLabel,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                            )
+                        },
+                        leadingIcon = {
+                            if (selected) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            } else if (filter.icon != null) {
+                                Icon(
+                                    imageVector = filter.icon,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        },
+                        shape = CircleShape,
+                        colors = FilterChipDefaults.filterChipColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            iconColor = ext.lightAccent,
+                            selectedContainerColor = MaterialTheme.colorScheme.primary,
+                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                            selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimary
+                        ),
+                        border = null,
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .testTag("filter_chip_${filter.name.lowercase(Locale.US)}")
+                    )
+                }
+            }
+
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 16.dp),
+                color = MaterialTheme.colorScheme.outlineVariant
+            )
+
+            Text(
+                text = "Sort by",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            sortOptions.forEachIndexed { index, (label, isSelected) ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(
+                            if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+                            else androidx.compose.ui.graphics.Color.Transparent
+                        )
+                        .clickable {
+                            onSelectSort(index)
+                            onDismiss()
+                        }
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                        color = if (isSelected) ext.lightAccent else MaterialTheme.colorScheme.onSurface
+                    )
+                    if (isSelected) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = "Selected",
+                            tint = ext.lightAccent,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -195,10 +368,21 @@ fun DriveItemActionSheet(
     val context = androidx.compose.ui.platform.LocalContext.current
     val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val ext = com.cloudyte.app.ui.theme.LocalCloudyteColors.current
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surfaceContainer
+        shape = RoundedCornerShape(topStart = 40.dp, topEnd = 40.dp),
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        dragHandle = {
+            Box(
+                modifier = Modifier
+                    .padding(top = 12.dp, bottom = 6.dp)
+                    .size(width = 40.dp, height = 5.dp)
+                    .clip(CircleShape)
+                    .background(ext.dragHandle)
+            )
+        }
     ) {
         Column(
             modifier = Modifier
@@ -513,9 +697,9 @@ private fun SheetActionItem(
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
-                style = MaterialTheme.typography.bodyLarge,
+                style = MaterialTheme.typography.bodyMedium,
                 color = contentColor,
-                fontWeight = FontWeight.Normal
+                fontWeight = FontWeight.Medium
             )
             if (!subtitle.isNullOrBlank()) {
                 Text(

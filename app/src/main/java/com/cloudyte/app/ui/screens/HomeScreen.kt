@@ -6,7 +6,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -15,7 +15,6 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -32,7 +31,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -40,18 +38,21 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.FolderZip
+import androidx.compose.material.icons.filled.HelpOutline
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Upload
@@ -60,18 +61,16 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -87,16 +86,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.AndroidViewModel
@@ -109,7 +109,6 @@ import com.cloudyte.app.api.Account
 import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.api.CloudFile
 import com.cloudyte.app.api.FileRepository
-import com.cloudyte.app.api.FolderRequest
 import com.cloudyte.app.api.StorageCategories
 import com.cloudyte.app.api.StorageSummary
 import com.cloudyte.app.api.UserProfile
@@ -122,27 +121,15 @@ import com.cloudyte.app.data.UserPreferencesState
 import com.cloudyte.app.data.aggregateStorageSummaries
 import com.cloudyte.app.data.calculateSegmentProportions
 import com.cloudyte.app.data.formatStorageSize
-import com.cloudyte.app.data.formatStorageUsageText
 import com.cloudyte.app.db.AppDatabase
 import com.cloudyte.app.db.LocalAccount
-import com.cloudyte.app.db.LocalCloudFile
-import com.cloudyte.app.ui.components.AppLoadingIndicator
+import com.cloudyte.app.ui.components.ExpressiveStarburstBadge
 import com.cloudyte.app.ui.components.FileThumb
 import com.cloudyte.app.ui.components.LocalBottomBarInset
+import com.cloudyte.app.ui.components.WavyProgressBar
 import com.cloudyte.app.ui.openFileInViewer
-import com.cloudyte.app.ui.theme.BrandPrimary
-import com.cloudyte.app.ui.theme.CategoryDocuments
-import com.cloudyte.app.ui.theme.CategoryImages
-import com.cloudyte.app.ui.theme.CategoryMedia
-import com.cloudyte.app.ui.theme.CategoryOther
-import com.cloudyte.app.ui.theme.CategoryUnknown
-import com.cloudyte.app.ui.theme.CategoryZipped
-import com.cloudyte.app.ui.theme.MetricLabelTextStyle
-import com.cloudyte.app.ui.theme.MetricLargeTextStyle
-import com.cloudyte.app.ui.theme.MetricTextStyle
-import com.cloudyte.app.ui.theme.ProviderGoogle
-import com.cloudyte.app.ui.theme.ProviderOneDrive
-import com.cloudyte.app.ui.theme.ProviderTelegram
+import com.cloudyte.app.ui.theme.RobotoFlexFontFamily
+import com.cloudyte.app.ui.theme.cloudyteColors
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -154,6 +141,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 private val EmphasizedDecelerate = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1.0f)
 
@@ -334,7 +322,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     transferRepository = app.container.transferRepository,
                     transferCoordinator = app.container.transferCoordinator
                 )
-                onFeedback(feedback)
+                if (targetFile.isEncrypted || feedback != "Download added to transfers") {
+                    onFeedback(feedback)
+                }
             } catch (e: Exception) {
                 Log.e("HomeViewModel", "Decrypt export failed", e)
                 onFeedback(e.message ?: "Failed to decrypt file")
@@ -366,8 +356,7 @@ fun HomeScreen(
     val context = LocalContext.current
     val prefsState by UserPreferences.observe(context).collectAsState(initial = UserPreferencesState())
     val coroutineScope = rememberCoroutineScope()
-    val snackbarHostState = remember { androidx.compose.material3.SnackbarHostState() }
-    var isUploading by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
     var isManualRefreshing by remember { mutableStateOf(false) }
     var showCreateFolderDialog by remember { mutableStateOf(false) }
     var folderNameInput by remember { mutableStateOf("") }
@@ -386,15 +375,23 @@ fun HomeScreen(
         uri?.let {
             val accId = currentAccountId ?: accounts.firstOrNull()?.effectiveId
             if (!accId.isNullOrEmpty()) {
-                isUploading = true
                 coroutineScope.launch {
                     try {
                         runCatching {
-                            context.contentResolver.takePersistableUriPermission(it, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            context.contentResolver.takePersistableUriPermission(
+                                it,
+                                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                            )
                         }
                         var name = "upload_${System.currentTimeMillis()}"
                         var size = 0L
-                        context.contentResolver.query(it, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME, android.provider.OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+                        context.contentResolver.query(
+                            it,
+                            arrayOf(android.provider.OpenableColumns.DISPLAY_NAME, android.provider.OpenableColumns.SIZE),
+                            null,
+                            null,
+                            null
+                        )?.use { cursor ->
                             if (cursor.moveToFirst()) {
                                 val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
                                 if (nameIndex >= 0) name = cursor.getString(nameIndex) ?: name
@@ -416,12 +413,12 @@ fun HomeScreen(
                             originalMimeType = if (encryptUploads) mimeType else null,
                             originalSize = if (encryptUploads) size else null
                         )
-                        app.container.transferCoordinator.dispatch(com.cloudyte.app.core.transfer.TransferCommand.Start(transferId))
+                        app.container.transferCoordinator.dispatch(
+                            com.cloudyte.app.core.transfer.TransferCommand.Start(transferId)
+                        )
                         snackbarHostState.showSnackbar("$name added to transfers")
                     } catch (error: Exception) {
                         snackbarHostState.showSnackbar(error.message ?: "Could not queue upload")
-                    } finally {
-                        isUploading = false
                     }
                 }
             }
@@ -432,28 +429,26 @@ fun HomeScreen(
         AlertDialog(
             onDismissRequest = { showCreateFolderDialog = false },
             containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            shape = RoundedCornerShape(28.dp),
             title = {
                 Text(
                     text = stringResource(R.string.home_create_folder_title),
-                    color = MaterialTheme.colorScheme.onSurface
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.Bold
                 )
             },
             text = {
                 OutlinedTextField(
                     value = folderNameInput,
                     onValueChange = { folderNameInput = it },
-                    label = {
-                        Text(
-                            text = stringResource(R.string.home_folder_name_label),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    },
+                    label = { Text(stringResource(R.string.home_folder_name_label)) },
                     singleLine = true,
+                    shape = RoundedCornerShape(20.dp),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = MaterialTheme.colorScheme.onSurface,
                         unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
                         focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline
                     ),
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -468,26 +463,27 @@ fun HomeScreen(
                             }
                         }
                     },
+                    shape = CircleShape,
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                 ) {
-                    Text(
-                        text = stringResource(R.string.action_create),
-                        color = MaterialTheme.colorScheme.onPrimary
-                    )
+                    Text(stringResource(R.string.action_create), color = MaterialTheme.colorScheme.onPrimary)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showCreateFolderDialog = false }) {
-                    Text(
-                        text = stringResource(R.string.action_cancel),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Text(stringResource(R.string.action_cancel), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         )
     }
 
-    val effectiveSummary: StorageSummary? = remember(storageSummary, accounts, selectedStorageAccountId, isStorageRefreshing, recentFiles) {
+    val effectiveSummary: StorageSummary? = remember(
+        storageSummary,
+        accounts,
+        selectedStorageAccountId,
+        isStorageRefreshing,
+        recentFiles
+    ) {
         val base = storageSummary ?: if (!isStorageRefreshing && accounts.isNotEmpty()) {
             deriveSummaryFromAccounts(accounts, selectedStorageAccountId, recentFiles)
         } else {
@@ -500,11 +496,13 @@ fun HomeScreen(
         }
     }
 
+    val ext = MaterialTheme.cloudyteColors
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         snackbarHost = {
-            androidx.compose.material3.SnackbarHost(
+            SnackbarHost(
                 hostState = snackbarHostState,
                 modifier = Modifier.padding(bottom = LocalBottomBarInset.current)
             )
@@ -521,7 +519,6 @@ fun HomeScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            // Loading indicator pinned just below top bar
             AnimatedVisibility(
                 visible = isLoading,
                 enter = expandVertically(),
@@ -533,170 +530,436 @@ fun HomeScreen(
                     trackColor = MaterialTheme.colorScheme.surfaceVariant
                 )
             }
+
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(
                     start = 16.dp,
                     end = 16.dp,
-                    top = 8.dp,
-                    bottom = LocalBottomBarInset.current + 88.dp
+                    top = 12.dp,
+                    bottom = LocalBottomBarInset.current + 36.dp
                 )
             ) {
-            item {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 4.dp, bottom = 16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = stringResource(R.string.home_welcome_back),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.titleSmall
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = profile?.displayUsername ?: stringResource(R.string.home_default_user),
-                            style = MaterialTheme.typography.displaySmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onBackground,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = stringResource(R.string.home_subtitle),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.primaryContainer,
+                // Header: Welcome back + Username on left, 56dp Settings squircle on right
+                item {
+                    Row(
                         modifier = Modifier
-                            .size(48.dp)
-                            .clip(CircleShape)
-                            .clickable { navController.navigateSingleTopRestore("accounts") }
-                            .testTag("home_accounts_button")
+                            .fillMaxWidth()
+                            .padding(top = 4.dp, bottom = 18.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Default.Cloud,
-                                contentDescription = stringResource(R.string.nav_accounts),
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.size(22.dp)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.home_welcome_lower),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Medium
                             )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = profile?.displayUsername ?: stringResource(R.string.home_default_user),
+                                style = MaterialTheme.typography.displayMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onBackground,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Surface(
+                            shape = RoundedCornerShape(20.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            onClick = { navController.navigateSingleTopRestore("accounts") },
+                            modifier = Modifier
+                                .size(56.dp)
+                                .testTag("home_drives_button")
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Cloud,
+                                    contentDescription = stringResource(R.string.action_drives),
+                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
                         }
                     }
                 }
-            }
 
-            // Storage Card
-            item {
-                StorageOverviewCard(
-                    summary = effectiveSummary,
-                    isLoading = effectiveSummary == null && (isStorageRefreshing || isLoading),
-                    refreshError = storageRefreshError,
-                    accounts = accounts,
-                    selectedAccountId = selectedStorageAccountId,
-                    onSelectAccount = { viewModel.selectStorageAccount(it) }
-                )
-                Spacer(modifier = Modifier.height(24.dp))
-            }
-
-            if (errorMessage != null) {
+                // Expressive Hero Storage Card
                 item {
-                    Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.errorContainer
-                        ),
-                        shape = MaterialTheme.shapes.medium,
-                        modifier = Modifier.fillMaxWidth()
+                    StorageOverviewCard(
+                        summary = effectiveSummary,
+                        isLoading = effectiveSummary == null && (isStorageRefreshing || isLoading),
+                        refreshError = storageRefreshError,
+                        accounts = accounts,
+                        selectedAccountId = selectedStorageAccountId,
+                        onSelectAccount = { viewModel.selectStorageAccount(it) }
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
+
+                // Asymmetric Stat Tiles (Total files & Linked drives) + Category Bento Grid
+                item {
+                    val active = effectiveSummary
+                    val totalFilesCount = active?.fileCount ?: accounts.sumOf { it.fileCount ?: 0 }
+                    val categories = active?.categories ?: deriveCategoriesFromFiles(recentFiles, active?.usedBytes ?: 0L)
+                    val segments = remember(categories, active?.usedBytes) {
+                        calculateSegmentProportions(categories, active?.usedBytes ?: 0L)
+                    }
+                    val byCategory = remember(segments) { segments.associateBy { it.category } }
+
+                    // Asymmetric Stat Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
+                        Surface(
+                            shape = RoundedCornerShape(
+                                topStart = 28.dp,
+                                topEnd = 28.dp,
+                                bottomStart = 28.dp,
+                                bottomEnd = 10.dp
+                            ),
+                            color = MaterialTheme.colorScheme.surfaceContainer,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
+                                Text(
+                                    text = stringResource(R.string.home_total_files_label),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "$totalFilesCount",
+                                    fontFamily = RobotoFlexFontFamily,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 36.sp,
+                                    lineHeight = 40.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(
+                                topStart = 28.dp,
+                                topEnd = 28.dp,
+                                bottomStart = 10.dp,
+                                bottomEnd = 28.dp
+                            ),
+                            color = MaterialTheme.colorScheme.surfaceContainer,
+                            onClick = { navController.navigateSingleTopRestore("accounts") },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("home_linked_drives_tile")
+                        ) {
+                            Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
+                                Text(
+                                    text = stringResource(R.string.home_linked_drives_label),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "${accounts.size}",
+                                    fontFamily = RobotoFlexFontFamily,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 36.sp,
+                                    lineHeight = 40.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Category Bento Grid
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.testTag("storage_category_legend")
+                    ) {
+                        val otherBytes = byCategory[StorageCategoryType.OTHER]?.bytes ?: categories.other
+                        val imageBytes = byCategory[StorageCategoryType.IMAGES]?.bytes ?: categories.images
+                        val docsBytes = byCategory[StorageCategoryType.DOCUMENTS]?.bytes ?: categories.documents
+                        val mediaBytes = (byCategory[StorageCategoryType.VIDEOS]?.bytes ?: categories.videos) +
+                            (byCategory[StorageCategoryType.AUDIO]?.bytes ?: categories.audio)
+                        val zippedBytes = byCategory[StorageCategoryType.ARCHIVES]?.bytes ?: categories.archives
+
+                        // Top 2 Hero Category Cards: Other & Images
                         Row(
-                            modifier = Modifier.padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            HeroCategoryCard(
+                                label = stringResource(R.string.category_other),
+                                bytesText = formatStorageSize(otherBytes),
+                                icon = Icons.Default.InsertDriveFile,
+                                containerColor = ext.mintSuccess,
+                                contentColor = ext.onMintSuccess,
+                                iconBadgeColor = ext.onMintSuccess.copy(alpha = 0.14f),
+                                badgeShape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.weight(1f)
+                            )
+                            HeroCategoryCard(
+                                label = stringResource(R.string.category_images),
+                                bytesText = formatStorageSize(imageBytes),
+                                icon = Icons.Default.Image,
+                                containerColor = ext.categoryImages,
+                                contentColor = ext.onCategoryImages,
+                                iconBadgeColor = ext.onCategoryImages.copy(alpha = 0.14f),
+                                badgeShape = CircleShape,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        // Bottom 4 Compact Category Tiles: Docs, Media, Zipped, Unknown
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text(
-                                text = errorMessage ?: "",
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                                modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.bodyMedium
+                            CompactCategoryTile(
+                                label = stringResource(R.string.category_docs),
+                                bytesText = formatStorageSize(docsBytes),
+                                icon = Icons.Default.Description,
+                                badgeColor = ext.categoryDocs,
+                                iconTint = ext.onCategoryDocs,
+                                modifier = Modifier.weight(1f)
                             )
-                            Button(
-                                onClick = { viewModel.loadData(forceStorageRefresh = true) },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.primary
-                                )
-                            ) {
-                                Text(
-                                    text = stringResource(R.string.action_retry),
-                                    style = MaterialTheme.typography.labelLarge
-                                )
-                            }
+                            CompactCategoryTile(
+                                label = stringResource(R.string.category_media),
+                                bytesText = formatStorageSize(mediaBytes),
+                                icon = Icons.Default.PlayArrow,
+                                badgeColor = ext.categoryMedia,
+                                iconTint = ext.onCategoryMedia,
+                                modifier = Modifier.weight(1f)
+                            )
+                            CompactCategoryTile(
+                                label = stringResource(R.string.category_zipped),
+                                bytesText = formatStorageSize(zippedBytes),
+                                icon = Icons.Default.FolderZip,
+                                badgeColor = ext.categoryZipped,
+                                iconTint = ext.onCategoryZipped,
+                                modifier = Modifier.weight(1f)
+                            )
+                            CompactCategoryTile(
+                                label = stringResource(R.string.category_unknown),
+                                bytesText = formatStorageSize(0L),
+                                icon = Icons.Default.HelpOutline,
+                                badgeColor = ext.categoryUnknown,
+                                iconTint = ext.onCategoryUnknown,
+                                modifier = Modifier.weight(1f)
+                            )
                         }
                     }
-                    Spacer(modifier = Modifier.height(24.dp))
-                }
-            }
 
-            // Quick Actions Section
-            item {
-                Text(
-                    text = stringResource(R.string.home_quick_actions),
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                QuickActionsRow(
-                    onUploadClick = { filePickerLauncher.launch(arrayOf("*/*")) },
-                    onNewFolderClick = { showCreateFolderDialog = true },
-                    onSearchClick = {
-                        onSearchClick?.invoke() ?: navController.navigateSingleTopRestore("files")
-                    },
-                    onDrivesClick = { navController.navigateSingleTopRestore("accounts") }
-                )
-            }
-
-            if (prefsState.showRecentFiles && recentFiles.isNotEmpty()) {
-                item {
-                    Spacer(modifier = Modifier.height(24.dp))
-                    Text(
-                        text = "Recent Files",
-                        style = MaterialTheme.typography.titleLarge,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(22.dp))
                 }
 
-                items(recentFiles, key = { it.effectiveId.ifEmpty { it.effectiveName } }) { file ->
-                    val resolvedAccountId = file.accountId?.takeIf { it.isNotBlank() && it != "all" && it != "root" }
-                        ?: currentAccountId?.takeIf { it.isNotBlank() && it != "all" && it != "root" }
-                        ?: accounts.firstOrNull()?.effectiveId.orEmpty()
-                    Box(modifier = Modifier.padding(vertical = 4.dp)) {
-                        FileListItem(
-                            file = file,
-                            navController = rootNavController,
-                            accountId = resolvedAccountId,
-                            files = recentFiles,
-                            onEncryptClick = {
-                                viewModel.createEncryptedCopy(resolvedAccountId, file) { msg ->
-                                    coroutineScope.launch { snackbarHostState.showSnackbar(msg) }
-                                }
-                            },
-                            onDecryptExportClick = {
-                                viewModel.decryptAndExportFile(resolvedAccountId, file) { msg ->
-                                    coroutineScope.launch { snackbarHostState.showSnackbar(msg) }
+                if (errorMessage != null) {
+                    item {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                            shape = RoundedCornerShape(24.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = errorMessage ?: "",
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Button(
+                                    onClick = { viewModel.loadData(forceStorageRefresh = true) },
+                                    shape = CircleShape,
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                                ) {
+                                    Text(stringResource(R.string.action_retry), style = MaterialTheme.typography.labelLarge)
                                 }
                             }
+                        }
+                        Spacer(modifier = Modifier.height(20.dp))
+                    }
+                }
+
+                // Quick Actions Section
+                item {
+                    Text(
+                        text = stringResource(R.string.home_quick_actions_label),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    QuickActionsRow(
+                        onUploadClick = { filePickerLauncher.launch(arrayOf("*/*")) },
+                        onNewFolderClick = { showCreateFolderDialog = true },
+                        onSearchClick = {
+                            onSearchClick?.invoke() ?: navController.navigateSingleTopRestore("files")
+                        },
+                        onDrivesClick = { navController.navigateSingleTopRestore("accounts") }
+                    )
+                }
+
+                if (prefsState.showRecentFiles && recentFiles.isNotEmpty()) {
+                    item {
+                        Spacer(modifier = Modifier.height(24.dp))
+                        Text(
+                            text = stringResource(R.string.home_recent_files_label),
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onBackground
                         )
+                        Spacer(modifier = Modifier.height(10.dp))
+                    }
+
+                    items(recentFiles, key = { it.effectiveId.ifEmpty { it.effectiveName } }) { file ->
+                        val resolvedAccountId = file.accountId?.takeIf { it.isNotBlank() && it != "all" && it != "root" }
+                            ?: currentAccountId?.takeIf { it.isNotBlank() && it != "all" && it != "root" }
+                            ?: accounts.firstOrNull()?.effectiveId.orEmpty()
+                        Box(modifier = Modifier.padding(vertical = 4.dp)) {
+                            FileListItem(
+                                file = file,
+                                navController = rootNavController,
+                                accountId = resolvedAccountId,
+                                files = recentFiles,
+                                onEncryptClick = {
+                                    viewModel.createEncryptedCopy(resolvedAccountId, file) { msg ->
+                                        coroutineScope.launch { snackbarHostState.showSnackbar(msg) }
+                                    }
+                                },
+                                onDecryptExportClick = {
+                                    viewModel.decryptAndExportFile(resolvedAccountId, file) { msg ->
+                                        coroutineScope.launch { snackbarHostState.showSnackbar(msg) }
+                                    }
+                                }
+                            )
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun HeroCategoryCard(
+    label: String,
+    bytesText: String,
+    icon: ImageVector,
+    containerColor: Color,
+    contentColor: Color,
+    iconBadgeColor: Color,
+    badgeShape: androidx.compose.ui.graphics.Shape,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = RoundedCornerShape(28.dp),
+        color = containerColor,
+        modifier = modifier
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(badgeShape)
+                        .background(iconBadgeColor),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = contentColor,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = contentColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(modifier = Modifier.height(14.dp))
+            Text(
+                text = bytesText,
+                fontFamily = RobotoFlexFontFamily,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 22.sp,
+                lineHeight = 26.sp,
+                color = contentColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun CompactCategoryTile(
+    label: String,
+    bytesText: String,
+    icon: ImageVector,
+    badgeColor: Color,
+    iconTint: Color,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = RoundedCornerShape(22.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        modifier = modifier
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 14.dp),
+            horizontalAlignment = Alignment.Start
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(badgeColor),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = iconTint,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = bytesText,
+                fontFamily = RobotoFlexFontFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp,
+                lineHeight = 16.sp,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
@@ -779,15 +1042,15 @@ fun StorageOverviewCard(
     selectedAccountId: String = ALL_ACCOUNTS_STORAGE_ID,
     onSelectAccount: (String) -> Unit = {}
 ) {
+    val ext = MaterialTheme.cloudyteColors
     Surface(
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(36.dp),
         color = MaterialTheme.colorScheme.surfaceContainer,
-        shadowElevation = 6.dp,
         modifier = Modifier
             .fillMaxWidth()
             .testTag("home_storage_card")
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(20.dp)) {
             if (isLoading && summary == null) {
                 StorageCardSkeleton(hasMultipleAccounts = accounts.size > 1)
             } else {
@@ -798,28 +1061,154 @@ fun StorageOverviewCard(
                     totalBytes = null,
                     categories = StorageCategories()
                 )
+                val selectedAcc = accounts.firstOrNull { it.effectiveId == selectedAccountId }
+                    ?: accounts.firstOrNull { it.isDefault == true }
+                    ?: accounts.firstOrNull()
 
-                // Top Row: "Storage" on left, usage on right
-                val defaultAccount = accounts.firstOrNull { it.isDefault == true } ?: accounts.firstOrNull()
+                var accountsExpanded by remember { mutableStateOf(false) }
+
+                // Top Row: Avatar + Active Account Name + Expandable accounts pill
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "Storage",
-                        style = MaterialTheme.typography.titleLarge,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Column(horizontalAlignment = Alignment.End) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        val displayName = when {
+                            selectedAccountId == ALL_ACCOUNTS_STORAGE_ID && accounts.size > 1 -> "All drives"
+                            else -> selectedAcc?.effectiveName ?: "Cloudyte"
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(ext.avatarBg),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = displayName.take(1).uppercase(),
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = ext.lightAccent
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
                         Text(
-                            text = formatStorageUsageText(activeSummary),
-                            style = MetricLabelTextStyle,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            text = displayName,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    if (accounts.isNotEmpty()) {
+                        val pillLabel = if (accounts.size == 1) {
+                            stringResource(R.string.home_account_pill_single)
+                        } else {
+                            stringResource(R.string.home_accounts_pill_format, accounts.size)
+                        }
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            onClick = { if (accounts.size > 1) accountsExpanded = !accountsExpanded },
+                            modifier = Modifier.heightIn(min = 36.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = pillLabel,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                if (accounts.size > 1) {
+                                    Icon(
+                                        imageVector = if (accountsExpanded) {
+                                            Icons.Default.KeyboardArrowUp
+                                        } else {
+                                            Icons.Default.KeyboardArrowDown
+                                        },
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (accountsExpanded && accounts.size > 1) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    StorageAccountChipRow(
+                        accounts = accounts,
+                        selectedAccountId = selectedAccountId,
+                        onSelectAccount = onSelectAccount
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(18.dp))
+
+                // Middle Row: STORAGE USED + huge metric figure on left; 84dp Starburst Cloud badge on right
+                val formattedUsed = formatStorageSize(activeSummary.usedBytes)
+                val usedParts = formattedUsed.trim().split(" ")
+                val usedNumber = usedParts.firstOrNull() ?: "0"
+                val usedUnit = usedParts.drop(1).joinToString(" ")
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.home_storage_used_caps),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.2.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = buildAnnotatedString {
+                                withStyle(
+                                    SpanStyle(
+                                        fontFamily = RobotoFlexFontFamily,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontSize = 48.sp,
+                                        letterSpacing = (-1.5).sp,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                ) {
+                                    append(usedNumber)
+                                }
+                                if (usedUnit.isNotEmpty()) {
+                                    withStyle(
+                                        SpanStyle(
+                                            fontFamily = RobotoFlexFontFamily,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 22.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    ) {
+                                        append(" $usedUnit")
+                                    }
+                                }
+                            },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.testTag("storage_usage_text")
                         )
                         if (refreshError != null && summary == null) {
+                            Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = "Couldn't refresh",
                                 style = MaterialTheme.typography.labelSmall,
@@ -828,221 +1217,74 @@ fun StorageOverviewCard(
                             )
                         }
                     }
-                }
 
-                if (defaultAccount != null) {
-                    var accountsExpanded by remember { mutableStateOf(false) }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    // Tappable default account row — expands chip row (48dp min touch target)
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 48.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable { accountsExpanded = !accountsExpanded }
-                            .padding(horizontal = 4.dp, vertical = 4.dp)
+                    Spacer(modifier = Modifier.width(12.dp))
+
+                    ExpressiveStarburstBadge(
+                        size = 84.dp,
+                        containerColor = ext.brandStarburst
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(24.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primaryContainer),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = defaultAccount.effectiveName.take(1).uppercase(),
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = defaultAccount.effectiveName,
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
-                        if (accounts.size > 1) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Text(
-                                    text = "${accounts.size} accounts",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Icon(
-                                    imageVector = if (accountsExpanded) {
-                                        Icons.Default.KeyboardArrowUp
-                                    } else {
-                                        Icons.Default.KeyboardArrowDown
-                                    },
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    // Account Switcher Chip Row (shown on tap when user has multiple drives)
-                    if (accountsExpanded && accounts.size > 1) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        StorageAccountChipRow(
-                            accounts = accounts,
-                            selectedAccountId = selectedAccountId,
-                            onSelectAccount = onSelectAccount
+                        Icon(
+                            imageVector = Icons.Default.CloudDone,
+                            contentDescription = null,
+                            tint = ext.onBrandStarburst,
+                            modifier = Modifier.size(34.dp)
                         )
                     }
                 }
 
-                val effectiveCategories = activeSummary.categories ?: deriveCategoriesFromFiles(emptyList(), activeSummary.usedBytes)
-                val segments = remember(effectiveCategories, activeSummary.usedBytes) {
-                    calculateSegmentProportions(effectiveCategories, activeSummary.usedBytes)
+                Spacer(modifier = Modifier.height(18.dp))
+
+                // Bottom: Expressive Wavy Progress Bar + Availability Footer
+                val totalCap = activeSummary.totalBytes ?: 0L
+                val isFiniteQuota = totalCap > 0L
+                val targetProgress = if (isFiniteQuota) {
+                    (activeSummary.usedBytes.toFloat() / totalCap.toFloat()).coerceIn(0f, 1f)
+                } else {
+                    if (activeSummary.usedBytes > 0L) 0.35f else 0.08f
                 }
 
                 var appeared by remember { mutableStateOf(false) }
-                LaunchedEffect(Unit) {
-                    appeared = true
-                }
+                LaunchedEffect(Unit) { appeared = true }
+                val animatedProgress by animateFloatAsState(
+                    targetValue = if (appeared) targetProgress else 0f,
+                    animationSpec = tween(durationMillis = 650, easing = EmphasizedDecelerate),
+                    label = "wavy_storage_progress"
+                )
 
-                val animatedProportions = segments.map { segment ->
-                    val anim by animateFloatAsState(
-                        targetValue = if (appeared) segment.proportion else 0f,
-                        animationSpec = tween(durationMillis = 600, easing = EmphasizedDecelerate),
-                        label = "segment_${segment.category.name}"
+                WavyProgressBar(
+                    progress = animatedProgress,
+                    indicatorColor = ext.mintSuccess,
+                    trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+                    modifier = Modifier.testTag("storage_segmented_bar")
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (isFiniteQuota) {
+                            stringResource(R.string.home_of_available_format, formatStorageSize(totalCap))
+                        } else {
+                            stringResource(R.string.home_unlimited_storage)
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    anim
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Multi-segment horizontal storage bar
-                val trackColor = CategoryUnknown.copy(alpha = 0.28f)
-                Canvas(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(12.dp)
-                        .clip(CircleShape)
-                        .background(trackColor)
-                        .testTag("storage_segmented_bar")
-                ) {
-                    var currentX = 0f
-                    segments.forEachIndexed { index, segment ->
-                        val prop = animatedProportions[index].coerceIn(0f, 1f)
-                        val segWidth = (prop * size.width).coerceAtMost(size.width - currentX)
-                        if (segWidth > 0f) {
-                            drawRect(
-                                color = categoryColor(segment.category),
-                                topLeft = Offset(currentX, 0f),
-                                size = Size(segWidth, size.height)
-                            )
-                            currentX += segWidth
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                // 2 rows x 3 columns Category Legend Grid
-                val byCategory = remember(segments) { segments.associateBy { it.category } }
-                val row1Items = listOf(
-                    Triple("Images", CategoryImages, byCategory[StorageCategoryType.IMAGES]?.bytes ?: 0L),
-                    Triple("Documents", CategoryDocuments, byCategory[StorageCategoryType.DOCUMENTS]?.bytes ?: 0L),
-                    Triple("Media", CategoryMedia, byCategory[StorageCategoryType.VIDEOS]?.bytes ?: 0L)
-                )
-                val row2Items = listOf(
-                    Triple("Other", CategoryOther, byCategory[StorageCategoryType.OTHER]?.bytes ?: 0L),
-                    Triple("Zipped", CategoryZipped, byCategory[StorageCategoryType.ARCHIVES]?.bytes ?: 0L),
-                    Triple("Unknown", CategoryUnknown, byCategory[StorageCategoryType.AUDIO]?.bytes ?: 0L)
-                )
-
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                    modifier = Modifier.testTag("storage_category_legend")
-                ) {
-                    listOf(row1Items, row2Items).forEach { rowList ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            rowList.forEach { (label, pillColor, bytes) ->
-                                Row(
-                                    modifier = Modifier.weight(1f),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .width(6.dp)
-                                            .height(28.dp)
-                                            .clip(CircleShape)
-                                            .background(pillColor)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Column {
-                                        Text(
-                                            text = label,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            text = formatStorageSize(bytes),
-                                            style = MetricTextStyle,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if (accounts.isNotEmpty() || (activeSummary.fileCount != null && activeSummary.fileCount > 0)) {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(
-                                text = stringResource(R.string.home_total_files),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "${activeSummary.fileCount ?: accounts.sumOf { it.fileCount ?: 0 }}",
-                                style = MetricLargeTextStyle,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                        Column(horizontalAlignment = Alignment.End) {
-                            Text(
-                                text = stringResource(R.string.home_linked_drives),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "${accounts.size}",
-                                style = MetricLargeTextStyle,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                    }
+                    Text(
+                        text = if (isFiniteQuota) {
+                            "${(targetProgress * 100f).roundToInt()}%"
+                        } else {
+                            stringResource(R.string.home_unlimited_symbol)
+                        },
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = ext.mintSuccess
+                    )
                 }
             }
         }
@@ -1055,6 +1297,7 @@ private fun StorageAccountChipRow(
     selectedAccountId: String,
     onSelectAccount: (String) -> Unit
 ) {
+    val ext = MaterialTheme.cloudyteColors
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1066,7 +1309,8 @@ private fun StorageAccountChipRow(
         StorageAccountChip(
             label = "All accounts",
             avatarLetter = "A",
-            avatarColor = BrandPrimary,
+            avatarColor = MaterialTheme.colorScheme.primary,
+            avatarContentColor = MaterialTheme.colorScheme.onPrimary,
             selected = selectedAccountId == ALL_ACCOUNTS_STORAGE_ID,
             onClick = { onSelectAccount(ALL_ACCOUNTS_STORAGE_ID) },
             testTag = "storage_chip_all"
@@ -1075,14 +1319,20 @@ private fun StorageAccountChipRow(
             val accId = account.effectiveId
             val pColor = when {
                 account.effectiveType.contains("google", ignoreCase = true) ||
-                    account.effectiveType.contains("gdrive", ignoreCase = true) -> ProviderGoogle
-                account.effectiveType.contains("onedrive", ignoreCase = true) -> ProviderOneDrive
-                else -> ProviderTelegram
+                    account.effectiveType.contains("gdrive", ignoreCase = true) -> ext.providerGoogle
+                account.effectiveType.contains("onedrive", ignoreCase = true) -> ext.providerOneDrive
+                else -> ext.providerTelegram
+            }
+            val pTextColor = if (pColor.luminance() > 0.5f) {
+                MaterialTheme.colorScheme.surface
+            } else {
+                Color.White
             }
             StorageAccountChip(
                 label = account.effectiveName,
                 avatarLetter = account.effectiveName.take(1).uppercase(),
                 avatarColor = pColor,
+                avatarContentColor = pTextColor,
                 selected = selectedAccountId == accId,
                 onClick = { onSelectAccount(accId) },
                 testTag = "storage_chip_$accId"
@@ -1096,17 +1346,18 @@ private fun StorageAccountChip(
     label: String,
     avatarLetter: String,
     avatarColor: Color,
+    avatarContentColor: Color = Color.White,
     selected: Boolean,
     onClick: () -> Unit,
     testTag: String
 ) {
     val bgColor = if (selected) {
-        MaterialTheme.colorScheme.primaryContainer
+        MaterialTheme.colorScheme.primary
     } else {
-        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+        MaterialTheme.colorScheme.surfaceContainerHigh
     }
     val textColor = if (selected) {
-        MaterialTheme.colorScheme.onPrimaryContainer
+        MaterialTheme.colorScheme.onPrimary
     } else {
         MaterialTheme.colorScheme.onSurfaceVariant
     }
@@ -1121,19 +1372,19 @@ private fun StorageAccountChip(
             .testTag(testTag)
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .size(20.dp)
+                    .size(22.dp)
                     .background(avatarColor, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = avatarLetter,
-                    color = MaterialTheme.colorScheme.onPrimary,
+                    color = avatarContentColor,
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold
                 )
@@ -1141,7 +1392,7 @@ private fun StorageAccountChip(
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelMedium,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                 color = textColor,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -1172,36 +1423,30 @@ private fun StorageCardSkeleton(hasMultipleAccounts: Boolean) {
         ) {
             Box(
                 modifier = Modifier
-                    .width(76.dp)
-                    .height(20.dp)
-                    .clip(RoundedCornerShape(6.dp))
+                    .width(120.dp)
+                    .height(28.dp)
+                    .clip(CircleShape)
                     .background(placeholderColor)
             )
-            Box(
-                modifier = Modifier
-                    .width(136.dp)
-                    .height(14.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(placeholderColor)
-            )
-        }
-
-        if (hasMultipleAccounts) {
-            Spacer(modifier = Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                repeat(3) {
-                    Box(
-                        modifier = Modifier
-                            .width(88.dp)
-                            .height(28.dp)
-                            .clip(CircleShape)
-                            .background(placeholderColor)
-                    )
-                }
+            if (hasMultipleAccounts) {
+                Box(
+                    modifier = Modifier
+                        .width(96.dp)
+                        .height(28.dp)
+                        .clip(CircleShape)
+                        .background(placeholderColor)
+                )
             }
         }
-
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(20.dp))
+        Box(
+            modifier = Modifier
+                .width(160.dp)
+                .height(44.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(placeholderColor)
+        )
+        Spacer(modifier = Modifier.height(18.dp))
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1209,57 +1454,7 @@ private fun StorageCardSkeleton(hasMultipleAccounts: Boolean) {
                 .clip(CircleShape)
                 .background(placeholderColor)
         )
-        Spacer(modifier = Modifier.height(16.dp))
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            repeat(2) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    repeat(3) {
-                        Row(
-                            modifier = Modifier.weight(1f),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .width(6.dp)
-                                    .height(28.dp)
-                                    .clip(CircleShape)
-                                    .background(placeholderColor)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Box(
-                                    modifier = Modifier
-                                        .width(48.dp)
-                                        .height(10.dp)
-                                        .clip(RoundedCornerShape(4.dp))
-                                    .background(placeholderColor)
-                                )
-                                Box(
-                                    modifier = Modifier
-                                        .width(56.dp)
-                                        .height(12.dp)
-                                        .clip(RoundedCornerShape(4.dp))
-                                        .background(placeholderColor)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
     }
-}
-
-private fun categoryColor(category: StorageCategoryType): Color = when (category) {
-    StorageCategoryType.IMAGES -> CategoryImages
-    StorageCategoryType.DOCUMENTS -> CategoryDocuments
-    StorageCategoryType.VIDEOS -> CategoryMedia
-    StorageCategoryType.OTHER -> CategoryOther
-    StorageCategoryType.ARCHIVES -> CategoryZipped
-    StorageCategoryType.AUDIO -> CategoryUnknown
 }
 
 @Composable
@@ -1269,46 +1464,88 @@ fun QuickActionsRow(
     onSearchClick: () -> Unit,
     onDrivesClick: () -> Unit
 ) {
+    val ext = MaterialTheme.cloudyteColors
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        QuickActionButton(Icons.Default.Upload, stringResource(R.string.action_upload), onUploadClick)
-        QuickActionButton(Icons.Default.CreateNewFolder, stringResource(R.string.action_new_folder), onNewFolderClick)
-        QuickActionButton(Icons.Default.Search, stringResource(R.string.action_search), onSearchClick)
-        QuickActionButton(Icons.Default.Cloud, stringResource(R.string.action_drives), onDrivesClick)
+        QuickActionButton(
+            icon = Icons.Default.Upload,
+            label = stringResource(R.string.action_upload),
+            onClick = onUploadClick,
+            isPrimary = true,
+            modifier = Modifier.weight(1f)
+        )
+        QuickActionButton(
+            icon = Icons.Default.CreateNewFolder,
+            label = stringResource(R.string.home_new_folder_short),
+            onClick = onNewFolderClick,
+            accentTint = ext.accentBlue,
+            modifier = Modifier.weight(1f)
+        )
+        QuickActionButton(
+            icon = Icons.Default.Search,
+            label = stringResource(R.string.action_search),
+            onClick = onSearchClick,
+            accentTint = ext.accentBlue,
+            modifier = Modifier.weight(1f)
+        )
+        QuickActionButton(
+            icon = Icons.Default.Cloud,
+            label = stringResource(R.string.action_drives),
+            onClick = onDrivesClick,
+            accentTint = ext.accentBlue,
+            modifier = Modifier.weight(1f)
+        )
     }
 }
 
 @Composable
-fun QuickActionButton(icon: ImageVector, label: String, onClick: () -> Unit) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .clip(MaterialTheme.shapes.medium)
-            .clickable(onClick = onClick)
-            .padding(4.dp)
+fun QuickActionButton(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    isPrimary: Boolean = false,
+    accentTint: Color = MaterialTheme.colorScheme.primary,
+    modifier: Modifier = Modifier
+) {
+    val containerColor = if (isPrimary) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.surfaceContainer
+    }
+    val iconColor = if (isPrimary) MaterialTheme.colorScheme.onPrimary else accentTint
+    val textColor = if (isPrimary) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+
+    Surface(
+        shape = RoundedCornerShape(28.dp),
+        color = containerColor,
+        onClick = onClick,
+        modifier = modifier.height(84.dp)
     ) {
-        Surface(
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            modifier = Modifier.size(56.dp)
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 6.dp, vertical = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = label,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(24.dp)
-                )
-            }
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = iconColor,
+                modifier = Modifier.size(24.dp)
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = label,
+                color = textColor,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = label,
-            color = MaterialTheme.colorScheme.onBackground,
-            style = MaterialTheme.typography.labelMedium
-        )
     }
 }
 
@@ -1336,6 +1573,7 @@ fun FileListItem(
 
     val resolvedAcc = file.effectiveAccountId.ifBlank { accountId }
     val app = context.applicationContext as? com.cloudyte.app.CloudyteApplication
+    val ext = MaterialTheme.cloudyteColors
 
     if (showQuickInfo) {
         com.cloudyte.app.features.player.GDriveInfoBottomSheet(
@@ -1353,9 +1591,7 @@ fun FileListItem(
             sourceAccountId = resolvedAcc,
             isMove = showMoveCopy!!,
             onDismiss = { showMoveCopy = null },
-            onSuccess = {
-                showMoveCopy = null
-            }
+            onSuccess = { showMoveCopy = null }
         )
     }
 
@@ -1392,9 +1628,7 @@ fun FileListItem(
             isOfflinePinned = isOfflinePinned,
             offlineDownloadProgress = offlineProgress,
             onDismiss = { showActionSheet = false },
-            onOpen = {
-                openFileInViewer(file, resolvedAcc, navController, files)
-            },
+            onOpen = { openFileInViewer(file, resolvedAcc, navController, files) },
             onToggleOffline = {
                 coroutineScope.launch {
                     if (isOfflinePinned) {
@@ -1432,22 +1666,21 @@ fun FileListItem(
         )
     }
 
-    Card(
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+    Surface(
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
         modifier = Modifier
             .fillMaxWidth()
-            .clickable {
-                openFileInViewer(file, accountId, navController, files)
-            }
+            .clip(RoundedCornerShape(24.dp))
+            .clickable { openFileInViewer(file, accountId, navController, files) }
     ) {
         Row(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.padding(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (file.isFolderItem) {
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(16.dp),
                     color = MaterialTheme.colorScheme.primaryContainer,
                     modifier = Modifier.size(48.dp)
                 ) {
@@ -1455,7 +1688,7 @@ fun FileListItem(
                         Icon(
                             imageVector = Icons.Default.FolderOpen,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer
                         )
                     }
                 }
@@ -1464,22 +1697,20 @@ fun FileListItem(
                     file = file,
                     accountId = accountId,
                     sizeDp = 48.dp,
-                    cornerRadius = 12.dp
+                    cornerRadius = 16.dp
                 )
             }
-            Spacer(modifier = Modifier.width(16.dp))
+            Spacer(modifier = Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = file.effectiveName,
                     color = MaterialTheme.colorScheme.onSurface,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontSize = 13.5.sp,
-                    lineHeight = 17.sp,
-                    fontWeight = FontWeight.Normal,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Spacer(modifier = Modifier.height(2.dp))
+                Spacer(modifier = Modifier.height(3.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -1493,27 +1724,27 @@ fun FileListItem(
                         )
                     } else if (isOfflinePinned) {
                         Icon(
-                            imageVector = androidx.compose.material.icons.Icons.Default.DownloadDone,
+                            imageVector = Icons.Default.DownloadDone,
                             contentDescription = "Available offline",
-                            tint = MaterialTheme.colorScheme.primary,
+                            tint = ext.mintSuccess,
                             modifier = Modifier.size(13.dp)
                         )
                     }
                     Text(
                         text = if (file.isFolderItem) stringResource(R.string.files_type_folder) else file.formattedSize,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, lineHeight = 14.sp)
+                        style = MaterialTheme.typography.bodySmall
                     )
                     if (!file.isFolderItem) {
                         Text(
                             text = "• ${file.effectiveType.uppercase()}",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, lineHeight = 14.sp)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                            style = MaterialTheme.typography.bodySmall
                         )
                     }
                     if (file.isEncrypted) {
                         Surface(
-                            shape = RoundedCornerShape(6.dp),
+                            shape = RoundedCornerShape(8.dp),
                             color = MaterialTheme.colorScheme.primaryContainer
                         ) {
                             Row(
@@ -1531,7 +1762,7 @@ fun FileListItem(
                                     text = "E2EE",
                                     style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
                                     color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    fontWeight = FontWeight.SemiBold
+                                    fontWeight = FontWeight.Bold
                                 )
                             }
                         }

@@ -2,88 +2,128 @@ package com.cloudyte.app.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Brand Constant (can be swapped)
-val BrandPrimary = Color(0xFF4F5BF5)
+// Brand & Expressive Palette Constants
+val BrandPrimary = Color(0xFF2F6FEB)
+val BrandPrimaryAccent = Color(0xFF4C8DFF)
+val BrandPrimaryLight = Color(0xFF6FA2FF)
+val AmbientBlueDark = Color(0xFF0B1230)
 
-// DARK Palette Tokens (Tailwind slate and blue)
-val DarkBackground = Color(0xFF020617)
-val DarkSurface = Color(0xFF020617)
-val DarkOnBackground = Color(0xFFF1F5F9)
-val DarkOnSurface = Color(0xFFF1F5F9)
-val DarkSurfaceContainerLowest = Color(0xFF020617)
-val DarkSurfaceContainerLow = Color(0xFF0B1120)
-val DarkSurfaceContainer = Color(0xFF0F172A)
-val DarkSurfaceContainerHigh = Color(0xFF1E293B)
-val DarkSurfaceContainerHighest = Color(0xFF1E293B)
-val DarkSurfaceVariant = Color(0xFF1E293B)
-val DarkOnSurfaceVariant = Color(0xFF94A3B8)
-val DarkOutline = Color(0xFF475569)
-val DarkOutlineVariant = Color(0xFF1E293B)
-val DarkPrimary = Color(0xFF3B82F6) // blue-500
+// DARK Palette Tokens (Deep Midnight Navy Expressive)
+val DarkBackground = Color(0xFF060918)
+val DarkSurface = Color(0xFF060918)
+val DarkOnBackground = Color(0xFFF4F6FC)
+val DarkOnSurface = Color(0xFFF4F6FC)
+val DarkSurfaceContainerLowest = Color(0xFF060918)
+val DarkSurfaceContainerLow = Color(0xFF0D1528)
+val DarkSurfaceContainer = Color(0xFF121B2E)
+val DarkSurfaceContainerHigh = Color(0xFF1B2538)
+val DarkSurfaceContainerHighest = Color(0xFF222E46)
+val DarkSurfaceVariant = Color(0xFF222E46)
+val DarkOnSurfaceVariant = Color(0xFF9AA4BC)
+val DarkOutline = Color(0xFF3A4560)
+val DarkOutlineVariant = Color(0xFF1E2940)
+val DarkPrimary = BrandPrimary
 val DarkOnPrimary = Color(0xFFFFFFFF)
-val DarkPrimaryContainer = Color(0xFF172554) // blue-950 tint
-val DarkOnPrimaryContainer = Color(0xFFBFDBFE)
-val DarkSecondary = Color(0xFF94A3B8)
-val DarkSecondaryContainer = Color(0xFF1E293B)
-val DarkOnSecondaryContainer = Color(0xFFF1F5F9)
-val DarkError = Color(0xFFF87171)
-val DarkErrorContainer = Color(0xFF450A0A)
+val DarkPrimaryContainer = Color(0xFF18275A)
+val DarkOnPrimaryContainer = BrandPrimaryLight
+val DarkSecondary = Color(0xFF6FA2FF)
+val DarkSecondaryContainer = Color(0xFF1B2A5E)
+val DarkOnSecondaryContainer = Color(0xFFFFFFFF)
+val DarkError = Color(0xFFEF4B4B)
+val DarkErrorContainer = Color(0xFF3A1B26)
+val DarkErrorDeepBox = Color(0xFF2A1520)
 val DarkOnError = Color(0xFFFFFFFF)
-val DarkOnErrorContainer = Color(0xFFFECACA)
-val DarkInverseSurface = Color(0xFFF1F5F9)
-val DarkInverseOnSurface = Color(0xFF0F172A)
+val DarkOnErrorContainer = Color(0xFFFF9A9A)
+val DarkInverseSurface = Color(0xFFF4F6FC)
+val DarkInverseOnSurface = Color(0xFF060918)
 
-// LIGHT Palette Tokens (Header + rounded sheet style)
-val LightBackground = Color(0xFFF3F4FB)
-val LightSurface = Color(0xFFF3F4FB)
+// LIGHT Palette Tokens (Harmonized Expressive Light)
+val LightBackground = Color(0xFFF3F6FC)
+val LightSurface = Color(0xFFF3F6FC)
 val LightSurfaceContainerLowest = Color(0xFFFFFFFF)
-val LightSurfaceContainerLow = Color(0xFFF8F9FE)
-val LightSurfaceContainer = Color(0xFFFFFFFF) // sheet & cards #FFFFFF
-val LightSurfaceContainerHigh = Color(0xFFEDEFFF)
-val LightSurfaceContainerHighest = Color(0xFFE6E8F4)
-val LightSurfaceVariant = Color(0xFFE8EAFE)
-val LightOnSurface = Color(0xFF14186B) // deep navy
-val LightOnSurfaceVariant = Color(0xFF5F658B) // accessible secondary text (>= 4.5:1 on white)
-val LightOutline = Color(0xFF7B81A8)
-val LightOutlineVariant = Color(0xFFE6E8F4)
-val LightPrimary = BrandPrimary // #4F5BF5
+val LightSurfaceContainerLow = Color(0xFFEDF1FB)
+val LightSurfaceContainer = Color(0xFFFFFFFF)
+val LightSurfaceContainerHigh = Color(0xFFE6ECFA)
+val LightSurfaceContainerHighest = Color(0xFFDCE4F7)
+val LightSurfaceVariant = Color(0xFFE6ECFA)
+val LightOnSurface = Color(0xFF0D142C)
+val LightOnSurfaceVariant = Color(0xFF56607B)
+val LightOutline = Color(0xFF8894B2)
+val LightOutlineVariant = Color(0xFFDCE4F5)
+val LightPrimary = BrandPrimary
 val LightOnPrimary = Color(0xFFFFFFFF)
-val LightPrimaryContainer = Color(0xFFE8EAFE)
-val LightOnPrimaryContainer = Color(0xFF2B33B5)
-val LightSecondary = Color(0xFF5F658B)
-val LightSecondaryContainer = Color(0xFFE8EAFE)
-val LightOnSecondaryContainer = Color(0xFF14186B)
-val LightError = Color(0xFFE5484D)
-val LightErrorContainer = Color(0xFFFFEBEE)
+val LightPrimaryContainer = Color(0xFFDBE7FF)
+val LightOnPrimaryContainer = Color(0xFF12368A)
+val LightSecondary = Color(0xFF4C8DFF)
+val LightSecondaryContainer = Color(0xFFE0EAFF)
+val LightOnSecondaryContainer = Color(0xFF0F265C)
+val LightError = Color(0xFFDC2626)
+val LightErrorContainer = Color(0xFFFEE2E2)
+val LightErrorDeepBox = Color(0xFFFFF1F2)
 val LightOnError = Color(0xFFFFFFFF)
-val LightOnErrorContainer = Color(0xFFB71C1C)
+val LightOnErrorContainer = Color(0xFF991B1B)
 
-// File-type & Storage Category colors
-val FileVideo = Color(0xFFF0584F) // video/media red
-val FilePdf = Color(0xFFF0584F) // pdf red
-val FileDoc = Color(0xFFF5B63F) // documents amber
-val FileZip = Color(0xFFA45BD9) // zip purple
-val FileCode = Color(0xFF5BC98A) // other / code green
-val FileAudio = Color(0xFF5BC98A) // audio green
-val FileImage = Color(0xFF4F5BF5) // images blue
-val FileUnknown = Color(0xFFBFC3DC) // unknown gray
+// Expressive Category & File-Type Semantic Colors
+val MintSuccess = Color(0xFF52C592)
+val OnMintSuccess = Color(0xFF05261A)
+val MintContainerDark = Color(0xFF123A2B)
+val MintContainerLight = Color(0xFFD5F5E6)
 
-val CategoryImages = Color(0xFF3B66F5)
-val CategoryDocuments = Color(0xFFF6B93B)
-val CategoryMedia = Color(0xFFEB5757)
-val CategoryOther = Color(0xFF56C596)
-val CategoryZipped = Color(0xFF9B51E0)
-val CategoryUnknown = Color(0xFFB0B7D1)
+val CategoryImages = Color(0xFF4361EE)
+val OnCategoryImages = Color(0xFFFFFFFF)
+val CategoryDocuments = Color(0xFFF5B72E)
+val OnCategoryDocuments = Color(0xFF2B1E00)
+val CategoryMedia = Color(0xFFEF4B4B)
+val OnCategoryMedia = Color(0xFFFFFFFF)
+val CategoryOther = MintSuccess
+val CategoryZipped = Color(0xFF9B5CE8)
+val OnCategoryZipped = Color(0xFFFFFFFF)
+val CategoryUnknown = Color(0xFFA7AFC8)
+val OnCategoryUnknown = Color(0xFF141A2B)
+
+val DocsContainerDark = Color(0xFF382A0E)
+val DocsContainerLight = Color(0xFFFEF3C7)
+val MediaContainerDark = Color(0xFF3A1B26)
+val MediaContainerLight = Color(0xFFFEE2E2)
+val ZippedContainerDark = Color(0xFF2D1B46)
+val ZippedContainerLight = Color(0xFFF3E8FF)
+val UnknownContainerDark = Color(0xFF1B2640)
+val UnknownContainerLight = Color(0xFFE2E8F0)
+
+val FileVideo = CategoryMedia
+val FilePdf = CategoryMedia
+val FileDoc = CategoryDocuments
+val FileZip = CategoryZipped
+val FileCode = MintSuccess
+val FileAudio = MintSuccess
+val FileImage = CategoryImages
+val FileUnknown = CategoryUnknown
 
 // Cloud Storage Provider Colors
 val ProviderGoogle = Color(0xFF4285F4)
-val ProviderOneDrive = Color(0xFF0078D4)
+val ProviderGoogleBgDark = Color(0xFF162F5E)
+val ProviderGoogleBgLight = Color(0xFFDBEAFE)
+
+val ProviderOneDrive = Color(0xFF3B9BFF)
+val ProviderOneDriveBgDark = Color(0xFF0A2F57)
+val ProviderOneDriveBgLight = Color(0xFFE0F2FE)
+
 val ProviderTelegram = Color(0xFF2AABEE)
+val ProviderTelegramBgDark = Color(0xFF0F3A52)
+val ProviderTelegramBgLight = Color(0xFFDCF2FC)
+
+// Supporting Chrome & Typography Tokens
+val AvatarCircleDark = Color(0xFF1B2A5E)
+val AvatarCircleLight = Color(0xFFDBE6FF)
+val NavInactiveDark = Color(0xFFA9B3CA)
+val NavInactiveLight = Color(0xFF56607B)
+val TertiaryLabelDark = Color(0xFFC9D1E6)
+val TertiaryLabelLight = Color(0xFF38425E)
 
 // Status Colors
-val StatusSuccess = Color(0xFF5BC98A)
-val StatusWarning = Color(0xFFF5B63F)
-val StatusError = Color(0xFFE5484D)
+val StatusSuccess = MintSuccess
+val StatusWarning = CategoryDocuments
+val StatusError = CategoryMedia
 
 // Backwards-compatibility aliases
 val AccentBlue = DarkPrimary

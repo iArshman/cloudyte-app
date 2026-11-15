@@ -56,42 +56,60 @@ import kotlin.math.roundToInt
 fun SectionRow(
     section: SettingsSectionType,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    index: Int = 0
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = 76.dp)
+            .heightIn(min = 64.dp)
             .clickable(onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = 18.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(
-            imageVector = section.icon,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(24.dp)
-        )
-        Spacer(modifier = Modifier.width(20.dp))
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = section.icon,
+                contentDescription = null,
+                tint = com.cloudyte.app.ui.theme.LocalCloudyteColors.current.lightAccent,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        Spacer(modifier = Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = stringResource(section.titleRes),
                 style = MaterialTheme.typography.titleMedium.copy(
-                    fontSize = 19.sp,
-                    lineHeight = 24.sp,
-                    fontWeight = FontWeight.Normal
+                    fontSize = 15.sp,
+                    lineHeight = 20.sp,
+                    fontWeight = FontWeight.SemiBold
                 ),
                 color = MaterialTheme.colorScheme.onSurface
             )
-            Spacer(modifier = Modifier.height(3.dp))
+            Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = stringResource(section.subtitleRes),
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp
+                ),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
         }
+        Spacer(modifier = Modifier.width(8.dp))
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(20.dp)
+        )
     }
 }
 
@@ -108,14 +126,14 @@ fun SettingsSwitchRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = 68.dp)
+            .heightIn(min = 60.dp)
             .toggleable(
                 value = checked,
                 enabled = enabled,
                 role = Role.Switch,
                 onValueChange = onChange
             )
-            .padding(horizontal = 20.dp, vertical = 16.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (icon != null) {
@@ -123,24 +141,24 @@ fun SettingsSwitchRow(
                 imageVector = icon,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(24.dp)
+                modifier = Modifier.size(22.dp)
             )
-            Spacer(modifier = Modifier.width(20.dp))
+            Spacer(modifier = Modifier.width(16.dp))
         }
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleMedium.copy(
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Normal
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium
                 ),
                 color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
             )
             if (!subtitle.isNullOrBlank()) {
-                Spacer(modifier = Modifier.height(3.dp))
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 16.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -171,9 +189,9 @@ fun SettingsClickRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = 68.dp)
+            .heightIn(min = 60.dp)
             .clickable(onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = 16.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (icon != null) {
@@ -181,24 +199,24 @@ fun SettingsClickRow(
                 imageVector = icon,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(24.dp)
+                modifier = Modifier.size(22.dp)
             )
-            Spacer(modifier = Modifier.width(20.dp))
+            Spacer(modifier = Modifier.width(16.dp))
         }
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleMedium.copy(
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Normal
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium
                 ),
                 color = titleColor
             )
             if (!subtitle.isNullOrBlank()) {
-                Spacer(modifier = Modifier.height(3.dp))
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 16.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }

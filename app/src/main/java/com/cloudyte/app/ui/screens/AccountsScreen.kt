@@ -2,8 +2,8 @@ package com.cloudyte.app.ui.screens
 
 import android.app.Application
 import android.util.Log
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -14,8 +14,10 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,18 +27,20 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.CloudQueue
@@ -46,24 +50,18 @@ import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
-import androidx.compose.material3.FloatingActionButtonMenu
-import androidx.compose.material3.FloatingActionButtonMenuItem
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -72,13 +70,9 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.ToggleFloatingActionButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -87,15 +81,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -108,19 +104,13 @@ import com.cloudyte.app.db.AppDatabase
 import com.cloudyte.app.db.LocalAccount
 import com.cloudyte.app.ui.components.AppLoadingIndicator
 import com.cloudyte.app.ui.components.LocalBottomBarInset
-import com.cloudyte.app.ui.theme.MetricLabelTextStyle
-import com.cloudyte.app.ui.theme.MetricTextStyle
-import com.cloudyte.app.ui.theme.ProviderGoogle
-import com.cloudyte.app.ui.theme.ProviderOneDrive
-import com.cloudyte.app.ui.theme.ProviderTelegram
+import com.cloudyte.app.ui.components.WavyProgressBar
+import com.cloudyte.app.ui.theme.cloudyteColors
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.Locale
-
-// EmphasizedDecelerate standard easing
-private val EmphasizedDecelerate = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1.0f)
 
 class AccountsViewModel(application: Application) : AndroidViewModel(application) {
     private val db = AppDatabase.getDatabase(application)
@@ -191,11 +181,12 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
     fun setDefaultAccount(id: String, onComplete: () -> Unit) {
         viewModelScope.launch {
             try {
-                ApiClient.apiService.updateSettings(UserSettingsRequest(backupEnabled = false, backupAccId = null, isDefaultAccId = id))
+                ApiClient.apiService.updateSettings(
+                    UserSettingsRequest(backupEnabled = false, backupAccId = null, isDefaultAccId = id)
+                )
             } catch (e: Exception) {
                 Log.e("AccountsViewModel", "Set default account error", e)
             }
-            // Update local memory & cache
             _accounts.value = _accounts.value.map {
                 it.copy(isDefault = (it.effectiveId == id))
             }
@@ -222,7 +213,7 @@ private sealed interface AccountsScreenUiState {
     data class Success(val accounts: List<Account>) : AccountsScreenUiState
 }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AccountsScreen(
     navController: NavController,
@@ -230,7 +221,7 @@ fun AccountsScreen(
     viewModel: AccountsViewModel = viewModel(),
     onBack: (() -> Unit)? = null
 ) {
-    androidx.activity.compose.BackHandler(enabled = onBack != null) {
+    BackHandler(enabled = onBack != null) {
         onBack?.invoke()
     }
     val accounts by viewModel.accounts.collectAsState()
@@ -240,25 +231,19 @@ fun AccountsScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
+    val ext = MaterialTheme.cloudyteColors
 
     var showAddDialog by remember { mutableStateOf(false) }
     var selectedAddProvider by remember { mutableStateOf(CloudProviderType.GOOGLE_DRIVE) }
-    var fabMenuExpanded by remember { mutableStateOf(false) }
+    var showChooserInAddDialog by remember { mutableStateOf(true) }
+    var activeProviderFilter by remember { mutableStateOf<CloudProviderType?>(null) }
 
     var accountForDisconnect by remember { mutableStateOf<Account?>(null) }
     var accountForRename by remember { mutableStateOf<Account?>(null) }
     var renameInput by remember { mutableStateOf("") }
 
     val listState = rememberLazyListState()
-    val canScrollBackward by remember { derivedStateOf { listState.canScrollBackward } }
 
-    val topBarContainerColor = if (canScrollBackward) {
-        MaterialTheme.colorScheme.surfaceContainer
-    } else {
-        MaterialTheme.colorScheme.surface
-    }
-
-    // UI state determination
     val uiState: AccountsScreenUiState = when {
         isLoading && accounts.isEmpty() -> AccountsScreenUiState.Loading
         errorMessage != null && accounts.isEmpty() -> AccountsScreenUiState.Error(errorMessage ?: "Connection failed")
@@ -266,10 +251,20 @@ fun AccountsScreen(
         else -> AccountsScreenUiState.Success(accounts)
     }
 
-    // Add Drive Dialog
+    val totalUsedBytes = remember(accounts) { accounts.sumOf { it.usageBytes.coerceAtLeast(0L) } }
+    val totalQuotaBytes = remember(accounts) {
+        accounts.filter { !isTelegramAccount(it) && it.totalBytes > 0L }.sumOf { it.totalBytes }
+    }
+    val subtitleText = if (totalQuotaBytes > 0L) {
+        "${accounts.size} linked · ${formatBytes(totalUsedBytes)} of ${formatBytes(totalQuotaBytes)} used"
+    } else {
+        stringResource(R.string.drives_subtitle_format, accounts.size, formatBytes(totalUsedBytes))
+    }
+
     if (showAddDialog) {
         AddAccountDialog(
             initialProvider = selectedAddProvider,
+            showChooserFirst = showChooserInAddDialog,
             onDismiss = { showAddDialog = false },
             onSuccess = {
                 showAddDialog = false
@@ -281,17 +276,16 @@ fun AccountsScreen(
         )
     }
 
-    // Disconnect Confirmation Dialog
     if (accountForDisconnect != null) {
         val target = accountForDisconnect
         val providerName = when {
             target?.effectiveType?.contains("google", ignoreCase = true) == true -> "Google Drive"
             target?.effectiveType?.contains("one", ignoreCase = true) == true -> "OneDrive"
-            else -> "Telegram"
+            else -> "Telegram Cloud"
         }
         AlertDialog(
             onDismissRequest = { accountForDisconnect = null },
-            shape = MaterialTheme.shapes.extraLarge,
+            shape = RoundedCornerShape(32.dp),
             containerColor = MaterialTheme.colorScheme.surfaceContainer,
             title = {
                 Text(
@@ -319,24 +313,24 @@ fun AccountsScreen(
                             }
                         }
                     },
+                    shape = CircleShape,
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                 ) {
-                    Text("Disconnect", color = MaterialTheme.colorScheme.onError)
+                    Text("Disconnect", color = MaterialTheme.colorScheme.onError, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { accountForDisconnect = null }) {
-                    Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.action_cancel), color = ext.lightAccent)
                 }
             }
         )
     }
 
-    // Rename Dialog
     if (accountForRename != null) {
         AlertDialog(
             onDismissRequest = { accountForRename = null },
-            shape = MaterialTheme.shapes.extraLarge,
+            shape = RoundedCornerShape(32.dp),
             containerColor = MaterialTheme.colorScheme.surfaceContainer,
             title = {
                 Text(
@@ -352,12 +346,12 @@ fun AccountsScreen(
                     onValueChange = { renameInput = it },
                     label = { Text("Drive Name") },
                     singleLine = true,
-                    shape = MaterialTheme.shapes.medium,
+                    shape = RoundedCornerShape(20.dp),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = MaterialTheme.colorScheme.onSurface,
                         unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                        focusedBorderColor = ext.accentBlue,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
                     ),
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -375,14 +369,15 @@ fun AccountsScreen(
                         }
                         accountForRename = null
                     },
+                    shape = CircleShape,
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                 ) {
-                    Text("Save", color = MaterialTheme.colorScheme.onPrimary)
+                    Text(stringResource(R.string.action_save), color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { accountForRename = null }) {
-                    Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.action_cancel), color = ext.lightAccent)
                 }
             }
         )
@@ -397,96 +392,88 @@ fun AccountsScreen(
             )
         },
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = "Storage Accounts",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                },
-                navigationIcon = {
-                    if (onBack != null) {
-                        IconButton(onClick = onBack) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                horizontalArrangement = if (onBack != null) Arrangement.SpaceBetween else Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (onBack != null) {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainer,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .clickable(onClick = onBack)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                                 contentDescription = stringResource(R.string.action_back),
-                                tint = MaterialTheme.colorScheme.onSurface
+                                tint = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(22.dp)
                             )
                         }
                     }
-                },
-                actions = {
-                    IconButton(onClick = { viewModel.loadAccounts() }) {
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .clickable { viewModel.loadAccounts() }
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
                         if (isRefreshing) {
-                            AppLoadingIndicator(size = 20.dp, color = MaterialTheme.colorScheme.primary)
+                            AppLoadingIndicator(size = 20.dp, color = ext.lightAccent)
                         } else {
                             Icon(
                                 imageVector = Icons.Default.Refresh,
-                                contentDescription = "Refresh accounts",
-                                tint = MaterialTheme.colorScheme.onSurface
+                                contentDescription = stringResource(R.string.action_refresh),
+                                tint = ext.lightAccent,
+                                modifier = Modifier.size(22.dp)
                             )
                         }
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = topBarContainerColor,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                    actionIconContentColor = MaterialTheme.colorScheme.onSurface
-                )
-            )
+                }
+            }
         },
         floatingActionButton = {
-            FloatingActionButtonMenu(
-                expanded = fabMenuExpanded,
-                modifier = Modifier.padding(bottom = LocalBottomBarInset.current),
-                button = {
-                    ToggleFloatingActionButton(
-                        checked = fabMenuExpanded,
-                        onCheckedChange = { fabMenuExpanded = it },
-                        modifier = Modifier.testTag("accounts_add_fab")
-                    ) {
-                        val rotation by animateFloatAsState(
-                            targetValue = if (fabMenuExpanded) 45f else 0f,
-                            label = "FabRotation"
-                        )
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = if (fabMenuExpanded) "Close add drive menu" else "Add drive",
-                            modifier = Modifier.rotate(rotation)
-                        )
-                    }
+            ExtendedFloatingActionButton(
+                onClick = {
+                    showChooserInAddDialog = true
+                    showAddDialog = true
+                },
+                shape = RoundedCornerShape(24.dp),
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+                elevation = FloatingActionButtonDefaults.elevation(
+                    defaultElevation = 4.dp,
+                    pressedElevation = 6.dp
+                ),
+                modifier = Modifier
+                    .padding(bottom = LocalBottomBarInset.current)
+                    .height(64.dp)
+                    .testTag("accounts_add_fab"),
+                icon = {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = null,
+                        modifier = Modifier.size(26.dp)
+                    )
+                },
+                text = {
+                    Text(
+                        text = stringResource(R.string.drives_add_fab),
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
-            ) {
-                FloatingActionButtonMenuItem(
-                    onClick = {
-                        fabMenuExpanded = false
-                        selectedAddProvider = CloudProviderType.TELEGRAM
-                        showAddDialog = true
-                    },
-                    text = { Text("Telegram Cloud") },
-                    icon = { Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, tint = ProviderTelegram) }
-                )
-                FloatingActionButtonMenuItem(
-                    onClick = {
-                        fabMenuExpanded = false
-                        selectedAddProvider = CloudProviderType.GOOGLE_DRIVE
-                        showAddDialog = true
-                    },
-                    text = { Text("Google Drive") },
-                    icon = { Icon(Icons.Default.Cloud, contentDescription = null, tint = ProviderGoogle) }
-                )
-                FloatingActionButtonMenuItem(
-                    onClick = {
-                        fabMenuExpanded = false
-                        selectedAddProvider = CloudProviderType.ONEDRIVE
-                        showAddDialog = true
-                    },
-                    text = { Text("OneDrive") },
-                    icon = { Icon(Icons.Default.CloudQueue, contentDescription = null, tint = ProviderOneDrive) }
-                )
-            }
+            )
         }
     ) { innerPadding ->
         PullToRefreshBox(
@@ -499,7 +486,7 @@ fun AccountsScreen(
             AnimatedContent(
                 targetState = uiState,
                 transitionSpec = {
-                    fadeIn(animationSpec = tween(300)) togetherWith fadeOut(animationSpec = tween(200))
+                    fadeIn(animationSpec = tween(250)) togetherWith fadeOut(animationSpec = tween(180))
                 },
                 label = "AccountsScreenUiStateTransition",
                 modifier = Modifier.fillMaxSize()
@@ -517,56 +504,175 @@ fun AccountsScreen(
                     is AccountsScreenUiState.Empty -> {
                         AccountsEmptyState(
                             onAddAccount = {
-                                selectedAddProvider = CloudProviderType.TELEGRAM
+                                showChooserInAddDialog = true
                                 showAddDialog = true
                             }
                         )
                     }
                     is AccountsScreenUiState.Success -> {
+                        val visibleAccounts = remember(state.accounts, activeProviderFilter) {
+                            when (activeProviderFilter) {
+                                null -> state.accounts
+                                CloudProviderType.TELEGRAM -> state.accounts.filter { isTelegramAccount(it) }
+                                CloudProviderType.GOOGLE_DRIVE -> state.accounts.filter {
+                                    it.effectiveType.contains("google", ignoreCase = true)
+                                }
+                                CloudProviderType.ONEDRIVE -> state.accounts.filter {
+                                    it.effectiveType.contains("one", ignoreCase = true)
+                                }
+                            }
+                        }
+
                         LazyColumn(
                             state = listState,
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(horizontal = 16.dp),
                             contentPadding = PaddingValues(
-                                top = 12.dp,
-                                bottom = LocalBottomBarInset.current + 88.dp
+                                top = 4.dp,
+                                bottom = LocalBottomBarInset.current + 104.dp
                             ),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            items(
-                                items = state.accounts,
-                                key = { it.effectiveId }
-                            ) { account ->
-                                AccountCard(
-                                    account = account,
-                                    onRename = {
-                                        renameInput = account.effectiveName
-                                        accountForRename = account
-                                    },
-                                    onSetDefault = {
-                                        viewModel.setDefaultAccount(account.effectiveId) {
-                                            coroutineScope.launch {
-                                                snackbarHostState.showSnackbar("${account.effectiveName} set as default drive")
+                            item(key = "drives_header") {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 4.dp)
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.drives_title),
+                                        fontSize = 44.sp,
+                                        lineHeight = 46.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        letterSpacing = (-0.03).em,
+                                        color = MaterialTheme.colorScheme.onBackground
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = subtitleText,
+                                        fontSize = 15.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(16.dp))
+                            }
+
+                            item(key = "provider_summary_chips") {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState())
+                                        .padding(bottom = 14.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    ProviderSummaryChip(
+                                        label = stringResource(R.string.provider_telegram_title),
+                                        dotColor = ext.providerTelegram,
+                                        selected = activeProviderFilter == CloudProviderType.TELEGRAM,
+                                        onClick = {
+                                            activeProviderFilter =
+                                                if (activeProviderFilter == CloudProviderType.TELEGRAM) null
+                                                else CloudProviderType.TELEGRAM
+                                        }
+                                    )
+                                    ProviderSummaryChip(
+                                        label = stringResource(R.string.provider_google_title),
+                                        dotColor = ext.providerGoogle,
+                                        selected = activeProviderFilter == CloudProviderType.GOOGLE_DRIVE,
+                                        onClick = {
+                                            activeProviderFilter =
+                                                if (activeProviderFilter == CloudProviderType.GOOGLE_DRIVE) null
+                                                else CloudProviderType.GOOGLE_DRIVE
+                                        }
+                                    )
+                                    ProviderSummaryChip(
+                                        label = stringResource(R.string.provider_onedrive_title),
+                                        dotColor = ext.providerOneDrive,
+                                        selected = activeProviderFilter == CloudProviderType.ONEDRIVE,
+                                        onClick = {
+                                            activeProviderFilter =
+                                                if (activeProviderFilter == CloudProviderType.ONEDRIVE) null
+                                                else CloudProviderType.ONEDRIVE
+                                        }
+                                    )
+                                }
+                            }
+
+                            if (visibleAccounts.isEmpty()) {
+                                item(key = "filtered_empty") {
+                                    Surface(
+                                        shape = RoundedCornerShape(28.dp),
+                                        color = MaterialTheme.colorScheme.surfaceContainer,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(24.dp),
+                                            horizontalAlignment = Alignment.CenterHorizontally
+                                        ) {
+                                            Text(
+                                                text = "No ${activeProviderFilter?.displayName ?: "matching"} drives linked",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                            TextButton(onClick = { activeProviderFilter = null }) {
+                                                Text("Show all drives", color = ext.lightAccent, fontWeight = FontWeight.SemiBold)
                                             }
                                         }
-                                    },
-                                    onRefresh = {
-                                        viewModel.loadAccounts()
-                                    },
-                                    onDisconnect = {
-                                        accountForDisconnect = account
-                                    },
-                                    onReconnect = {
-                                        selectedAddProvider = when {
-                                            account.effectiveType.contains("google", true) -> CloudProviderType.GOOGLE_DRIVE
-                                            account.effectiveType.contains("one", true) -> CloudProviderType.ONEDRIVE
-                                            else -> CloudProviderType.TELEGRAM
-                                        }
-                                        showAddDialog = true
-                                    },
-                                    modifier = Modifier.animateItem()
-                                )
+                                    }
+                                }
+                            } else {
+                                itemsIndexed(
+                                    items = visibleAccounts,
+                                    key = { _, acc -> acc.effectiveId }
+                                ) { index, account ->
+                                    val count = visibleAccounts.size
+                                    val cardShape = when {
+                                        count == 1 -> RoundedCornerShape(28.dp)
+                                        index == 0 -> RoundedCornerShape(
+                                            topStart = 28.dp, topEnd = 28.dp,
+                                            bottomStart = 8.dp, bottomEnd = 8.dp
+                                        )
+                                        index == count - 1 -> RoundedCornerShape(
+                                            topStart = 8.dp, topEnd = 8.dp,
+                                            bottomStart = 28.dp, bottomEnd = 28.dp
+                                        )
+                                        else -> RoundedCornerShape(8.dp)
+                                    }
+                                    AccountCard(
+                                        account = account,
+                                        shape = cardShape,
+                                        onRename = {
+                                            renameInput = account.effectiveName
+                                            accountForRename = account
+                                        },
+                                        onSetDefault = {
+                                            viewModel.setDefaultAccount(account.effectiveId) {
+                                                coroutineScope.launch {
+                                                    snackbarHostState.showSnackbar("${account.effectiveName} set as default drive")
+                                                }
+                                            }
+                                        },
+                                        onRefresh = {
+                                            viewModel.loadAccounts()
+                                        },
+                                        onDisconnect = {
+                                            accountForDisconnect = account
+                                        },
+                                        onReconnect = {
+                                            selectedAddProvider = when {
+                                                account.effectiveType.contains("google", true) -> CloudProviderType.GOOGLE_DRIVE
+                                                account.effectiveType.contains("one", true) -> CloudProviderType.ONEDRIVE
+                                                else -> CloudProviderType.TELEGRAM
+                                            }
+                                            showChooserInAddDialog = false
+                                            showAddDialog = true
+                                        },
+                                        modifier = Modifier.animateItem()
+                                    )
+                                }
                             }
                         }
                     }
@@ -577,6 +683,48 @@ fun AccountsScreen(
 }
 
 @Composable
+private fun ProviderSummaryChip(
+    label: String,
+    dotColor: Color,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
+        border = if (selected) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
+        modifier = Modifier
+            .heightIn(min = 48.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(dotColor)
+            )
+            Text(
+                text = label,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = if (selected) MaterialTheme.cloudyteColors.lightAccent else MaterialTheme.colorScheme.onSurface
+            )
+        }
+    }
+}
+
+private fun isTelegramAccount(account: Account): Boolean =
+    account.effectiveType.contains("tele", ignoreCase = true) ||
+        account.effectiveType.contains("tg", ignoreCase = true) ||
+        account.channelId != null
+
+@Composable
 fun AccountCard(
     account: Account,
     onRename: () -> Unit,
@@ -584,123 +732,132 @@ fun AccountCard(
     onRefresh: () -> Unit,
     onDisconnect: () -> Unit,
     onReconnect: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    shape: Shape = RoundedCornerShape(24.dp)
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
+    val ext = MaterialTheme.cloudyteColors
 
-    val isTelegram = remember(account.effectiveType) {
-        account.effectiveType.contains("tele", ignoreCase = true) || account.channelId != null
+    val isTelegram = remember(account.effectiveType, account.channelId) { isTelegramAccount(account) }
+    val isGoogle = remember(account.effectiveType) { account.effectiveType.contains("google", ignoreCase = true) }
+
+    val providerColor = when {
+        isGoogle -> ext.providerGoogle
+        account.effectiveType.contains("one", ignoreCase = true) -> ext.providerOneDrive
+        else -> ext.providerTelegram
+    }
+    val providerBg = when {
+        isGoogle -> ext.providerGoogleBg
+        account.effectiveType.contains("one", ignoreCase = true) -> ext.providerOneDriveBg
+        else -> ext.providerTelegramBg
+    }
+    val providerIcon: ImageVector = when {
+        isGoogle -> Icons.Default.Cloud
+        account.effectiveType.contains("one", ignoreCase = true) -> Icons.Default.CloudQueue
+        else -> Icons.AutoMirrored.Filled.Send
+    }
+    val providerLabel = when {
+        isGoogle -> stringResource(R.string.provider_google_title)
+        account.effectiveType.contains("one", ignoreCase = true) -> stringResource(R.string.provider_onedrive_title)
+        else -> stringResource(R.string.provider_telegram_title)
     }
 
-    val providerColor = remember(account.effectiveType) {
-        when {
-            account.effectiveType.contains("google", ignoreCase = true) -> ProviderGoogle
-            account.effectiveType.contains("one", ignoreCase = true) -> ProviderOneDrive
-            else -> ProviderTelegram
-        }
-    }
-
-    val providerIcon: ImageVector = remember(account.effectiveType) {
-        when {
-            account.effectiveType.contains("google", ignoreCase = true) -> Icons.Default.Cloud
-            account.effectiveType.contains("one", ignoreCase = true) -> Icons.Default.CloudQueue
-            else -> Icons.AutoMirrored.Filled.Send
-        }
-    }
-
-    val isAccountError = false // normal active state unless disconnected
     val percent = account.effectivePercentage
     val progressValue = (percent / 100f).coerceIn(0f, 1f)
     val animatedProgress by animateFloatAsState(
         targetValue = progressValue,
-        animationSpec = tween(durationMillis = 600, easing = EmphasizedDecelerate),
+        animationSpec = tween(durationMillis = 600, easing = FastOutSlowInEasing),
         label = "AccountStorageProgress"
     )
 
-    Card(
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+    Surface(
+        shape = shape,
+        color = MaterialTheme.colorScheme.surfaceContainer,
         modifier = modifier.fillMaxWidth()
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp)
+                .padding(horizontal = 16.dp, vertical = 14.dp)
         ) {
-            // Header Row: Provider Badge + Account Name & Subtitle + Overflow Menu
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // 48.dp rounded-square provider badge (12% tint of provider color)
                 Box(
                     modifier = Modifier
-                        .size(48.dp)
-                        .clip(MaterialTheme.shapes.medium)
-                        .background(providerColor.copy(alpha = 0.12f)),
+                        .size(52.dp)
+                        .clip(if (isGoogle) CircleShape else RoundedCornerShape(18.dp))
+                        .background(providerBg),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = providerIcon,
-                        contentDescription = null,
+                        contentDescription = providerLabel,
                         tint = providerColor,
                         modifier = Modifier.size(26.dp)
                     )
                 }
 
-                Spacer(modifier = Modifier.width(12.dp))
+                Spacer(modifier = Modifier.width(14.dp))
 
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         Text(
                             text = account.effectiveName,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false)
                         )
                         if (account.isDefault == true) {
-                            Spacer(modifier = Modifier.width(8.dp))
                             Surface(
-                                color = MaterialTheme.colorScheme.primaryContainer,
-                                shape = MaterialTheme.shapes.extraSmall
+                                color = MaterialTheme.colorScheme.primary,
+                                shape = RoundedCornerShape(10.dp)
                             ) {
                                 Text(
-                                    text = "Default",
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    style = MaterialTheme.typography.labelSmall,
+                                    text = stringResource(R.string.drives_default_badge),
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp)
                                 )
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(2.dp))
-
-                    val subtitleText = account.email ?: if (isTelegram) {
-                        "Channel: ${account.channelId ?: "Connected"}"
-                    } else {
-                        account.effectiveType
+                    val subtitleText = when {
+                        !account.email.isNullOrBlank() -> account.email
+                        isTelegram && account.usageBytes > 0L -> "$providerLabel · ${formatBytes(account.usageBytes)} used"
+                        !isTelegram && account.totalBytes > 0L ->
+                            "$providerLabel · ${formatBytes(account.usageBytes)} of ${formatBytes(account.totalBytes)}"
+                        else -> providerLabel
                     }
                     Text(
                         text = subtitleText,
-                        style = MaterialTheme.typography.bodySmall,
+                        fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
 
-                // Three-dot overflow menu
                 Box {
-                    IconButton(onClick = { menuExpanded = true }) {
+                    IconButton(
+                        onClick = { menuExpanded = true },
+                        modifier = Modifier.size(48.dp)
+                    ) {
                         Icon(
                             imageVector = Icons.Default.MoreVert,
-                            contentDescription = "Account options",
+                            contentDescription = "Account options for ${account.effectiveName}",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -708,10 +865,10 @@ fun AccountCard(
                     DropdownMenu(
                         expanded = menuExpanded,
                         onDismissRequest = { menuExpanded = false },
-                        modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer)
+                        modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
                     ) {
                         DropdownMenuItem(
-                            text = { Text("Rename", color = MaterialTheme.colorScheme.onSurface) },
+                            text = { Text(stringResource(R.string.action_rename), color = MaterialTheme.colorScheme.onSurface) },
                             leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) },
                             onClick = {
                                 menuExpanded = false
@@ -721,7 +878,7 @@ fun AccountCard(
                         if (account.isDefault != true) {
                             DropdownMenuItem(
                                 text = { Text("Set as default", color = MaterialTheme.colorScheme.onSurface) },
-                                leadingIcon = { Icon(Icons.Default.Star, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                                leadingIcon = { Icon(Icons.Default.Star, contentDescription = null, tint = ext.lightAccent) },
                                 onClick = {
                                     menuExpanded = false
                                     onSetDefault()
@@ -729,11 +886,19 @@ fun AccountCard(
                             )
                         }
                         DropdownMenuItem(
-                            text = { Text("Refresh", color = MaterialTheme.colorScheme.onSurface) },
+                            text = { Text(stringResource(R.string.action_refresh), color = MaterialTheme.colorScheme.onSurface) },
                             leadingIcon = { Icon(Icons.Default.Refresh, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface) },
                             onClick = {
                                 menuExpanded = false
                                 onRefresh()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Reconnect", color = MaterialTheme.colorScheme.onSurface) },
+                            leadingIcon = { Icon(Icons.Default.CloudQueue, contentDescription = null, tint = ext.lightAccent) },
+                            onClick = {
+                                menuExpanded = false
+                                onReconnect()
                             }
                         )
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -749,105 +914,16 @@ fun AccountCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Storage Section
-            if (isTelegram) {
-                val usageFormatted = formatBytes(account.usageBytes)
-                Text(
-                    text = "$usageFormatted used · Unlimited",
-                    style = MetricTextStyle,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+            if (!isTelegram && account.totalBytes > 0L) {
+                Spacer(modifier = Modifier.height(10.dp))
+                WavyProgressBar(
+                    progress = animatedProgress,
+                    indicatorColor = if (percent >= 90f) MaterialTheme.colorScheme.error else ext.mintSuccess,
+                    trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f),
+                    strokeWidth = 3.5.dp,
+                    waveAmplitude = 2.5.dp,
+                    waveLength = 16.dp
                 )
-            } else {
-                val usageText = formatBytes(account.usageBytes)
-                if (account.totalBytes > 0L) {
-                    val totalText = formatBytes(account.totalBytes)
-                    val percentText = String.format(Locale.US, "%.1f%%", percent.coerceIn(0f, 100f))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "$usageText used of $totalText",
-                            style = MetricTextStyle,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = percentText,
-                            style = MetricLabelTextStyle,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    val indicatorColor = if (percent >= 90f) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.primary
-                    }
-
-                    LinearProgressIndicator(
-                        progress = { animatedProgress },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(8.dp)
-                            .clip(CircleShape),
-                        color = indicatorColor,
-                        trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                        strokeCap = StrokeCap.Round
-                    )
-                } else {
-                    Text(
-                        text = "$usageText used",
-                        style = MetricTextStyle,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-
-            // Error Chip if account has error
-            if (isAccountError) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(MaterialTheme.shapes.small)
-                        .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f))
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.ErrorOutline,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Disconnected",
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                    TextButton(
-                        onClick = onReconnect,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = "Reconnect",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
             }
         }
     }
@@ -864,19 +940,19 @@ fun AccountsEmptyState(onAddAccount: () -> Unit) {
     ) {
         Box(
             modifier = Modifier
-                .size(72.dp)
-                .clip(CircleShape)
+                .size(80.dp)
+                .clip(RoundedCornerShape(26.dp))
                 .background(MaterialTheme.colorScheme.primaryContainer),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = Icons.Default.CloudQueue,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(36.dp)
+                tint = MaterialTheme.cloudyteColors.lightAccent,
+                modifier = Modifier.size(40.dp)
             )
         }
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(18.dp))
         Text(
             text = "No drives connected",
             style = MaterialTheme.typography.titleLarge,
@@ -888,17 +964,18 @@ fun AccountsEmptyState(onAddAccount: () -> Unit) {
             text = "Link your Telegram Channel, Google Drive, or OneDrive to start managing your cloud files.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            textAlign = TextAlign.Center
         )
         Spacer(modifier = Modifier.height(24.dp))
         Button(
             onClick = onAddAccount,
             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-            shape = MaterialTheme.shapes.large
+            shape = CircleShape,
+            modifier = Modifier.heightIn(min = 52.dp)
         ) {
             Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(modifier = Modifier.width(8.dp))
-            Text("Add drive", fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.drives_add_fab), fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -930,16 +1007,18 @@ fun AccountsErrorState(message: String, onRetry: () -> Unit) {
             text = message,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            textAlign = TextAlign.Center
         )
         Spacer(modifier = Modifier.height(24.dp))
         Button(
             onClick = onRetry,
-            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+            shape = CircleShape,
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+            modifier = Modifier.heightIn(min = 52.dp)
         ) {
             Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(modifier = Modifier.width(8.dp))
-            Text("Retry")
+            Text(stringResource(R.string.action_retry), fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -949,7 +1028,7 @@ fun AccountsLoadingSkeleton() {
     val transition = rememberInfiniteTransition(label = "SkeletonTransition")
     val alpha by transition.animateFloat(
         initialValue = 0.3f,
-        targetValue = 0.8f,
+        targetValue = 0.7f,
         animationSpec = infiniteRepeatable(
             animation = tween(800, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
@@ -961,58 +1040,47 @@ fun AccountsLoadingSkeleton() {
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        repeat(3) {
-            Card(
-                shape = MaterialTheme.shapes.large,
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        repeat(4) { idx ->
+            val shape = when (idx) {
+                0 -> RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp, bottomStart = 8.dp, bottomEnd = 8.dp)
+                3 -> RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp, bottomStart = 28.dp, bottomEnd = 28.dp)
+                else -> RoundedCornerShape(8.dp)
+            }
+            Surface(
+                shape = shape,
+                color = MaterialTheme.colorScheme.surfaceContainer,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = alpha))
+                    )
+                    Spacer(modifier = Modifier.width(14.dp))
+                    Column(modifier = Modifier.weight(1f)) {
                         Box(
                             modifier = Modifier
-                                .size(48.dp)
-                                .clip(MaterialTheme.shapes.medium)
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = alpha))
+                                .fillMaxWidth(0.5f)
+                                .height(18.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = alpha))
                         )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth(0.5f)
-                                    .height(18.dp)
-                                    .clip(MaterialTheme.shapes.small)
-                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = alpha))
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth(0.35f)
-                                    .height(12.dp)
-                                    .clip(MaterialTheme.shapes.small)
-                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = alpha))
-                            )
-                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(0.35f)
+                                .height(12.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = alpha))
+                        )
                     }
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth(0.6f)
-                            .height(14.dp)
-                            .clip(MaterialTheme.shapes.small)
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = alpha))
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(8.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = alpha))
-                    )
                 }
             }
         }
