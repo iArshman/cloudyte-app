@@ -160,20 +160,27 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun deleteAccount(id: String, onComplete: () -> Unit) {
+    fun deleteAccount(id: String, onResult: (success: Boolean, errorMessage: String?) -> Unit) {
         viewModelScope.launch {
+            var deleted = false
+            var failureMessage: String? = null
             try {
                 val res = ApiClient.apiService.deleteAccount(id)
-                if (res.isSuccessful) {
+                if (res.isSuccessful || res.code() == 404) {
                     db.accountDao().deleteAccountById(id)
                     _accounts.value = _accounts.value.filter { it.effectiveId != id }
+                    deleted = true
+                } else {
+                    val raw = runCatching { res.errorBody()?.string() }.getOrNull()
+                    failureMessage = ApiClient.parseError(raw, res.code())
+                    _errorMessage.value = failureMessage
                 }
             } catch (e: Exception) {
                 Log.e("AccountsViewModel", "Delete account error", e)
-                db.accountDao().deleteAccountById(id)
-                _accounts.value = _accounts.value.filter { it.effectiveId != id }
+                failureMessage = e.localizedMessage ?: "Failed to disconnect account"
+                _errorMessage.value = failureMessage
             } finally {
-                onComplete()
+                onResult(deleted, failureMessage)
             }
         }
     }
@@ -307,9 +314,11 @@ fun AccountsScreen(
                     onClick = {
                         val acc = target ?: return@Button
                         accountForDisconnect = null
-                        viewModel.deleteAccount(acc.effectiveId) {
+                        viewModel.deleteAccount(acc.effectiveId) { success, errMsg ->
                             coroutineScope.launch {
-                                snackbarHostState.showSnackbar("Account disconnected")
+                                snackbarHostState.showSnackbar(
+                                    if (success) "Account disconnected" else (errMsg ?: "Failed to disconnect account")
+                                )
                             }
                         }
                     },

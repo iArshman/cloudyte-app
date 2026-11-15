@@ -12,6 +12,8 @@ import com.cloudyte.app.core.cache.CacheCleanupWorker
 
 import coil.ImageLoader
 import coil.ImageLoaderFactory
+import coil.disk.DiskCache
+import coil.memory.MemoryCache
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -45,8 +47,19 @@ class CloudyteApplication : Application(), ImageLoaderFactory {
     override fun newImageLoader(): ImageLoader {
         return ImageLoader.Builder(this)
             .okHttpClient { ApiClient.okHttpClient }
+            .crossfade(150)
             .respectCacheHeaders(false)
-            .crossfade(true)
+            .memoryCache {
+                MemoryCache.Builder(this)
+                    .maxSizePercent(0.25)
+                    .build()
+            }
+            .diskCache {
+                DiskCache.Builder()
+                    .directory(cacheDir.resolve("image_preview_cache"))
+                    .maxSizeBytes(256L * 1024 * 1024)
+                    .build()
+            }
             .build()
     }
 }

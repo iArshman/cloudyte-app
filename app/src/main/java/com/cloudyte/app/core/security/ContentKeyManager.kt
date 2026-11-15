@@ -263,9 +263,14 @@ class ContentKeyManager(
     }
 
     @Synchronized
-    fun clearInMemoryCacheForTest() {
+    fun clearInMemoryCache() {
         cachedKey?.destroy()
         cachedKey = null
+    }
+
+    @Synchronized
+    fun clearInMemoryCacheForTest() {
+        clearInMemoryCache()
     }
 
     private fun writeBackupStatus(status: RecoveryBackupStatus, keyId: String) {

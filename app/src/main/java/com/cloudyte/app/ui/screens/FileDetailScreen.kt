@@ -702,9 +702,12 @@ fun FileDetailScreen(
                             }
                         } else {
                             val token = ApiClient.getToken()
-                            val downloadUrl = "${ApiClient.API_BASE_URL}/api/download/$accountId/${nonNullFile.effectiveId}?token=$token"
+                            val downloadUrl = ApiClient.getCleanDownloadUrl(accountId, nonNullFile.effectiveId, preview = false)
                             try {
                                 val request = android.app.DownloadManager.Request(Uri.parse(downloadUrl))
+                                if (!token.isNullOrBlank() && ApiClient.API_BASE_URL.startsWith("https://", ignoreCase = true)) {
+                                    request.addRequestHeader("Authorization", "Bearer $token")
+                                }
                                 request.setTitle(nonNullFile.effectiveName)
                                 request.setDescription(strDownloadingDesc)
                                 request.setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)

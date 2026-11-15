@@ -247,8 +247,8 @@ class KeyBackupCodec(
         }
 
         val iterations = json.optInt("kdfIterations", 0)
-        if (iterations < CryptoConstants.PBKDF2_ITERATIONS) {
-            throw KeyBackupException("Insufficient KDF iterations in key backup: $iterations")
+        if (iterations < CryptoConstants.PBKDF2_ITERATIONS || iterations > CryptoConstants.MAX_PBKDF2_ITERATIONS) {
+            throw KeyBackupException("Unsupported KDF iterations in key backup: $iterations")
         }
 
         val saltStr = json.optString("salt", "")
