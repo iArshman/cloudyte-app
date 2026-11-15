@@ -13,7 +13,6 @@ import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import okhttp3.Cache
 import okhttp3.ConnectionPool
 import okhttp3.Dispatcher
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -28,21 +27,20 @@ object ApiClient {
     // Configurable API URL
     const val API_BASE_URL = "https://drive.arshman.me"
 
-    private val apiHost: String by lazy { API_BASE_URL.toHttpUrl().host }
-    private val querySecretRegex = Regex("""(?i)([?&](?:token|sig|access_token|refresh_token|password|passphrase|secret|api_key)=)([^&\s]+)""")
-
-    private var sharedPreferences: SharedPreferences? = null
-
-    @Volatile
-    private var inMemoryToken: String? = null
+    private lateinit var sharedPreferences: SharedPreferences
 
     fun saveToken(token: String?) {
-        inMemoryToken = token
-        sharedPreferences?.edit()?.putString(TOKEN_KEY, token)?.apply()
+        if (::sharedPreferences.isInitialized) {
+            sharedPreferences.edit().putString(TOKEN_KEY, token).apply()
+        }
     }
 
     fun getToken(): String? {
-        return sharedPreferences?.getString(TOKEN_KEY, null) ?: inMemoryToken
+        return if (::sharedPreferences.isInitialized) {
+            sharedPreferences.getString(TOKEN_KEY, null)
+        } else {
+            null
+        }
     }
 
     private val authInterceptor = Interceptor { chain ->
@@ -50,8 +48,7 @@ object ApiClient {
         val path = request.url.encodedPath
         val requestBuilder = request.newBuilder()
         val token = getToken()
-        val isTrustedOrigin = request.url.isHttps && request.url.host.equals(apiHost, ignoreCase = true)
-        if (isTrustedOrigin && !token.isNullOrEmpty() && !path.endsWith("/login") && !path.endsWith("/register")) {
+        if (!token.isNullOrEmpty() && !path.endsWith("/login") && !path.endsWith("/register")) {
             requestBuilder.header("Authorization", "Bearer $token")
         }
         chain.proceed(requestBuilder.build())
@@ -97,16 +94,9 @@ object ApiClient {
         }
     }
 
-    private fun redactUrlSecrets(message: String): String {
-        return querySecretRegex.replace(message) { "${it.groupValues[1]}[REDACTED]" }
-    }
-
-    private val loggingInterceptor = HttpLoggingInterceptor { message ->
-        Log.d("OkHttp", redactUrlSecrets(message))
-    }.apply {
+    private val loggingInterceptor = HttpLoggingInterceptor().apply {
         level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BASIC else HttpLoggingInterceptor.Level.NONE
         redactHeader("Authorization")
-        redactHeader("Cookie")
     }
 
     fun setDebugLogging(enabled: Boolean) {
@@ -126,8 +116,8 @@ object ApiClient {
             .dispatcher(dispatcher)
             .connectionPool(ConnectionPool(12, 5, TimeUnit.MINUTES))
             .connectTimeout(20, TimeUnit.SECONDS)
-            .readTimeout(300, TimeUnit.SECONDS)
-            .writeTimeout(120, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .writeTimeout(60, TimeUnit.SECONDS)
             .addInterceptor(RequestCorrelationInterceptor())
             .addInterceptor(authInterceptor)
             .addInterceptor(loggingInterceptor)
@@ -153,25 +143,18 @@ object ApiClient {
     var apiService: CloudyteApi = retrofit.create(CloudyteApi::class.java)
         private set
 
-    private fun openEncryptedPrefs(context: Context): SharedPreferences {
-        val masterKey = MasterKey.Builder(context)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build()
-        return EncryptedSharedPreferences.create(
-            context,
-            SECURE_PREFS_NAME,
-            masterKey,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-        )
-    }
-
     fun init(context: Context) {
-        // Remove any legacy plaintext fallback token file so tokens never persist unencrypted on disk
-        runCatching { context.deleteSharedPreferences("cloudyte_secure_fallback") }
-
         sharedPreferences = try {
-            val secure = openEncryptedPrefs(context)
+            val masterKey = MasterKey.Builder(context)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
+            val secure = EncryptedSharedPreferences.create(
+                context,
+                SECURE_PREFS_NAME,
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
             val legacy = context.getSharedPreferences("cloudyte_prefs", Context.MODE_PRIVATE)
             if (secure.getString(TOKEN_KEY, null).isNullOrBlank()) {
                 legacy.getString(TOKEN_KEY, null)?.let { secure.edit().putString(TOKEN_KEY, it).apply() }
@@ -179,16 +162,9 @@ object ApiClient {
             legacy.edit().remove(TOKEN_KEY).apply()
             secure
         } catch (e: Exception) {
-            Log.w("ApiClient", "Encrypted token storage corrupted; resetting encrypted preferences", e)
-            runCatching { context.deleteSharedPreferences(SECURE_PREFS_NAME) }
-            try {
-                openEncryptedPrefs(context)
-            } catch (retryErr: Exception) {
-                Log.e("ApiClient", "Encrypted token storage unavailable; holding session token in memory only", retryErr)
-                null
-            }
+            Log.w("ApiClient", "Encrypted token storage unavailable; using app-private fallback", e)
+            context.getSharedPreferences("cloudyte_secure_fallback", Context.MODE_PRIVATE)
         }
-        inMemoryToken = sharedPreferences?.getString(TOKEN_KEY, null) ?: inMemoryToken
         val httpCache = Cache(File(context.cacheDir, "http"), 50L * 1024 * 1024)
         okHttpClient = createClient(httpCache)
         retrofit = Retrofit.Builder()
@@ -202,7 +178,9 @@ object ApiClient {
     fun getThumbUrl(accountId: String, fileId: String, size: Int = 256): String {
         val account = Uri.encode(accountId)
         val file = Uri.encode(fileId)
-        return "$API_BASE_URL/api/thumb/$account/$file?s=${size.coerceIn(64, 512)}"
+        val token = getToken()
+        val base = "$API_BASE_URL/api/thumb/$account/$file?s=${size.coerceIn(64, 512)}"
+        return if (!token.isNullOrBlank()) "$base&token=${Uri.encode(token)}" else base
     }
 
     fun getCleanDownloadUrl(accountId: String, fileId: String, preview: Boolean = false): String {
@@ -211,6 +189,13 @@ object ApiClient {
     }
 
     fun getFileUrl(accountId: String, fileId: String, preview: Boolean = false): String {
-        return getCleanDownloadUrl(accountId, fileId, preview)
+        val token = getToken()
+        val base = "$API_BASE_URL/api/download/${Uri.encode(accountId)}/${Uri.encode(fileId)}"
+        return when {
+            preview && !token.isNullOrEmpty() -> "$base?preview=1&token=${Uri.encode(token)}"
+            preview -> "$base?preview=1"
+            !token.isNullOrEmpty() -> "$base?token=${Uri.encode(token)}"
+            else -> base
+        }
     }
 }

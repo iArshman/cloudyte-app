@@ -1,17 +1,9 @@
 package com.cloudyte.app.db
 
 import androidx.room.Entity
-import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(
-    tableName = "upload_records",
-    indices = [
-        Index(value = ["localUri", "targetAccountId", "targetFolderId", "status", "uploadedAt"]),
-        Index(value = ["contentHash", "fileSize", "targetAccountId", "targetFolderId", "status", "uploadedAt"]),
-        Index(value = ["fileName", "fileSize", "targetAccountId", "status"])
-    ]
-)
+@Entity(tableName = "upload_records")
 data class LocalUploadRecord(
     @PrimaryKey(autoGenerate = true) val recordId: Long = 0,
     val localUri: String,

@@ -83,24 +83,8 @@ class TransferRepository(
         return id
     }
 
-    suspend fun queueTransfer(
-        id: String,
-        direction: TransferDirection,
-        localUri: String,
-        parentFolderId: String?,
-        providerType: String?,
-        totalBytes: Long,
-        operationTypeOverride: String? = null
-    ): Boolean =
-        transferDao.queueTransfer(
-            id,
-            direction.name,
-            operationTypeOverride ?: if (direction == TransferDirection.BACKUP) "BACKUP" else direction.name,
-            localUri,
-            parentFolderId,
-            providerType,
-            totalBytes
-        ) == 1
+    suspend fun queueTransfer(id: String, direction: TransferDirection, localUri: String, parentFolderId: String?, providerType: String?, totalBytes: Long): Boolean =
+        transferDao.queueTransfer(id, direction.name, if (direction == TransferDirection.BACKUP) "BACKUP" else direction.name, localUri, parentFolderId, providerType, totalBytes) == 1
 
     suspend fun enqueueOrGetOfflineDownload(
         accountId: String,

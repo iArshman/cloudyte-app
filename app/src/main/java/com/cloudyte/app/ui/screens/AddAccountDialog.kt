@@ -297,19 +297,14 @@ fun AddAccountDialog(
                                         try {
                                             val resp = ApiClient.apiService.getGoogleDriveLink()
                                             val url = resp.url
-                                            val parsed = url?.let { runCatching { Uri.parse(it) }.getOrNull() }
-                                            if (parsed != null && parsed.scheme.equals("https", ignoreCase = true) && !parsed.host.isNullOrBlank()) {
-                                                val intent = Intent(Intent.ACTION_VIEW, parsed).apply {
+                                            if (!url.isNullOrBlank()) {
+                                                oauthWaitingForReturn = true
+                                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
                                                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                                 }
-                                                try {
-                                                    context.startActivity(intent)
-                                                    oauthWaitingForReturn = true
-                                                } catch (_: android.content.ActivityNotFoundException) {
-                                                    errorMsg = "No browser app found to open Google sign-in."
-                                                }
+                                                context.startActivity(intent)
                                             } else {
-                                                errorMsg = "Server did not return a valid HTTPS Google authorization URL."
+                                                errorMsg = "Server did not return a valid Google authorization URL."
                                             }
                                         } catch (e: Exception) {
                                             Log.e("AddAccountDialog", "Google link error", e)
@@ -333,19 +328,14 @@ fun AddAccountDialog(
                                         try {
                                             val resp = ApiClient.apiService.getOneDriveLink()
                                             val url = resp.url
-                                            val parsed = url?.let { runCatching { Uri.parse(it) }.getOrNull() }
-                                            if (parsed != null && parsed.scheme.equals("https", ignoreCase = true) && !parsed.host.isNullOrBlank()) {
-                                                val intent = Intent(Intent.ACTION_VIEW, parsed).apply {
+                                            if (!url.isNullOrBlank()) {
+                                                oauthWaitingForReturn = true
+                                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
                                                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                                 }
-                                                try {
-                                                    context.startActivity(intent)
-                                                    oauthWaitingForReturn = true
-                                                } catch (_: android.content.ActivityNotFoundException) {
-                                                    errorMsg = "No browser app found to open OneDrive sign-in."
-                                                }
+                                                context.startActivity(intent)
                                             } else {
-                                                errorMsg = "Server did not return a valid HTTPS OneDrive authorization URL."
+                                                errorMsg = "Server did not return a valid OneDrive authorization URL."
                                             }
                                         } catch (e: Exception) {
                                             Log.e("AddAccountDialog", "OneDrive link error", e)

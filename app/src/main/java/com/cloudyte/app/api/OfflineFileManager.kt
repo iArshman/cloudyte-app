@@ -127,45 +127,10 @@ object OfflineFileManager {
 
     fun refreshDownloadedSet(context: Context) {
         val set = mutableSetOf<String>()
-        val db = com.cloudyte.app.db.AppDatabase.getInstance()
-        val knownAccountPrefixes = mutableListOf<String>()
-        val knownFileMatches = mutableListOf<Pair<String, String>>() // safePrefix -> raw fileId
-
-        if (db != null) {
-            runCatching {
-                kotlinx.coroutines.runBlocking(Dispatchers.IO) {
-                    db.accountDao().getAllAccounts().forEach { acc ->
-                        knownAccountPrefixes += "${sanitizeFileName(acc.id)}_"
-                    }
-                    db.cloudFileDao().getAllFiles().forEach { cf ->
-                        val acc = cf.accountId?.takeIf { it.isNotBlank() } ?: return@forEach
-                        val prefix = "${sanitizeFileName(acc)}_${sanitizeFileName(cf.id)}_"
-                        knownFileMatches += prefix to cf.id
-                    }
-                }
-            }
-        }
-        val sortedAccountPrefixes = knownAccountPrefixes.distinct().sortedByDescending { it.length }
-        val sortedFileMatches = knownFileMatches.sortedByDescending { it.first.length }
-
         for (dir in getAllVaultDirs(context)) {
             val files = dir.listFiles { _, name -> !name.endsWith(".tmp") && !name.endsWith(".part") } ?: emptyArray()
             for (f in files) {
                 if (f.length() > 0) {
-                    val matchedKnownFile = sortedFileMatches.firstOrNull { (prefix, _) -> f.name.startsWith(prefix) }
-                    if (matchedKnownFile != null) {
-                        set.add(matchedKnownFile.second)
-                        continue
-                    }
-                    val matchedAccPrefix = sortedAccountPrefixes.firstOrNull { prefix -> f.name.startsWith(prefix) }
-                    if (matchedAccPrefix != null) {
-                        val remainder = f.name.removePrefix(matchedAccPrefix)
-                        val fid = remainder.substringBefore("_")
-                        if (fid.isNotEmpty()) {
-                            set.add(fid)
-                            continue
-                        }
-                    }
                     val parts = f.name.split("_")
                     if (parts.size >= 3) {
                         set.add(parts[1])
@@ -234,25 +199,22 @@ object OfflineFileManager {
             )
             app.container.transferCoordinator.dispatch(com.cloudyte.app.core.transfer.TransferCommand.Start(transferId))
             val completed = kotlinx.coroutines.withTimeoutOrNull(30 * 60 * 1000L) {
-                var finished = false
-                app.container.database.transferDao().observeById(transferId).first { row ->
-                    if (row == null) throw IOException("Queued download disappeared")
+                while (true) {
+                    val row = app.container.database.transferDao().getById(transferId)
+                        ?: throw IOException("Queued download disappeared")
                     val state = row.state
                     val total = row.totalBytes
                     val progress = if (total > 0L) (row.bytesTransferred.toFloat() / total).coerceIn(0f, 1f) else 0f
                     _activeDownloads.value = _activeDownloads.value + (fid to progress)
                     onProgress?.invoke(progress)
                     when (state) {
-                        "COMPLETED" -> {
-                            finished = true
-                            true
-                        }
+                        "COMPLETED" -> return@withTimeoutOrNull true
                         "FAILED_RETRYABLE", "FAILED_PERMANENT", "WAITING_FOR_AUTH", "CANCELLED", "EXPIRED" ->
                             throw IOException(row.lastErrorMessage ?: row.errorMessage ?: "Download failed ($state)")
-                        else -> false
                     }
+                    kotlinx.coroutines.delay(250L)
                 }
-                finished
+                false
             } ?: throw IOException("Download is still queued; try again shortly")
             if (completed && tempFile.exists()) {
                 if (targetFile.exists()) targetFile.delete()

@@ -50,6 +50,10 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.lifecycleScope
+import coil.Coil
+import coil.ImageLoader
+import coil.disk.DiskCache
+import coil.memory.MemoryCache
 import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.core.transfer.TransferCommand
 import com.cloudyte.app.data.UserPreferences
@@ -58,36 +62,44 @@ import com.cloudyte.app.db.TransferDirection
 import com.cloudyte.app.navigation.AppNavHost
 import com.cloudyte.app.ui.theme.CloudyteTheme
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 
 class MainActivity : ComponentActivity() {
-    private val pendingShareIntentState = MutableStateFlow<Intent?>(null)
-
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
-
-        val initialPrefs = runBlocking {
+        lifecycleScope.launch {
             UserPreferences.migrateIfNeeded(this@MainActivity)
-            runCatching { UserPreferences.observe(this@MainActivity).first() }
-                .getOrDefault(UserPreferencesState())
         }
-
-        if (savedInstanceState == null && isShareIntent(intent)) {
-            pendingShareIntentState.value = Intent(intent)
-            intent?.action = null
+        if (savedInstanceState == null) {
+            handleIncomingShareIntent(intent)
         }
+        // Configure Coil global ImageLoader with memory and disk cache for high-speed previews
+        val imageLoader = ImageLoader.Builder(this)
+            .okHttpClient(ApiClient.okHttpClient)
+            .crossfade(150)
+            .respectCacheHeaders(false)
+            .memoryCache {
+                MemoryCache.Builder(this)
+                    .maxSizePercent(0.25)
+                    .build()
+            }
+            .diskCache {
+                DiskCache.Builder()
+                    .directory(cacheDir.resolve("image_preview_cache"))
+                    .maxSizeBytes(256L * 1024 * 1024) // 256 MB disk cache
+                    .build()
+            }
+            .build()
+        Coil.setImageLoader(imageLoader)
 
         enableEdgeToEdge()
         setContent {
-            val prefs by UserPreferences.observe(this).collectAsStateWithLifecycle(initialValue = initialPrefs)
-            val pendingShareIntent by pendingShareIntentState.collectAsStateWithLifecycle()
+            val prefs by UserPreferences.observe(this).collectAsStateWithLifecycle(initialValue = UserPreferencesState())
 
             LaunchedEffect(prefs.blockScreenshots) {
                 if (prefs.blockScreenshots) {
@@ -106,28 +118,7 @@ class MainActivity : ComponentActivity() {
 
             val lifecycleOwner = LocalLifecycleOwner.current
             var lastBackgroundMs by remember { mutableLongStateOf(0L) }
-            var isLocked by remember { mutableStateOf(initialPrefs.appLockEnabled) }
-
-            LaunchedEffect(prefs.appLockEnabled) {
-                if (!prefs.appLockEnabled) {
-                    isLocked = false
-                }
-            }
-
-            LaunchedEffect(pendingShareIntent, isLocked, prefs.appLockEnabled) {
-                val share = pendingShareIntent ?: return@LaunchedEffect
-                if (isLocked && prefs.appLockEnabled) return@LaunchedEffect
-                pendingShareIntentState.value = null
-                if (ApiClient.getToken().isNullOrBlank()) {
-                    Toast.makeText(
-                        this@MainActivity,
-                        "Sign in to Cloudyte before uploading shared files",
-                        Toast.LENGTH_LONG
-                    ).show()
-                } else {
-                    handleIncomingShareIntent(share)
-                }
-            }
+            var isLocked by remember { mutableStateOf(false) }
 
             DisposableEffect(lifecycleOwner, prefs.appLockEnabled, prefs.autoLockMinutes) {
                 val observer = LifecycleEventObserver { _, event ->
@@ -175,18 +166,12 @@ class MainActivity : ComponentActivity() {
                             onUnlockRequest = {
                                 val km = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
                                 @Suppress("DEPRECATION")
-                                val confirmIntent = km?.createConfirmDeviceCredentialIntent(
+                                val intent = km?.createConfirmDeviceCredentialIntent(
                                     getString(R.string.lock_screen_title),
                                     getString(R.string.lock_screen_subtitle)
                                 )
-                                if (confirmIntent != null) {
-                                    credentialLauncher.launch(confirmIntent)
-                                } else if (km?.isDeviceSecure == true) {
-                                    Toast.makeText(
-                                        this@MainActivity,
-                                        "Unable to open device unlock prompt",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
+                                if (intent != null) {
+                                    credentialLauncher.launch(intent)
                                 } else {
                                     isLocked = false
                                 }
@@ -203,15 +188,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        if (isShareIntent(intent)) {
-            pendingShareIntentState.value = Intent(intent)
-            intent.action = null
-        }
-    }
-
-    private fun isShareIntent(incoming: Intent?): Boolean {
-        val action = incoming?.action ?: return false
-        return action == Intent.ACTION_SEND || action == Intent.ACTION_SEND_MULTIPLE
+        handleIncomingShareIntent(intent)
     }
 
     private fun handleIncomingShareIntent(incoming: Intent?) {

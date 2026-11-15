@@ -2,7 +2,6 @@ package com.cloudyte.app.core.security
 
 import android.content.Context
 import android.net.Uri
-import android.provider.OpenableColumns
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.DataInputStream
@@ -266,10 +265,7 @@ class StreamFileCrypto(
         try {
             writeHeader(dataOut, header)
 
-            val secretKeySpec = SecretKeySpec(rawKey, CryptoConstants.AES_ALGORITHM)
-            val cipher = Cipher.getInstance(CryptoConstants.AES_GCM_TRANSFORMATION)
             val chunkBuffer = ByteArray(chunkSize)
-            val ciphertextBuffer = ByteArray(chunkSize + CryptoConstants.GCM_TAG_LENGTH_BYTES)
             var frameIndex = 0
             var totalPlaintextRead = 0L
 
@@ -279,24 +275,15 @@ class StreamFileCrypto(
                 if (extraByte != -1) {
                     throw InvalidEncryptedHeaderException("Input stream contains bytes but plaintextSize was declared 0")
                 }
-                val emptyFrameLen = encryptFrameWithCipher(
-                    cipher = cipher,
-                    secretKeySpec = secretKeySpec,
+                val encryptedFrame = encryptFrame(
                     frameIndex = 0,
-                    plaintextChunk = chunkBuffer,
+                    plaintextChunk = ByteArray(0),
                     plaintextLength = 0,
                     isFinalFrame = true,
                     header = header,
-                    ciphertextOut = ciphertextBuffer
+                    keyBytes = rawKey
                 )
-                writeFrame(
-                    dataOut = dataOut,
-                    frameIndex = 0,
-                    plaintextLength = 0,
-                    isFinalFrame = true,
-                    ciphertextWithTag = ciphertextBuffer,
-                    ciphertextLength = emptyFrameLen
-                )
+                writeFrame(dataOut, frameIndex = 0, plaintextLength = 0, isFinalFrame = true, ciphertextWithTag = encryptedFrame)
                 frameIndex = 1
                 onProgress(0L)
             } else {
@@ -336,23 +323,20 @@ class StreamFileCrypto(
                         )
                     }
 
-                    val encryptedFrameLen = encryptFrameWithCipher(
-                        cipher = cipher,
-                        secretKeySpec = secretKeySpec,
+                    val encryptedFrame = encryptFrame(
                         frameIndex = frameIndex,
                         plaintextChunk = chunkBuffer,
                         plaintextLength = bytesInChunk,
                         isFinalFrame = isFinalFrame,
                         header = header,
-                        ciphertextOut = ciphertextBuffer
+                        keyBytes = rawKey
                     )
                     writeFrame(
                         dataOut = dataOut,
                         frameIndex = frameIndex,
                         plaintextLength = bytesInChunk,
                         isFinalFrame = isFinalFrame,
-                        ciphertextWithTag = ciphertextBuffer,
-                        ciphertextLength = encryptedFrameLen
+                        ciphertextWithTag = encryptedFrame
                     )
                     frameIndex++
                     onProgress(totalPlaintextRead)
@@ -400,11 +384,6 @@ class StreamFileCrypto(
 
         val rawKey = keyMaterial.copyKeyBytes()
         try {
-            val secretKeySpec = SecretKeySpec(rawKey, CryptoConstants.AES_ALGORITHM)
-            val cipher = Cipher.getInstance(CryptoConstants.AES_GCM_TRANSFORMATION)
-            val ciphertextWithTag = ByteArray(header.chunkSize + CryptoConstants.GCM_TAG_LENGTH_BYTES)
-            val plaintextBuffer = ByteArray(header.chunkSize)
-
             var expectedFrameIndex = 0
             var totalPlaintextWritten = 0L
             var sawFinalFrame = false
@@ -455,8 +434,9 @@ class StreamFileCrypto(
                 )
 
                 val ciphertextLength = plaintextLength + CryptoConstants.GCM_TAG_LENGTH_BYTES
+                val ciphertextWithTag = ByteArray(ciphertextLength)
                 try {
-                    dataIn.readFully(ciphertextWithTag, 0, ciphertextLength)
+                    dataIn.readFully(ciphertextWithTag)
                 } catch (e: EOFException) {
                     throw CorruptedCiphertextException(
                         "Truncated frame ciphertext at frame $frameIndex (expected $ciphertextLength bytes)",
@@ -464,29 +444,26 @@ class StreamFileCrypto(
                     )
                 }
 
-                val decryptedLen = decryptFrameWithCipher(
-                    cipher = cipher,
-                    secretKeySpec = secretKeySpec,
+                val decryptedChunk = decryptFrame(
                     frameIndex = frameIndex,
                     plaintextLength = plaintextLength,
                     isFinalFrame = isFinalFrame,
                     ciphertextWithTag = ciphertextWithTag,
-                    ciphertextLength = ciphertextLength,
-                    plaintextOut = plaintextBuffer,
-                    header = header
+                    header = header,
+                    keyBytes = rawKey
                 )
 
-                if (decryptedLen != plaintextLength) {
+                if (decryptedChunk.size != plaintextLength) {
                     throw CorruptedCiphertextException(
-                        "Decrypted frame $frameIndex length mismatch: expected $plaintextLength, got $decryptedLen"
+                        "Decrypted frame $frameIndex length mismatch: expected $plaintextLength, got ${decryptedChunk.size}"
                     )
                 }
 
-                if (decryptedLen > 0) {
-                    output.write(plaintextBuffer, 0, decryptedLen)
+                if (decryptedChunk.isNotEmpty()) {
+                    output.write(decryptedChunk)
                 }
 
-                totalPlaintextWritten += decryptedLen
+                totalPlaintextWritten += decryptedChunk.size
                 expectedFrameIndex++
                 sawFinalFrame = isFinalFrame
                 onProgress(totalPlaintextWritten)
@@ -554,85 +531,6 @@ class StreamFileCrypto(
         }
     }
 
-    private fun encryptFrameWithCipher(
-        cipher: Cipher,
-        secretKeySpec: SecretKeySpec,
-        frameIndex: Int,
-        plaintextChunk: ByteArray,
-        plaintextLength: Int,
-        isFinalFrame: Boolean,
-        header: EncryptedFileHeader,
-        ciphertextOut: ByteArray
-    ): Int {
-        validateFrameLengths(
-            frameIndex = frameIndex,
-            plaintextLength = plaintextLength,
-            isFinalFrame = isFinalFrame,
-            header = header
-        )
-        val nonce = deriveFrameNonce(header.fileSalt, header.formatVersion, frameIndex)
-        val aad = buildFrameAad(header, frameIndex, plaintextLength, isFinalFrame)
-        return try {
-            cipher.init(
-                Cipher.ENCRYPT_MODE,
-                secretKeySpec,
-                GCMParameterSpec(CryptoConstants.GCM_TAG_LENGTH_BITS, nonce)
-            )
-            cipher.updateAAD(aad)
-            cipher.doFinal(plaintextChunk, 0, plaintextLength, ciphertextOut, 0)
-        } catch (e: Exception) {
-            throw CryptoException("Failed to encrypt frame $frameIndex", e)
-        }
-    }
-
-    private fun decryptFrameWithCipher(
-        cipher: Cipher,
-        secretKeySpec: SecretKeySpec,
-        frameIndex: Int,
-        plaintextLength: Int,
-        isFinalFrame: Boolean,
-        ciphertextWithTag: ByteArray,
-        ciphertextLength: Int,
-        plaintextOut: ByteArray,
-        header: EncryptedFileHeader
-    ): Int {
-        validateFrameLengths(
-            frameIndex = frameIndex,
-            plaintextLength = plaintextLength,
-            isFinalFrame = isFinalFrame,
-            header = header
-        )
-        val expectedCiphertextSize = plaintextLength + CryptoConstants.GCM_TAG_LENGTH_BYTES
-        if (ciphertextLength != expectedCiphertextSize) {
-            throw CorruptedCiphertextException(
-                "Invalid ciphertext+tag size at frame $frameIndex: expected $expectedCiphertextSize, got $ciphertextLength"
-            )
-        }
-        val nonce = deriveFrameNonce(header.fileSalt, header.formatVersion, frameIndex)
-        val aad = buildFrameAad(header, frameIndex, plaintextLength, isFinalFrame)
-        return try {
-            cipher.init(
-                Cipher.DECRYPT_MODE,
-                secretKeySpec,
-                GCMParameterSpec(CryptoConstants.GCM_TAG_LENGTH_BITS, nonce)
-            )
-            cipher.updateAAD(aad)
-            cipher.doFinal(ciphertextWithTag, 0, ciphertextLength, plaintextOut, 0)
-        } catch (e: AEADBadTagException) {
-            throw FrameAuthenticationException(
-                frameIndex = frameIndex,
-                message = "GCM authentication tag verification failed at frame $frameIndex",
-                cause = e
-            )
-        } catch (e: Exception) {
-            throw FrameAuthenticationException(
-                frameIndex = frameIndex,
-                message = "Failed to authenticate or decrypt frame $frameIndex",
-                cause = e
-            )
-        }
-    }
-
     /**
      * Encrypts a single frame with AES-256-GCM using a unique per-frame 12-byte nonce and
      * per-frame AAD bound to the file header and frame parameters.
@@ -646,18 +544,26 @@ class StreamFileCrypto(
         header: EncryptedFileHeader,
         keyBytes: ByteArray
     ): ByteArray {
-        val out = ByteArray(plaintextLength + CryptoConstants.GCM_TAG_LENGTH_BYTES)
-        val len = encryptFrameWithCipher(
-            cipher = Cipher.getInstance(CryptoConstants.AES_GCM_TRANSFORMATION),
-            secretKeySpec = SecretKeySpec(keyBytes, CryptoConstants.AES_ALGORITHM),
+        validateFrameLengths(
             frameIndex = frameIndex,
-            plaintextChunk = plaintextChunk,
             plaintextLength = plaintextLength,
             isFinalFrame = isFinalFrame,
-            header = header,
-            ciphertextOut = out
+            header = header
         )
-        return if (len == out.size) out else out.copyOf(len)
+        val nonce = deriveFrameNonce(header.fileSalt, header.formatVersion, frameIndex)
+        val aad = buildFrameAad(header, frameIndex, plaintextLength, isFinalFrame)
+        return try {
+            val cipher = Cipher.getInstance(CryptoConstants.AES_GCM_TRANSFORMATION)
+            cipher.init(
+                Cipher.ENCRYPT_MODE,
+                SecretKeySpec(keyBytes, CryptoConstants.AES_ALGORITHM),
+                GCMParameterSpec(CryptoConstants.GCM_TAG_LENGTH_BITS, nonce)
+            )
+            cipher.updateAAD(aad)
+            cipher.doFinal(plaintextChunk, 0, plaintextLength)
+        } catch (e: Exception) {
+            throw CryptoException("Failed to encrypt frame $frameIndex", e)
+        }
     }
 
     /**
@@ -672,19 +578,43 @@ class StreamFileCrypto(
         header: EncryptedFileHeader,
         keyBytes: ByteArray
     ): ByteArray {
-        val out = ByteArray(plaintextLength)
-        val len = decryptFrameWithCipher(
-            cipher = Cipher.getInstance(CryptoConstants.AES_GCM_TRANSFORMATION),
-            secretKeySpec = SecretKeySpec(keyBytes, CryptoConstants.AES_ALGORITHM),
+        validateFrameLengths(
             frameIndex = frameIndex,
             plaintextLength = plaintextLength,
             isFinalFrame = isFinalFrame,
-            ciphertextWithTag = ciphertextWithTag,
-            ciphertextLength = ciphertextWithTag.size,
-            plaintextOut = out,
             header = header
         )
-        return if (len == out.size) out else out.copyOf(len)
+        val expectedCiphertextSize = plaintextLength + CryptoConstants.GCM_TAG_LENGTH_BYTES
+        if (ciphertextWithTag.size != expectedCiphertextSize) {
+            throw CorruptedCiphertextException(
+                "Invalid ciphertext+tag size at frame $frameIndex: expected $expectedCiphertextSize, got ${ciphertextWithTag.size}"
+            )
+        }
+
+        val nonce = deriveFrameNonce(header.fileSalt, header.formatVersion, frameIndex)
+        val aad = buildFrameAad(header, frameIndex, plaintextLength, isFinalFrame)
+        return try {
+            val cipher = Cipher.getInstance(CryptoConstants.AES_GCM_TRANSFORMATION)
+            cipher.init(
+                Cipher.DECRYPT_MODE,
+                SecretKeySpec(keyBytes, CryptoConstants.AES_ALGORITHM),
+                GCMParameterSpec(CryptoConstants.GCM_TAG_LENGTH_BITS, nonce)
+            )
+            cipher.updateAAD(aad)
+            cipher.doFinal(ciphertextWithTag)
+        } catch (e: AEADBadTagException) {
+            throw FrameAuthenticationException(
+                frameIndex = frameIndex,
+                message = "GCM authentication tag verification failed at frame $frameIndex",
+                cause = e
+            )
+        } catch (e: Exception) {
+            throw FrameAuthenticationException(
+                frameIndex = frameIndex,
+                message = "Failed to authenticate or decrypt frame $frameIndex",
+                cause = e
+            )
+        }
     }
 
     /**
@@ -826,28 +756,12 @@ class StreamFileCrypto(
             return file.length()
         }
 
-        runCatching {
-            context.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val idx = cursor.getColumnIndex(OpenableColumns.SIZE)
-                    if (idx >= 0 && !cursor.isNull(idx)) {
-                        val queriedSize = cursor.getLong(idx)
-                        if (queriedSize > 0L) return queriedSize
-                    }
-                }
-            }
-        }
-
-        val afdSize = runCatching {
-            context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L
-        }.getOrDefault(-1L)
-        if (afdSize > 0L) return afdSize
-
-        // Fallback: count readable bytes when provider does not expose content size metadata.
+        // Count actual readable bytes from ContentResolver stream so that encryption header
+        // plaintextSize is guaranteed to match the exact stream byte count.
         val input = context.contentResolver.openInputStream(uri)
             ?: throw CryptoException("Unable to open InputStream for URI: $uri")
         return input.use { stream ->
-            val buf = ByteArray(256 * 1024)
+            val buf = ByteArray(CryptoConstants.STREAM_BUFFER_SIZE_BYTES)
             var total = 0L
             while (true) {
                 val read = stream.read(buf)
@@ -888,13 +802,12 @@ class StreamFileCrypto(
         frameIndex: Int,
         plaintextLength: Int,
         isFinalFrame: Boolean,
-        ciphertextWithTag: ByteArray,
-        ciphertextLength: Int = ciphertextWithTag.size
+        ciphertextWithTag: ByteArray
     ) {
         dataOut.writeInt(frameIndex)
         dataOut.writeInt(plaintextLength)
         dataOut.writeByte(if (isFinalFrame) 1 else 0)
-        dataOut.write(ciphertextWithTag, 0, ciphertextLength)
+        dataOut.write(ciphertextWithTag)
     }
 
     private fun readAndValidateHeader(dataIn: DataInputStream): EncryptedFileHeader {

@@ -152,10 +152,16 @@ fun FileThumb(
             null
         } else {
             val raw = file.thumbUrl
+            val token = ApiClient.getToken()
             when {
                 !raw.isNullOrBlank() -> {
-                    if (raw.startsWith("http://") || raw.startsWith("https://")) raw
-                    else "${ApiClient.API_BASE_URL}/${raw.trimStart('/')}"
+                    val full = if (raw.startsWith("http://") || raw.startsWith("https://")) raw else "${ApiClient.API_BASE_URL}/${raw.trimStart('/')}"
+                    if (!token.isNullOrBlank() && !full.contains("token=")) {
+                        val sep = if (full.contains("?")) "&" else "?"
+                        "$full${sep}token=${Uri.encode(token.orEmpty())}"
+                    } else {
+                        full
+                    }
                 }
                 effectiveAccountId.isNotBlank() && file.effectiveId.isNotBlank() -> {
                     ApiClient.getThumbUrl(effectiveAccountId, file.effectiveId, targetSizePx)

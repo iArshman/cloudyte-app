@@ -57,10 +57,6 @@ class DefaultNetworkPolicy : NetworkPolicy {
         if (snapshot.isRoaming && !snapshot.allowRoaming) {
             return PolicyDecision.WaitingForRoaming("ROAMING_DISABLED")
         }
-        val isManualBackup = transfer.operationType.equals("MANUAL_BACKUP", ignoreCase = true)
-        if (isManualBackup) {
-            return PolicyDecision.Allowed
-        }
         val isBackup = transfer.operationType.equals("BACKUP", ignoreCase = true) ||
             transfer.direction.equals("BACKUP", ignoreCase = true)
         if (isBackup && snapshot.requireChargingForBackup && !snapshot.isCharging) {
