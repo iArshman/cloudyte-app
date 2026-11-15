@@ -1,24 +1,15 @@
 package com.cloudyte.app.data
 
 import android.content.Context
-import androidx.room.withTransaction
-import androidx.work.WorkManager
-import coil.imageLoader
-import com.cloudyte.app.CloudyteApplication
 import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.api.FileRepository
-import com.cloudyte.app.api.OfflineFileManager
-import com.cloudyte.app.core.cache.PreviewStore
-import com.cloudyte.app.core.security.SecureFileCleanup
 import com.cloudyte.app.db.AppDatabase
-import com.cloudyte.app.features.player.MediaStreamCache
 import com.cloudyte.app.sync.AutoSyncManager
 import com.cloudyte.app.sync.SyncLogger
 import com.cloudyte.app.sync.SyncLogLevel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import java.io.File
 
 data class LogoutResult(
     val remoteRevoked: Boolean,
@@ -35,7 +26,6 @@ object AccountSessionHelper {
             response?.isSuccessful == true
         }
     ): LogoutResult = withContext(Dispatchers.IO) {
-        val appContext = context.applicationContext
         val remoteOk = try {
             remoteLogoutCall()
         } catch (_: Exception) {
@@ -45,50 +35,16 @@ object AccountSessionHelper {
         // Always complete local sign-out cleanly even if remote revocation fails/offline.
         ApiClient.saveToken(null)
         FileRepository.clear()
-        runCatching { AutoSyncManager.cancelScheduledWork(appContext) }
-        runCatching { WorkManager.getInstance(appContext).cancelAllWork() }
+        runCatching { AutoSyncManager.cancelScheduledWork(context) }
 
-        val app = appContext as? CloudyteApplication
-        runCatching { app?.container?.contentKeyManager?.clearInMemoryCache() }
+        val db = AppDatabase.getDatabase(context)
+        runCatching { db.cloudFileDao().clearAll() }
+        runCatching { db.accountDao().clearAccounts() }
+        runCatching { db.storageSummaryDao().clearAll() }
+        runCatching { db.folderSyncMetaDao().clearAll() }
 
-        val db = AppDatabase.getDatabase(appContext)
-        runCatching {
-            db.withTransaction {
-                db.cloudFileDao().clearAll()
-                db.accountDao().clearAccounts()
-                db.storageSummaryDao().clearAll()
-                db.folderSyncMetaDao().clearAll()
-                db.transferDao().clearAll()
-                db.fileMutationDao().clearAll()
-                db.fileTombstoneDao().clearAll()
-                db.backupSourceDao().clearAll()
-                db.exclusionDao().clearAll()
-                db.uploadRecordDao().clearHistory()
-                db.thumbnailDao().deleteAll()
-            }
-        }
-
-        runCatching { OfflineFileManager.clearAllOfflineCache(appContext) }
-        runCatching { (app?.container?.previewStore ?: PreviewStore(appContext)).clear() }
-        runCatching { MediaStreamCache.clear(appContext) }
-        runCatching { SecureFileCleanup.cleanupStaleTempFiles(appContext, emptySet()) }
-        runCatching { SecureFileCleanup.clearShareAndTempDirs(appContext) }
-        runCatching { File(appContext.filesDir, "cloudyte_thumbnails").deleteRecursively() }
-        runCatching { ApiClient.okHttpClient.cache?.evictAll() }
-        runCatching {
-            appContext.imageLoader.memoryCache?.clear()
-            appContext.imageLoader.diskCache?.clear()
-        }
-
-        runCatching { UserPreferences.setLastActiveAccountId(appContext, null) }
-        runCatching { UserPreferences.setHomeStorageAccountId(appContext, null) }
-        runCatching {
-            appContext.getSharedPreferences("cloudyte_drive_state", Context.MODE_PRIVATE).edit().clear().apply()
-        }
-        runCatching {
-            appContext.getSharedPreferences("cloudyte_audio_playback", Context.MODE_PRIVATE).edit().clear().apply()
-        }
-        runCatching { SyncLogger.clearLogs() }
+        runCatching { UserPreferences.setLastActiveAccountId(context, null) }
+        runCatching { UserPreferences.setHomeStorageAccountId(context, null) }
 
         val warning = if (remoteOk) {
             null

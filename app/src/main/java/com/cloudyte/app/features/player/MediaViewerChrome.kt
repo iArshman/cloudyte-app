@@ -684,7 +684,8 @@ suspend fun performShareFileLink(
             val response = ApiClient.apiService.shareFile(ShareRequest(acc, file.effectiveId))
             response.effectiveUrl
         }.getOrNull()?.takeIf { it.isNotBlank() }
-    } ?: return "Could not generate public share link"
+            ?: ApiClient.getFileUrl(acc, file.effectiveId, preview = false)
+    }
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
     clipboard?.setPrimaryClip(ClipData.newPlainText(file.effectiveName, shareUrl))
     val shareIntent = Intent(Intent.ACTION_SEND).apply {

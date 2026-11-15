@@ -273,7 +273,7 @@ class ThumbnailStore @JvmOverloads constructor(
     ): File? {
         val candidateUrls = mutableListOf(sourceUrl)
         if (file.isImage) {
-            val previewFallback = ApiClient.getCleanDownloadUrl(accountId, file.effectiveId, preview = true)
+            val previewFallback = ApiClient.getFileUrl(accountId, file.effectiveId, preview = true)
             if (previewFallback != sourceUrl && !candidateUrls.contains(previewFallback)) {
                 candidateUrls.add(previewFallback)
             }
@@ -403,11 +403,18 @@ class ThumbnailStore @JvmOverloads constructor(
             } else {
                 "${ApiClient.API_BASE_URL}/${remote.trimStart('/')}"
             }
-            return if (Regex("""([?&])s=\d+""").containsMatchIn(baseFull)) {
+            val sizedFull = if (Regex("""([?&])s=\d+""").containsMatchIn(baseFull)) {
                 baseFull.replace(Regex("""([?&])s=\d+"""), "$1s=$sizePx")
             } else {
                 val sep = if (baseFull.contains("?")) "&" else "?"
                 "$baseFull${sep}s=$sizePx"
+            }
+            val token = ApiClient.getToken()
+            return if (!token.isNullOrBlank() && !sizedFull.contains("token=")) {
+                val sep = if (sizedFull.contains("?")) "&" else "?"
+                "$sizedFull${sep}token=${android.net.Uri.encode(token)}"
+            } else {
+                sizedFull
             }
         }
         val acc = file.effectiveAccountId.ifBlank { accountId.takeIf { it != "all" && it != "root" }.orEmpty() }
@@ -418,7 +425,7 @@ class ThumbnailStore @JvmOverloads constructor(
         if (file.isEncrypted) return null
         val acc = file.effectiveAccountId.ifBlank { accountId.takeIf { it != "all" && it != "root" }.orEmpty() }
         if (acc.isBlank()) return null
-        return if (file.isImage || file.isVideo) ApiClient.getCleanDownloadUrl(acc, file.effectiveId, preview = true) else null
+        return if (file.isImage || file.isVideo) ApiClient.getFileUrl(acc, file.effectiveId, preview = true) else null
     }
 
     private fun backoffMs(failureCount: Int): Long =

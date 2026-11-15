@@ -138,34 +138,19 @@ class RoomTransferQueueDrainer(
                             }
                         }
                     }
-                    var lastProgressPersistAt = 0L
-                    var lastDbInterruptCheckAt = 0L
                     try {
                         executor.execute(transfer, leaseOwner) { bytes, total, speed, eta ->
-                            val inMemorySignal = ActiveTransferSignalRegistry.currentSignal(transfer.id)
-                            when (inMemorySignal) {
-                                ActiveTransferSignal.CANCEL -> throw TransferInterruptedException(TransferOutcome.Cancelled)
-                                ActiveTransferSignal.PAUSE -> throw TransferInterruptedException(TransferOutcome.Paused)
-                                null -> Unit
-                            }
+                            detectInterruption(transfer.id)?.let { throw TransferInterruptedException(it) }
                             val tick = now()
-                            val isTerminalBytes = total > 0L && bytes >= total
-                            if (lastDbInterruptCheckAt == 0L || isTerminalBytes || tick < lastDbInterruptCheckAt || (tick - lastDbInterruptCheckAt) >= 400L) {
-                                lastDbInterruptCheckAt = tick
+                            if (queueDao.renewLease(transfer.id, leaseOwner, tick + leaseDurationMs, tick) != 1) {
                                 detectInterruption(transfer.id)?.let { throw TransferInterruptedException(it) }
+                                error("Transfer lease lost")
                             }
-                            if (lastProgressPersistAt == 0L || isTerminalBytes || tick < lastProgressPersistAt || (tick - lastProgressPersistAt) >= 400L) {
-                                if (queueDao.renewLease(transfer.id, leaseOwner, tick + leaseDurationMs, tick) != 1) {
-                                    detectInterruption(transfer.id)?.let { throw TransferInterruptedException(it) }
-                                    error("Transfer lease lost")
-                                }
-                                if (queueDao.persistProgress(transfer.id, leaseOwner, bytes, total, speed, eta, tick) != 1) {
-                                    detectInterruption(transfer.id)?.let { throw TransferInterruptedException(it) }
-                                    error("Transfer progress write lost its lease")
-                                }
-                                lastProgressPersistAt = tick
-                                onProgress(TransferProgressSnapshot(transfer.id, TransferState.RUNNING, bytes, total, speed, eta, retryCount = transfer.attemptCount))
+                            if (queueDao.persistProgress(transfer.id, leaseOwner, bytes, total, speed, eta, tick) != 1) {
+                                detectInterruption(transfer.id)?.let { throw TransferInterruptedException(it) }
+                                error("Transfer progress write lost its lease")
                             }
+                            onProgress(TransferProgressSnapshot(transfer.id, TransferState.RUNNING, bytes, total, speed, eta, retryCount = transfer.attemptCount))
                         }
                     } finally {
                         ActiveTransferSignalRegistry.unregisterHook(transfer.id)

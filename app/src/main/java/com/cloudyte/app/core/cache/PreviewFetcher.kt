@@ -122,8 +122,12 @@ object PreviewFetcher {
             }
 
             // 3. Stream ephemerally via cancellable OkHttp call into PreviewStore (never touches TransferDao).
-            val url = ApiClient.getCleanDownloadUrl(acc, fid, preview = !file.isEncrypted)
+            val url = ApiClient.getFileUrl(acc, fid, preview = !file.isEncrypted)
             val requestBuilder = Request.Builder().url(url)
+            val token = ApiClient.getToken()
+            if (!token.isNullOrBlank()) {
+                requestBuilder.header("Authorization", "Bearer $token")
+            }
 
             val previewFile = streamCallToPreviewStore(
                 previewStore = previewStore,

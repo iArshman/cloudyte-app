@@ -56,7 +56,4 @@ interface BackupSourceDao {
         skippedCount: Int,
         failedCount: Int
     )
-
-    @Query("DELETE FROM backup_sources")
-    suspend fun clearAll()
 }

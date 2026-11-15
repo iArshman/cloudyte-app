@@ -1,15 +1,12 @@
 package com.cloudyte.app.features.player
 
 import android.content.Context
-import android.net.Uri
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DataSource
-import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
-import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
@@ -18,7 +15,6 @@ import androidx.media3.exoplayer.LoadControl
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import com.cloudyte.app.api.ApiClient
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.io.File
 
 /**
@@ -59,32 +55,18 @@ object MediaStreamCache {
     }
 
     fun createMediaSourceFactory(context: Context): MediaSource.Factory {
-        val apiHost = ApiClient.API_BASE_URL.toHttpUrlOrNull()?.host.orEmpty()
+        val token = ApiClient.getToken()
+        val headers = mutableMapOf<String, String>()
+        if (!token.isNullOrEmpty()) {
+            headers["Authorization"] = "Bearer $token"
+        }
         val httpFactory = DefaultHttpDataSource.Factory()
+            .setDefaultRequestProperties(headers)
             .setConnectTimeoutMs(15_000)
             .setReadTimeoutMs(30_000)
-            .setAllowCrossProtocolRedirects(false)
+            .setAllowCrossProtocolRedirects(true)
 
-        val scopedAuthHttpFactory = DataSource.Factory {
-            val delegate: HttpDataSource = httpFactory.createDataSource()
-            object : DataSource by delegate {
-                override fun open(dataSpec: DataSpec): Long {
-                    val uri: Uri = dataSpec.uri
-                    val isTrustedOrigin = uri.scheme.equals("https", ignoreCase = true) &&
-                        !apiHost.isBlank() &&
-                        uri.host.equals(apiHost, ignoreCase = true)
-                    val token = ApiClient.getToken()
-                    if (isTrustedOrigin && !token.isNullOrBlank()) {
-                        delegate.setRequestProperty("Authorization", "Bearer $token")
-                    } else {
-                        delegate.clearRequestProperty("Authorization")
-                    }
-                    return delegate.open(dataSpec)
-                }
-            }
-        }
-
-        val upstreamFactory: DataSource.Factory = DefaultDataSource.Factory(context, scopedAuthHttpFactory)
+        val upstreamFactory: DataSource.Factory = DefaultDataSource.Factory(context, httpFactory)
 
         val cacheDataSourceFactory = CacheDataSource.Factory()
             .setCache(getCache(context))

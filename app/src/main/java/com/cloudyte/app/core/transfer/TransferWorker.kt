@@ -19,12 +19,9 @@ class TransferWorker(
     override suspend fun getForegroundInfo(): ForegroundInfo {
         val application = applicationContext as? CloudyteApplication
         val queueDao = application?.container?.database?.transferQueueDao()
-        val totals = runCatching { queueDao?.aggregateProgressTotals() }.getOrNull()
-        return TransferNotification.foregroundInfo(
-            applicationContext,
-            totals?.bytesTransferred ?: 0L,
-            totals?.totalBytes ?: 0L
-        )
+        val transferred = runCatching { queueDao?.aggregateBytesTransferred() ?: 0L }.getOrDefault(0L)
+        val total = runCatching { queueDao?.aggregateTotalBytes() ?: 0L }.getOrDefault(0L)
+        return TransferNotification.foregroundInfo(applicationContext, transferred, total)
     }
 
     override suspend fun doWork(): Result {
@@ -79,47 +76,36 @@ class TransferWorker(
 
         val prefs = com.cloudyte.app.data.UserPreferences.observe(applicationContext).first()
         val showDetailedProgress = prefs.notificationsEnabled && prefs.progressAlerts
-        val initialTotals = queueDao.aggregateProgressTotals()
         trySetForeground(
             TransferNotification.foregroundInfo(
                 applicationContext,
-                initialTotals.bytesTransferred,
-                initialTotals.totalBytes,
+                queueDao.aggregateBytesTransferred(),
+                queueDao.aggregateTotalBytes(),
                 showDetailedProgress = showDetailedProgress
             )
         )
         val trigger = runCatching { DrainTrigger.valueOf(inputData.getString(KEY_TRIGGER) ?: "APP_START") }
             .getOrDefault(DrainTrigger.APP_START)
-        var lastUiNotifyAt = 0L
-        var lastTransferId: String? = null
         val drained = container.transferQueueDrainer.drain(trigger, { isStopped }) { snapshot ->
-            val currentMs = System.currentTimeMillis()
-            val isTerminalSnapshot = snapshot.totalBytes > 0L && snapshot.bytesTransferred >= snapshot.totalBytes
-            val transferChanged = snapshot.transferId != lastTransferId
-            if (lastUiNotifyAt == 0L || transferChanged || isTerminalSnapshot || currentMs < lastUiNotifyAt || (currentMs - lastUiNotifyAt) >= 500L) {
-                lastUiNotifyAt = currentMs
-                lastTransferId = snapshot.transferId
-                setProgress(
-                    Data.Builder()
-                        .putString("transfer_id", snapshot.transferId)
-                        .putString("transfer_state", snapshot.state.name)
-                        .putLong("bytes_transferred", snapshot.bytesTransferred)
-                        .putLong("total_bytes", snapshot.totalBytes)
-                        .putLong("bytes_per_second", snapshot.bytesPerSecond)
-                        .putLong("eta_seconds", snapshot.etaSeconds ?: -1L)
-                        .build()
+            setProgress(
+                Data.Builder()
+                    .putString("transfer_id", snapshot.transferId)
+                    .putString("transfer_state", snapshot.state.name)
+                    .putLong("bytes_transferred", snapshot.bytesTransferred)
+                    .putLong("total_bytes", snapshot.totalBytes)
+                    .putLong("bytes_per_second", snapshot.bytesPerSecond)
+                    .putLong("eta_seconds", snapshot.etaSeconds ?: -1L)
+                    .build()
+            )
+            trySetForeground(
+                TransferNotification.foregroundInfo(
+                    applicationContext,
+                    queueDao.aggregateBytesTransferred(),
+                    queueDao.aggregateTotalBytes(),
+                    snapshot.transferId,
+                    showDetailedProgress = showDetailedProgress
                 )
-                val totals = queueDao.aggregateProgressTotals()
-                trySetForeground(
-                    TransferNotification.foregroundInfo(
-                        applicationContext,
-                        totals.bytesTransferred,
-                        totals.totalBytes,
-                        snapshot.transferId,
-                        showDetailedProgress = showDetailedProgress
-                    )
-                )
-            }
+            )
         }
         scheduleFollowUpWork(container)
         return when (drained) {

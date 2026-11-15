@@ -21,7 +21,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ThumbnailEntity::class,
         BackupSourceEntity::class
     ],
-    version = 16,
+    version = 15,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -314,16 +314,6 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        val MIGRATION_15_16 = object : Migration(15, 16) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("CREATE INDEX IF NOT EXISTS index_cloud_files_isEncrypted ON cloud_files(isEncrypted)")
-                db.execSQL("CREATE INDEX IF NOT EXISTS index_cloud_files_isFolder_time_updatedAt ON cloud_files(isFolder, time, updatedAt)")
-                db.execSQL("CREATE INDEX IF NOT EXISTS index_upload_records_localUri_targetAccountId_targetFolderId_status_uploadedAt ON upload_records(localUri, targetAccountId, targetFolderId, status, uploadedAt)")
-                db.execSQL("CREATE INDEX IF NOT EXISTS index_upload_records_contentHash_fileSize_targetAccountId_targetFolderId_status_uploadedAt ON upload_records(contentHash, fileSize, targetAccountId, targetFolderId, status, uploadedAt)")
-                db.execSQL("CREATE INDEX IF NOT EXISTS index_upload_records_fileName_fileSize_targetAccountId_status ON upload_records(fileName, fileSize, targetAccountId, status)")
-            }
-        }
-
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -344,8 +334,7 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_11_12,
                         MIGRATION_12_13,
                         MIGRATION_13_14,
-                        MIGRATION_14_15,
-                        MIGRATION_15_16
+                        MIGRATION_14_15
                     )
                     .build()
                 INSTANCE = instance

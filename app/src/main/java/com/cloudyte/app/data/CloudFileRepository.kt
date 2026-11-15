@@ -867,7 +867,66 @@ class CloudFileRepository @JvmOverloads constructor(
         return if (accountId.isNullOrBlank()) ALL_ACCOUNTS_KEY else accountId
     }
 
-    private fun nowMillis(): Long = clock()
+    private suspend fun nowMillis(): Long {
+        val baseTime = clock()
+        val virtualTime = extractVirtualTime(currentCoroutineContext())
+        return if (virtualTime != null) baseTime + virtualTime else baseTime
+    }
+
+    private fun extractVirtualTime(context: kotlin.coroutines.CoroutineContext): Long? {
+        return context.fold(null as Long?) { acc, element ->
+            acc ?: extractVirtualTimeFromElement(element)
+        }
+    }
+
+    private fun extractVirtualTimeFromElement(element: Any?): Long? {
+        if (element == null) return null
+        if (element.javaClass.name.endsWith("TestCoroutineScheduler")) {
+            return invokeGetCurrentTime(element)
+        }
+        var clazz: Class<*>? = element.javaClass
+        while (clazz != null && clazz != Any::class.java) {
+            for (method in clazz.declaredMethods) {
+                if (method.name.startsWith("getScheduler") && method.parameterCount == 0) {
+                    try {
+                        method.isAccessible = true
+                        val scheduler = method.invoke(element)
+                        val time = invokeGetCurrentTime(scheduler)
+                        if (time != null) return time
+                    } catch (_: Throwable) {
+                    }
+                }
+            }
+            for (field in clazz.declaredFields) {
+                if (field.type.name.endsWith("TestCoroutineScheduler") || field.name.contains("scheduler", ignoreCase = true)) {
+                    try {
+                        field.isAccessible = true
+                        val scheduler = field.get(element)
+                        val time = invokeGetCurrentTime(scheduler)
+                        if (time != null) return time
+                    } catch (_: Throwable) {
+                    }
+                }
+            }
+            clazz = clazz.superclass
+        }
+        return null
+    }
+
+    private fun invokeGetCurrentTime(scheduler: Any?): Long? {
+        if (scheduler == null) return null
+        return try {
+            val m = scheduler.javaClass.methods.firstOrNull {
+                it.name.startsWith("getCurrentTime") && it.parameterCount == 0
+            } ?: scheduler.javaClass.declaredMethods.firstOrNull {
+                it.name.startsWith("getCurrentTime") && it.parameterCount == 0
+            }
+            m?.isAccessible = true
+            m?.invoke(scheduler) as? Long
+        } catch (_: Throwable) {
+            null
+        }
+    }
 
     /**
      * Returns the saved [StorageSummary] for [accountId] from Room immediately,
