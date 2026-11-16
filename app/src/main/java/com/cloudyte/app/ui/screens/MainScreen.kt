@@ -141,12 +141,6 @@ fun MainScreen(rootNavController: NavController) {
                     }
                 }
             } else {
-                val homeViewModel: HomeViewModel = viewModel()
-                val hasInitialContent by homeViewModel.hasInitialContent.collectAsStateWithLifecycle(initialValue = true)
-                val navBackStackEntry by bottomNavController.currentBackStackEntryAsState()
-                val currentRoute = navBackStackEntry?.destination?.route ?: "home"
-                val isHomeLoading = currentRoute == "home" && !hasInitialContent
-
                 Box(modifier = Modifier.fillMaxSize()) {
                     MainNavHost(
                         bottomNavController = bottomNavController,
@@ -155,24 +149,22 @@ fun MainScreen(rootNavController: NavController) {
                         modifier = Modifier.fillMaxSize()
                     )
 
-                    if (!isHomeLoading) {
-                        androidx.compose.foundation.layout.Column(
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .fillMaxWidth()
-                                .padding(bottom = 2.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            ActiveTransferPill(navController = bottomNavController)
-                            FloatingNavigationBar(
-                                navController = bottomNavController,
-                                showNavText = prefsState.showNavText,
-                                modifier = Modifier.fillMaxWidth(),
-                                onNavigate = { route ->
-                                    bottomNavController.navigateSingleTopRestore(route)
-                                }
-                            )
-                        }
+                    androidx.compose.foundation.layout.Column(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .padding(bottom = 2.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        ActiveTransferPill(navController = bottomNavController)
+                        FloatingNavigationBar(
+                            navController = bottomNavController,
+                            showNavText = prefsState.showNavText,
+                            modifier = Modifier.fillMaxWidth(),
+                            onNavigate = { route ->
+                                bottomNavController.navigateSingleTopRestore(route)
+                            }
+                        )
                     }
                 }
             }
