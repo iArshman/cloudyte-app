@@ -54,6 +54,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import retrofit2.Response
+import java.io.IOException
 import java.util.concurrent.Executor
 
 class FakeCloudyteApi : CloudyteApi {
@@ -71,6 +72,7 @@ class FakeCloudyteApi : CloudyteApi {
         Response.success(emptyList())
     }
 
+    val renameCalls = mutableListOf<Triple<String, String?, String>>()
     var renameHandler: suspend (
         fileId: String,
         accountId: String?,
@@ -79,6 +81,7 @@ class FakeCloudyteApi : CloudyteApi {
         Response.success(Unit)
     }
 
+    val deleteCalls = mutableListOf<Pair<String, String?>>()
     var deleteHandler: suspend (
         fileId: String,
         accountId: String?
@@ -86,6 +89,7 @@ class FakeCloudyteApi : CloudyteApi {
         Response.success(Unit)
     }
 
+    val createFolderCalls = mutableListOf<Pair<String?, FolderRequest>>()
     var createFolderHandler: suspend (
         accountId: String?,
         request: FolderRequest
@@ -126,8 +130,10 @@ class FakeCloudyteApi : CloudyteApi {
         return getFilesHandler(accountId, folderId, search, cursor, limit, ifNoneMatch)
     }
 
-    override suspend fun createFolder(accountId: String?, request: FolderRequest): Response<Unit> =
-        createFolderHandler(accountId, request)
+    override suspend fun createFolder(accountId: String?, request: FolderRequest): Response<Unit> {
+        createFolderCalls.add(accountId to request)
+        return createFolderHandler(accountId, request)
+    }
 
     override suspend fun uploadFile(
         accountId: String,
@@ -178,11 +184,14 @@ class FakeCloudyteApi : CloudyteApi {
         accountId: String?,
         request: RenameRequest
     ): Response<Unit> {
+        renameCalls.add(Triple(fileId, accountId, request.name))
         return renameHandler(fileId, accountId, request)
     }
 
-    override suspend fun deleteFile(fileId: String, accountId: String?): Response<Unit> =
-        deleteHandler(fileId, accountId)
+    override suspend fun deleteFile(fileId: String, accountId: String?): Response<Unit> {
+        deleteCalls.add(fileId to accountId)
+        return deleteHandler(fileId, accountId)
+    }
 
     override suspend fun moveFile(request: MoveCopyRequest): Response<Unit> = Response.success(Unit)
     override suspend fun copyFile(request: MoveCopyRequest): Response<Unit> = Response.success(Unit)
@@ -420,7 +429,62 @@ class CloudFileRepositoryTest {
     }
 
     @Test
+    fun rename_onlineCallsApiImmediatelyWithoutQueuingOutbox() = runTest {
+        val original = CloudFile(id = "file_online_1", name = "Draft.pdf", type = "pdf")
+        db.cloudFileDao().insertFiles(listOf(LocalCloudFile.fromCloudFile(original, "acc1", "root")))
+
+        val result = repository.rename("file_online_1", "acc1", "Final.pdf")
+
+        assertTrue(result.isSuccess)
+        assertEquals(listOf(Triple("file_online_1", "acc1", "Final.pdf")), fakeApi.renameCalls)
+        assertEquals("Final.pdf", db.cloudFileDao().getFileById("file_online_1")?.name)
+        assertTrue("Online rename should not enqueue outbox item", db.fileMutationDao().pending().isEmpty())
+    }
+
+    @Test
+    fun createFolder_onlineCallsApiAndRefreshesFolderImmediately() = runTest {
+        fakeApi.getFilesHandler = { _, _, _, _, _, _ ->
+            Response.success(
+                listOf(CloudFile(id = "srv_folder_1", name = "Work", type = "folder", isFolder = true))
+            )
+        }
+
+        val result = repository.createFolder("Work", "acc1", "root")
+
+        assertTrue(result.isSuccess)
+        assertEquals(1, fakeApi.createFolderCalls.size)
+        assertEquals("Work", fakeApi.createFolderCalls.single().second.name)
+        assertTrue("Online createFolder should not enqueue outbox item", db.fileMutationDao().pending().isEmpty())
+        val stored = db.cloudFileDao().getFilesForFolder("acc1", "root")
+        assertEquals(listOf("srv_folder_1"), stored.map { it.id })
+    }
+
+    @Test
+    fun createFolder_and_rename_propagateServerHttpErrorWithoutQueuingOfflineOutbox() = runTest {
+        val original = CloudFile(id = "file_err", name = "Doc.txt", type = "file")
+        db.cloudFileDao().insertFiles(listOf(LocalCloudFile.fromCloudFile(original, "acc1", "root")))
+
+        fakeApi.createFolderHandler = { _, _ ->
+            Response.error(403, """{"error":"Permission denied by provider"}""".toResponseBody("application/json".toMediaType()))
+        }
+        fakeApi.renameHandler = { _, _, _ ->
+            Response.error(400, """{"error":"Invalid filename character"}""".toResponseBody("application/json".toMediaType()))
+        }
+
+        val folderErr = repository.createFolder("Bad/", "acc1", "root")
+        val renameErr = repository.rename("file_err", "acc1", "Bad?.txt")
+
+        assertTrue(folderErr.isFailure)
+        assertEquals("Permission denied by provider", folderErr.exceptionOrNull()?.message)
+        assertTrue(renameErr.isFailure)
+        assertEquals("Invalid filename character", renameErr.exceptionOrNull()?.message)
+        assertEquals("Doc.txt", db.cloudFileDao().getFileById("file_err")?.name)
+        assertTrue("HTTP errors must not enqueue offline outbox mutations", db.fileMutationDao().pending().isEmpty())
+    }
+
+    @Test
     fun rename_isOptimisticAndPersistedInOutboxWithoutNetwork() = runTest {
+        fakeApi.renameHandler = { _, _, _ -> throw IOException("Network unavailable") }
         val original = CloudFile(id = "file_1", name = "OriginalReport.pdf", type = "pdf")
         db.cloudFileDao().insertFiles(listOf(LocalCloudFile.fromCloudFile(original, "acc1", "root")))
 
@@ -436,6 +500,7 @@ class CloudFileRepositoryTest {
 
     @Test
     fun queuedRenameSurvivesRepositoryRecreation() = runTest {
+        fakeApi.renameHandler = { _, _, _ -> throw IOException("Network unavailable") }
         val original = CloudFile(id = "file_2", name = "Budget2026.xlsx", type = "file")
         db.cloudFileDao().insertFiles(listOf(LocalCloudFile.fromCloudFile(original, "acc1", "root")))
 
@@ -449,6 +514,7 @@ class CloudFileRepositoryTest {
 
     @Test
     fun delete_removesImmediatelyAndPersistsOutboxEntry() = runTest {
+        fakeApi.deleteHandler = { _, _ -> throw IOException("Network unavailable") }
         val original = CloudFile(id = "del_1", name = "Important.docx", type = "file")
         db.cloudFileDao().insertFiles(listOf(LocalCloudFile.fromCloudFile(original, "acc1", "root")))
 
@@ -460,6 +526,7 @@ class CloudFileRepositoryTest {
 
     @Test
     fun createFolder_insertsOptimisticallyAndQueuesForReplay() = runTest {
+        fakeApi.createFolderHandler = { _, _ -> throw IOException("Network unavailable") }
         val result = repository.createFolder("Projects", "acc1", "root")
         assertTrue(result.isSuccess)
         val folders = db.cloudFileDao().getFilesForFolder("acc1", "root")
@@ -473,6 +540,9 @@ class CloudFileRepositoryTest {
 
     @Test
     fun refresh_preservesQueuedRenameDeleteAndCreateFolderOverServerSnapshot() = runTest {
+        fakeApi.renameHandler = { _, _, _ -> throw IOException("Network unavailable") }
+        fakeApi.deleteHandler = { _, _ -> throw IOException("Network unavailable") }
+        fakeApi.createFolderHandler = { _, _ -> throw IOException("Network unavailable") }
         db.cloudFileDao().insertFiles(
             listOf(
                 LocalCloudFile.fromCloudFile(CloudFile(id = "keep", name = "Before.txt", type = "file"), "acc1", "root"),
@@ -675,5 +745,57 @@ class CloudFileRepositoryTest {
         assertEquals("cloudyte_folder_sync_acc1:google_drive:root", gdriveWork)
         assertEquals("cloudyte_folder_sync_acc1:telegram:root", tgWork)
         assertFalse(gdriveWork == tgWork)
+    }
+
+    @Test
+    fun refreshStorage_aggregatesPerAccountWhenMultiAccountPrimarySummaryHasNoCategories() = runTest {
+        db.accountDao().insertAccounts(
+            listOf(
+                com.cloudyte.app.db.LocalAccount(
+                    id = "acc-tg",
+                    name = "TG",
+                    driveName = "TG",
+                    email = null,
+                    accountType = "tg_drive",
+                    usageBytes = 300L,
+                    totalBytes = 0L,
+                    percentage = 0f,
+                    fileCount = 3,
+                    isDefault = true,
+                    channelId = "123"
+                ),
+                com.cloudyte.app.db.LocalAccount(
+                    id = "acc-gd",
+                    name = "GDrive",
+                    driveName = "GDrive",
+                    email = "u@example.com",
+                    accountType = "gdrive",
+                    usageBytes = 700L,
+                    totalBytes = 10_000L,
+                    percentage = 7f,
+                    fileCount = 4,
+                    isDefault = false,
+                    channelId = null
+                )
+            )
+        )
+
+        fakeApi.getStorageSummaryHandler = { accountId ->
+            when (accountId) {
+                null -> StorageSummary(accountId = "all", accountType = "all", usedBytes = 0L, totalBytes = null, fileCount = null, categories = null)
+                "acc-tg" -> StorageSummary(accountId = "acc-tg", accountType = "tg_drive", usedBytes = 300L, totalBytes = 0L, fileCount = 3, categories = StorageCategories(videos = 300L))
+                "acc-gd" -> StorageSummary(accountId = "acc-gd", accountType = "gdrive", usedBytes = 700L, totalBytes = 10_000L, fileCount = 4, categories = StorageCategories(images = 500L, documents = 200L))
+                else -> error("unexpected $accountId")
+            }
+        }
+
+        val result = repository.refreshStorage(null, force = true)
+        assertTrue(result.isSuccess)
+        val summary = result.getOrThrow()
+        assertEquals(1000L, summary.usedBytes)
+        assertEquals(7, summary.fileCount)
+        assertEquals(500L, summary.categories?.images)
+        assertEquals(300L, summary.categories?.videos)
+        assertEquals(200L, summary.categories?.documents)
     }
 }

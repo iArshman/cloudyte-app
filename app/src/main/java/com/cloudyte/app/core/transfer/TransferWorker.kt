@@ -56,6 +56,13 @@ class TransferWorker(
 
     private suspend fun drainQueue(application: CloudyteApplication): Result {
         val container = application.container
+        val trigger = runCatching { DrainTrigger.valueOf(inputData.getString(KEY_TRIGGER) ?: "APP_START") }
+            .getOrDefault(DrainTrigger.APP_START)
+        container.transferDiagnostics.recordEvent(
+            operationType = "worker_start",
+            state = trigger.name,
+            workerRunId = id.toString()
+        )
         if (!container.transferRolloutGate.isEnabled()) {
             val rollout = container.transferRolloutGate.current()
             container.transferDiagnostics.recordEvent(
@@ -74,6 +81,11 @@ class TransferWorker(
 
         if (!queueDao.hasRunnableTransfers(now)) {
             scheduleFollowUpWork(container)
+            container.transferDiagnostics.recordEvent(
+                operationType = "worker_finish",
+                state = "EMPTY",
+                workerRunId = id.toString()
+            )
             return Result.success()
         }
 
@@ -88,43 +100,60 @@ class TransferWorker(
                 showDetailedProgress = showDetailedProgress
             )
         )
-        val trigger = runCatching { DrainTrigger.valueOf(inputData.getString(KEY_TRIGGER) ?: "APP_START") }
-            .getOrDefault(DrainTrigger.APP_START)
         var lastUiNotifyAt = 0L
         var lastTransferId: String? = null
-        val drained = container.transferQueueDrainer.drain(trigger, { isStopped }) { snapshot ->
-            val currentMs = System.currentTimeMillis()
-            val isTerminalSnapshot = snapshot.totalBytes > 0L && snapshot.bytesTransferred >= snapshot.totalBytes
-            val transferChanged = snapshot.transferId != lastTransferId
-            if (lastUiNotifyAt == 0L || transferChanged || isTerminalSnapshot || currentMs < lastUiNotifyAt || (currentMs - lastUiNotifyAt) >= 500L) {
-                lastUiNotifyAt = currentMs
-                lastTransferId = snapshot.transferId
-                setProgress(
-                    Data.Builder()
-                        .putString("transfer_id", snapshot.transferId)
-                        .putString("transfer_state", snapshot.state.name)
-                        .putLong("bytes_transferred", snapshot.bytesTransferred)
-                        .putLong("total_bytes", snapshot.totalBytes)
-                        .putLong("bytes_per_second", snapshot.bytesPerSecond)
-                        .putLong("eta_seconds", snapshot.etaSeconds ?: -1L)
-                        .build()
-                )
-                val totals = queueDao.aggregateProgressTotals()
-                trySetForeground(
-                    TransferNotification.foregroundInfo(
-                        applicationContext,
-                        totals.bytesTransferred,
-                        totals.totalBytes,
-                        snapshot.transferId,
-                        showDetailedProgress = showDetailedProgress
+        var totalProcessed = 0
+        var lastResult: DrainResult = DrainResult.Drained(0, false)
+        var batches = 0
+        while (!isStopped && batches < MAX_WORKER_DRAIN_BATCHES) {
+            val drained = container.transferQueueDrainer.drain(trigger, { isStopped }) { snapshot ->
+                val currentMs = System.currentTimeMillis()
+                val isTerminalSnapshot = snapshot.totalBytes > 0L && snapshot.bytesTransferred >= snapshot.totalBytes
+                val transferChanged = snapshot.transferId != lastTransferId
+                if (lastUiNotifyAt == 0L || transferChanged || isTerminalSnapshot || currentMs < lastUiNotifyAt || (currentMs - lastUiNotifyAt) >= 500L) {
+                    lastUiNotifyAt = currentMs
+                    lastTransferId = snapshot.transferId
+                    setProgress(
+                        Data.Builder()
+                            .putString("transfer_id", snapshot.transferId)
+                            .putString("transfer_state", snapshot.state.name)
+                            .putLong("bytes_transferred", snapshot.bytesTransferred)
+                            .putLong("total_bytes", snapshot.totalBytes)
+                            .putLong("bytes_per_second", snapshot.bytesPerSecond)
+                            .putLong("eta_seconds", snapshot.etaSeconds ?: -1L)
+                            .build()
                     )
-                )
+                    val totals = queueDao.aggregateProgressTotals()
+                    trySetForeground(
+                        TransferNotification.foregroundInfo(
+                            applicationContext,
+                            totals.bytesTransferred,
+                            totals.totalBytes,
+                            snapshot.transferId,
+                            showDetailedProgress = showDetailedProgress
+                        )
+                    )
+                }
+            }
+            lastResult = drained
+            batches++
+            if (drained is DrainResult.Drained) {
+                totalProcessed += drained.processed
+                if (!drained.hasMore || drained.processed == 0) break
+            } else {
+                break
             }
         }
         scheduleFollowUpWork(container)
-        return when (drained) {
-            is DrainResult.Drained -> if (drained.hasMore) Result.retry() else Result.success()
-            DrainResult.Stopped -> Result.retry()
+        val hasMoreRemaining = (lastResult as? DrainResult.Drained)?.hasMore == true
+        container.transferDiagnostics.recordEvent(
+            operationType = "worker_finish",
+            state = if (lastResult == DrainResult.Stopped) "STOPPED" else "DONE_processed_$totalProcessed",
+            workerRunId = id.toString()
+        )
+        return when {
+            lastResult == DrainResult.Stopped || (hasMoreRemaining && batches >= MAX_WORKER_DRAIN_BATCHES) -> Result.retry()
+            else -> Result.success()
         }
     }
 
@@ -158,5 +187,6 @@ class TransferWorker(
         const val COMMAND_PAUSE = "pause"
         const val COMMAND_RESUME = "resume"
         const val COMMAND_CANCEL = "cancel"
+        private const val MAX_WORKER_DRAIN_BATCHES = 25
     }
 }

@@ -13,11 +13,22 @@ sealed interface TransferExecutionState {
 
 sealed interface TransferCommand {
     val transferId: String
-    data class Start(override val transferId: String) : TransferCommand
-    data class Retry(override val transferId: String) : TransferCommand
-    data class Pause(override val transferId: String) : TransferCommand
-    data class Resume(override val transferId: String) : TransferCommand
-    data class Cancel(override val transferId: String) : TransferCommand
+    val diagnosticName: String
+    data class Start(override val transferId: String) : TransferCommand {
+        override val diagnosticName: String get() = "Start"
+    }
+    data class Retry(override val transferId: String) : TransferCommand {
+        override val diagnosticName: String get() = "Retry"
+    }
+    data class Pause(override val transferId: String) : TransferCommand {
+        override val diagnosticName: String get() = "Pause"
+    }
+    data class Resume(override val transferId: String) : TransferCommand {
+        override val diagnosticName: String get() = "Resume"
+    }
+    data class Cancel(override val transferId: String) : TransferCommand {
+        override val diagnosticName: String get() = "Cancel"
+    }
 }
 
 data class TransferProgress(

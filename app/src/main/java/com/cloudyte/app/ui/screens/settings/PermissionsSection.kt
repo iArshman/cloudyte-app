@@ -12,6 +12,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AdminPanelSettings
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
@@ -140,6 +144,7 @@ fun PermissionsSection(
             SettingsClickRow(
                 title = stringResource(R.string.settings_perm_notifications),
                 subtitle = sub,
+                icon = Icons.Outlined.Notifications,
                 trailing = {
                     StatusBadge(
                         text = if (notifGranted) stringResource(R.string.settings_perm_granted)
@@ -163,6 +168,7 @@ fun PermissionsSection(
             SettingsClickRow(
                 title = "Scoped Backup Folder Access",
                 subtitle = folderStatusText,
+                icon = Icons.Outlined.FolderOpen,
                 trailing = {
                     StatusBadge(
                         text = when {
@@ -181,6 +187,7 @@ fun PermissionsSection(
             SettingsClickRow(
                 title = "Open Android App Settings",
                 subtitle = "Review system permissions or revoke/restore app capabilities",
+                icon = Icons.Outlined.AdminPanelSettings,
                 onClick = { context.startActivity(PermissionsHelper.buildAppDetailsSettingsIntent(context)) },
                 modifier = Modifier.testTag("perm_open_system_settings_row")
             )

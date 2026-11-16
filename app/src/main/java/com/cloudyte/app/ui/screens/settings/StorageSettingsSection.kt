@@ -27,7 +27,13 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AutoDelete
+import androidx.compose.material.icons.outlined.CleaningServices
+import androidx.compose.material.icons.outlined.CreateNewFolder
+import androidx.compose.material.icons.outlined.DataUsage
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.DownloadForOffline
+import androidx.compose.material.icons.outlined.PhotoLibrary
 import com.cloudyte.app.R
 import com.cloudyte.app.core.cache.CacheCleanupWorker
 import com.cloudyte.app.core.cache.StorageBreakdown
@@ -107,6 +113,7 @@ fun StorageSettingsSection(
             SettingsClickRow(
                 title = stringResource(R.string.settings_clear_cache),
                 subtitle = "${formatStorageSize(breakdown.totalAppCacheBytes)} • Previews, Coil, HTTP, viewer & staging cache",
+                icon = Icons.Outlined.CleaningServices,
                 onClick = { if (!isBusy) showConfirmClearCache = true },
                 modifier = Modifier.testTag("storage_clear_cache_row")
             )
@@ -115,6 +122,7 @@ fun StorageSettingsSection(
             SettingsClickRow(
                 title = stringResource(R.string.settings_clear_thumbnails),
                 subtitle = "${breakdown.thumbnailCount} thumbnails • ${formatStorageSize(breakdown.thumbnailBytes)}",
+                icon = Icons.Outlined.PhotoLibrary,
                 onClick = { if (!isBusy) showConfirmClearThumbnails = true },
                 modifier = Modifier.testTag("storage_clear_thumbnails_row")
             )
@@ -123,6 +131,7 @@ fun StorageSettingsSection(
             SettingsClickRow(
                 title = stringResource(R.string.settings_clear_downloads),
                 subtitle = "${breakdown.totalDownloadsCount} files • ${formatStorageSize(breakdown.totalDownloadsBytes)} (offline vault & exported files)",
+                icon = Icons.Outlined.DownloadForOffline,
                 onClick = { if (!isBusy) showConfirmClearDownloads = true },
                 modifier = Modifier.testTag("storage_clear_downloads_row")
             )
@@ -132,6 +141,7 @@ fun StorageSettingsSection(
             SettingsClickRow(
                 title = stringResource(R.string.settings_download_directory),
                 subtitle = "${if (prefsState.downloadDirectory == "INTERNAL") downloadDirs[0] else downloadDirs[1]} (${activeDir.name})",
+                icon = Icons.Outlined.CreateNewFolder,
                 onClick = { showDownloadDirDialog = true },
                 modifier = Modifier.testTag("storage_download_dir_row")
             )
@@ -140,6 +150,7 @@ fun StorageSettingsSection(
             SettingsSwitchRow(
                 title = stringResource(R.string.settings_auto_clean_cache),
                 subtitle = "Periodically trims preview and HTTP cache when total size exceeds limit",
+                icon = Icons.Outlined.AutoDelete,
                 checked = prefsState.autoCleanCache,
                 onChange = { enabled ->
                     scope.launch {
@@ -161,6 +172,7 @@ fun StorageSettingsSection(
                     scope.launch { UserPreferences.setMaxCacheSizeMb(context, snapped) }
                 },
                 valueLabel = "${prefsState.maxCacheSizeMb} MB",
+                icon = Icons.Outlined.DataUsage,
                 modifier = Modifier.testTag("storage_max_cache_slider")
             )
         }

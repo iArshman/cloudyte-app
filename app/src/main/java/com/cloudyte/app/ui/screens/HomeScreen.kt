@@ -265,7 +265,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     _accounts.value.size == 1 -> _accounts.value.first().effectiveId.ifBlank { ALL_ACCOUNTS_STORAGE_ID }
                     else -> ALL_ACCOUNTS_STORAGE_ID
                 }
-                repository.refreshStorage(targetStorageId, force = forceStorageRefresh)
+                val needsForce = forceStorageRefresh ||
+                    (storageSummary.value?.usedBytes == 0L && _accounts.value.any { it.usageBytes > 0L }) ||
+                    storageSummary.value?.categories == null
+                repository.refreshStorage(targetStorageId, force = needsForce)
             } catch (e: Exception) {
                 Log.e("HomeViewModel", "General data loading error", e)
                 _errorMessage.value = e.localizedMessage ?: "Failed to load cloud data"
@@ -606,7 +609,12 @@ fun HomeScreen(
                 // Asymmetric Stat Tiles (Total files & Linked drives) + Category Bento Grid
                 item {
                     val active = effectiveSummary
-                    val totalFilesCount = active?.fileCount ?: accounts.sumOf { it.fileCount ?: 0 }
+                    val selectedAccForStats = accounts.firstOrNull { it.effectiveId == selectedStorageAccountId }
+                    val totalFilesCount = active?.fileCount ?: if (selectedStorageAccountId == ALL_ACCOUNTS_STORAGE_ID) {
+                        accounts.sumOf { it.fileCount ?: 0 }
+                    } else {
+                        selectedAccForStats?.fileCount ?: 0
+                    }
                     val categories = active?.categories ?: deriveCategoriesFromFiles(recentFiles, active?.usedBytes ?: 0L)
                     val segments = remember(categories, active?.usedBytes) {
                         calculateSegmentProportions(categories, active?.usedBytes ?: 0L)

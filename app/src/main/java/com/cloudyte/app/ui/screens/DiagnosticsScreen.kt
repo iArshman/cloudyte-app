@@ -13,9 +13,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -55,12 +55,12 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                 title = { Text("Diagnostics", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
                     IconButton(onClick = { clipboard.setText(AnnotatedString(report)) }) {
-                        Icon(Icons.Default.ContentCopy, contentDescription = "Copy diagnostics")
+                        Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy diagnostics")
                     }
                     IconButton(onClick = {
                         val intent = Intent.createChooser(
@@ -73,7 +73,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                         )
                         context.startActivity(intent)
                     }) {
-                        Icon(Icons.Default.Share, contentDescription = "Share diagnostics")
+                        Icon(Icons.Outlined.Share, contentDescription = "Share diagnostics")
                     }
                 }
             )
@@ -148,4 +148,4 @@ private fun SummaryRow(label: String, value: String) {
     }
 }
 
-private const val CURRENT_SCHEMA_VERSION = 15
+private const val CURRENT_SCHEMA_VERSION = 16

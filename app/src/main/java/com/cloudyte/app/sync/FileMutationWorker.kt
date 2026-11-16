@@ -18,6 +18,7 @@ import com.cloudyte.app.db.AppDatabase
 import com.cloudyte.app.db.LocalFileMutation
 import kotlinx.coroutines.CancellationException
 import retrofit2.HttpException
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlin.random.Random
 
@@ -88,6 +89,9 @@ class FileMutationWorker(context: Context, params: WorkerParameters) : Coroutine
             } catch (e: HttpException) {
                 dao.recordRetry(mutation.operationId, e.message(), "NETWORK", nextAttemptAt(mutation.attemptCount))
                 hasRetryableWork = true
+            } catch (e: IOException) {
+                dao.recordRetry(mutation.operationId, e.message ?: "Network error", "NETWORK", nextAttemptAt(mutation.attemptCount))
+                hasRetryableWork = true
             } catch (e: Exception) {
                 dao.markPermanent(mutation.operationId, e.message ?: "Invalid mutation", "INVALID_MUTATION")
                 rollbackOptimisticProjection(database, mutation)
@@ -98,6 +102,7 @@ class FileMutationWorker(context: Context, params: WorkerParameters) : Coroutine
 
     private suspend fun refreshFolder(repository: CloudFileRepository, mutation: LocalFileMutation) {
         repository.invalidateFolderCache(mutation.accountId, mutation.parentFolderId)
+        repository.invalidateStorageCache()
         repository.refresh(mutation.accountId, mutation.parentFolderId, force = true)
     }
 
@@ -133,7 +138,7 @@ class FileMutationWorker(context: Context, params: WorkerParameters) : Coroutine
                     .build()
                 WorkManager.getInstance(context).enqueueUniqueWork(
                     UNIQUE_WORK_NAME,
-                    ExistingWorkPolicy.KEEP,
+                    ExistingWorkPolicy.REPLACE,
                     request
                 )
             } catch (e: IllegalStateException) {

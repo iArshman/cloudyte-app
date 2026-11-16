@@ -49,7 +49,12 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import android.os.Process
+import com.cloudyte.app.core.transfer.DrainResult
+import com.cloudyte.app.core.transfer.DrainTrigger
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Composition root for application-scoped dependencies.
@@ -119,9 +124,76 @@ class AppContainer(context: Context) {
         TransferRepository(database.transferDao(), providerRegistry)
     }
 
-    val transferScheduler: TransferScheduler by lazy { TransferScheduler(appContext) }
-
     val transferDiagnostics: TransferDiagnostics by lazy { TransferDiagnostics() }
+
+    val transferScheduler: TransferScheduler by lazy {
+        TransferScheduler(appContext, transferDiagnostics)
+    }
+
+    private val immediateDrainMutex = Mutex()
+    private val immediateDrainRequested = AtomicBoolean(false)
+
+    /**
+     * Immediately drains runnable transfers in-process on [dispatchers.io] using the atomic Room
+     * lease queue so user uploads/downloads start in 0ms without stalling behind OEM WorkManager
+     * throttling, while WorkManager handles process-death recovery and scheduled retries.
+     */
+    fun kickImmediateDrain(trigger: DrainTrigger = DrainTrigger.USER_ENQUEUE, reason: String? = null) {
+        immediateDrainRequested.set(true)
+        applicationScope.launch(dispatchers.io) {
+            while (immediateDrainRequested.get()) {
+                if (!immediateDrainMutex.tryLock()) break
+                try {
+                    while (immediateDrainRequested.getAndSet(false)) {
+                        if (!transferRolloutGate.isEnabled()) break
+                        val queueDao = database.transferQueueDao()
+                        val now = System.currentTimeMillis()
+                        queueDao.recoverExpiredLeases(now)
+                        queueDao.requeueNetworkWaiters(now)
+                        if (!queueDao.hasRunnableTransfers(now)) continue
+                        transferDiagnostics.recordEvent(
+                            operationType = "immediate_drain_start",
+                            state = trigger.name,
+                            networkState = reason ?: networkMonitor.current().name
+                        )
+                        var processedTotal = 0
+                        var iterations = 0
+                        while (iterations < 25) {
+                            val result = transferQueueDrainer.drain(trigger, { false }) { }
+                            iterations++
+                            if (result is DrainResult.Drained) {
+                                processedTotal += result.processed
+                                if (!result.hasMore || result.processed == 0) break
+                            } else {
+                                break
+                            }
+                        }
+                        transferDiagnostics.recordEvent(
+                            operationType = "immediate_drain_finish",
+                            state = "DONE_processed_$processedTotal"
+                        )
+                        val followNow = System.currentTimeMillis()
+                        runCatching {
+                            queueDao.nextRetryAt(followNow)?.let { transferScheduler.scheduleRetryAt(it) }
+                            queueDao.nextLeaseExpiry(followNow)?.let { transferScheduler.scheduleLeaseRecoveryAt(it) }
+                            if (queueDao.hasNetworkWaiters()) transferScheduler.scheduleNetworkRecovery()
+                        }
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    transferDiagnostics.recordEvent(
+                        operationType = "immediate_drain_error",
+                        state = trigger.name,
+                        errorCode = error::class.simpleName ?: "DRAIN_ERROR",
+                        networkState = error.message?.take(120)
+                    )
+                } finally {
+                    immediateDrainMutex.unlock()
+                }
+            }
+        }
+    }
 
     /** Fail-safe kill switch for staged production rollout; queued rows remain durable when disabled. */
     val transferRolloutGate: TransferRolloutGate by lazy { TransferRolloutGate(appContext) }
@@ -210,8 +282,9 @@ class AppContainer(context: Context) {
         TransferCoordinator(
             context = appContext,
             repository = transferDomainRepository,
-            scheduleBackgroundWork = { context ->
+            scheduleBackgroundWork = { _ ->
                 transferScheduler.kick(ScheduleReason.USER_ENQUEUE, allowMetered = true)
+                kickImmediateDrain(DrainTrigger.USER_ENQUEUE, "coordinator_schedule")
             },
             diagnostics = transferDiagnostics,
             scheduler = transferScheduler
@@ -249,6 +322,7 @@ class AppContainer(context: Context) {
                     if (status != com.cloudyte.app.core.network.NetworkStatus.UNAVAILABLE &&
                         status != com.cloudyte.app.core.network.NetworkStatus.CAPTIVE_PORTAL) {
                         transferScheduler.kick(ScheduleReason.NETWORK_RESTORED, allowMetered = true)
+                        kickImmediateDrain(DrainTrigger.NETWORK_RESTORED, "network_restored")
                     }
                 }
         }

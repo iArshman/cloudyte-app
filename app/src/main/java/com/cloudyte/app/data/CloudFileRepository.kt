@@ -29,9 +29,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import com.cloudyte.app.api.RenameRequest
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.update
+import java.io.IOException
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -702,36 +704,62 @@ class CloudFileRepository @JvmOverloads constructor(
         return updatedRows.size
     }
 
+    fun invalidateStorageCache() {
+        storageRefreshTimestamps.clear()
+    }
+
     suspend fun rename(fileId: String, accountId: String?, newName: String): Result<Unit> {
         val existing = db.cloudFileDao().getFileById(fileId)
             ?: return Result.failure(Exception("File not found"))
         val normalizedAccount = existing.accountId ?: accountId?.takeUnless { it == "root" }
-        val operation = LocalFileMutation(
-            operationId = UUID.randomUUID().toString(),
-            accountId = normalizedAccount,
-            operation = LocalFileMutation.RENAME,
-            fileId = fileId,
-            name = newName,
-            parentFolderId = existing.folderId,
-            providerType = db.accountDao().getAccountById(normalizedAccount ?: "")?.accountType,
-            remoteFileId = fileId,
-            payloadJson = "{\"name\":\"${newName.replace("\\", "\\\\").replace("\"", "\\\"")}\"}",
-            correlationId = UUID.randomUUID().toString()
-        )
-        db.withTransaction {
-            db.cloudFileDao().updateName(fileId, newName)
-            db.fileMutationDao().insert(operation)
-            db.folderSyncMetaDao().deleteForFolder(accountMetaKey(normalizedAccount), existing.folderId)
-        }
         val fKey = folderKey(normalizedAccount, existing.folderId)
-        etagMap.remove(fKey)
-        val updatedCloudFile = existing.copy(name = newName).toCloudFile()
-        folderMemoryCache.computeIfPresent(fKey) { _, list ->
-            list.map { if (it.effectiveId == fileId) updatedCloudFile else it }
+
+        return try {
+            val response = api.renameFile(fileId, normalizedAccount, RenameRequest(newName))
+            if (response.isSuccessful) {
+                db.withTransaction {
+                    db.cloudFileDao().updateName(fileId, newName)
+                    db.folderSyncMetaDao().deleteForFolder(accountMetaKey(normalizedAccount), existing.folderId)
+                }
+                etagMap.remove(fKey)
+                val updatedCloudFile = existing.copy(name = newName).toCloudFile()
+                folderMemoryCache.computeIfPresent(fKey) { _, list ->
+                    list.map { if (it.effectiveId == fileId) updatedCloudFile else it }
+                }
+                FileRepository.cacheFiles(listOf(updatedCloudFile))
+                invalidateStorageCache()
+                Result.success(Unit)
+            } else {
+                val errBody = response.errorBody()?.string()
+                Result.failure(Exception(ApiClient.parseError(errBody, response.code())))
+            }
+        } catch (e: IOException) {
+            val operation = LocalFileMutation(
+                operationId = UUID.randomUUID().toString(),
+                accountId = normalizedAccount,
+                operation = LocalFileMutation.RENAME,
+                fileId = fileId,
+                name = newName,
+                parentFolderId = existing.folderId,
+                providerType = db.accountDao().getAccountById(normalizedAccount ?: "")?.accountType,
+                remoteFileId = fileId,
+                payloadJson = "{\"name\":\"${newName.replace("\\", "\\\\").replace("\"", "\\\"")}\"}",
+                correlationId = UUID.randomUUID().toString()
+            )
+            db.withTransaction {
+                db.cloudFileDao().updateName(fileId, newName)
+                db.fileMutationDao().insert(operation)
+                db.folderSyncMetaDao().deleteForFolder(accountMetaKey(normalizedAccount), existing.folderId)
+            }
+            etagMap.remove(fKey)
+            val updatedCloudFile = existing.copy(name = newName).toCloudFile()
+            folderMemoryCache.computeIfPresent(fKey) { _, list ->
+                list.map { if (it.effectiveId == fileId) updatedCloudFile else it }
+            }
+            FileRepository.cacheFiles(listOf(updatedCloudFile))
+            FileMutationWorker.enqueue()
+            Result.success(Unit)
         }
-        FileRepository.cacheFiles(listOf(updatedCloudFile))
-        FileMutationWorker.enqueue()
-        return Result.success(Unit)
     }
 
     suspend fun delete(fileId: String, accountId: String?): Result<Unit> {
@@ -741,30 +769,52 @@ class CloudFileRepository @JvmOverloads constructor(
         }
         val normalizedAccount = existing?.accountId ?: accountId?.takeUnless { it == "root" }
         val parentFolderId = existing?.folderId ?: "root"
-        val operation = LocalFileMutation(
-            operationId = UUID.randomUUID().toString(),
-            accountId = normalizedAccount,
-            operation = LocalFileMutation.DELETE,
-            fileId = fileId,
-            parentFolderId = parentFolderId,
-            providerType = db.accountDao().getAccountById(normalizedAccount ?: "")?.accountType,
-            remoteFileId = fileId,
-            payloadJson = "{}",
-            correlationId = UUID.randomUUID().toString()
-        )
-        db.withTransaction {
-            db.cloudFileDao().deleteById(fileId)
-            db.fileMutationDao().insert(operation)
-            db.folderSyncMetaDao().deleteForFolder(accountMetaKey(normalizedAccount), parentFolderId)
-        }
         val fKey = folderKey(normalizedAccount, parentFolderId)
-        etagMap.remove(fKey)
-        folderMemoryCache.computeIfPresent(fKey) { _, list ->
-            list.filterNot { it.effectiveId == fileId }
+
+        return try {
+            val response = api.deleteFile(fileId, normalizedAccount)
+            if (response.isSuccessful || response.code() == 404) {
+                db.withTransaction {
+                    db.cloudFileDao().deleteById(fileId)
+                    db.folderSyncMetaDao().deleteForFolder(accountMetaKey(normalizedAccount), parentFolderId)
+                }
+                etagMap.remove(fKey)
+                folderMemoryCache.computeIfPresent(fKey) { _, list ->
+                    list.filterNot { it.effectiveId == fileId }
+                }
+                FileRepository.removeCachedFile(fileId)
+                invalidateStorageCache()
+                Result.success(Unit)
+            } else {
+                if (existing != null) recentlyDeletedCache.remove(fileId)
+                val errBody = response.errorBody()?.string()
+                Result.failure(Exception(ApiClient.parseError(errBody, response.code())))
+            }
+        } catch (e: IOException) {
+            val operation = LocalFileMutation(
+                operationId = UUID.randomUUID().toString(),
+                accountId = normalizedAccount,
+                operation = LocalFileMutation.DELETE,
+                fileId = fileId,
+                parentFolderId = parentFolderId,
+                providerType = db.accountDao().getAccountById(normalizedAccount ?: "")?.accountType,
+                remoteFileId = fileId,
+                payloadJson = "{}",
+                correlationId = UUID.randomUUID().toString()
+            )
+            db.withTransaction {
+                db.cloudFileDao().deleteById(fileId)
+                db.fileMutationDao().insert(operation)
+                db.folderSyncMetaDao().deleteForFolder(accountMetaKey(normalizedAccount), parentFolderId)
+            }
+            etagMap.remove(fKey)
+            folderMemoryCache.computeIfPresent(fKey) { _, list ->
+                list.filterNot { it.effectiveId == fileId }
+            }
+            FileRepository.removeCachedFile(fileId)
+            FileMutationWorker.enqueue()
+            Result.success(Unit)
         }
-        FileRepository.removeCachedFile(fileId)
-        FileMutationWorker.enqueue()
-        return Result.success(Unit)
     }
 
     suspend fun undoDelete(fileId: String, accountId: String?): Result<Unit> {
@@ -804,6 +854,7 @@ class CloudFileRepository @JvmOverloads constructor(
                 }
             }
         }
+        invalidateStorageCache()
         return Result.success(Unit)
     }
 
@@ -811,18 +862,19 @@ class CloudFileRepository @JvmOverloads constructor(
         val safeParentId = safeFolderId(parentFolderId)
         val normalizedAccount = if (accountId.isNullOrBlank() || accountId == "root") null else accountId
         val apiParentId = safeParentId.takeUnless { it == "root" }
-        
+
         return try {
             val response = api.createFolder(normalizedAccount, FolderRequest(name = name, parentId = apiParentId))
             if (response.isSuccessful) {
                 invalidateFolderCache(normalizedAccount, safeParentId)
+                invalidateStorageCache()
                 refresh(normalizedAccount, safeParentId, force = true)
                 Result.success(Unit)
             } else {
                 val errBody = response.errorBody()?.string()
                 Result.failure(Exception(ApiClient.parseError(errBody, response.code())))
             }
-        } catch (e: Exception) {
+        } catch (e: IOException) {
             val now = nowMillis()
             val tempId = "temp_${now}_${UUID.randomUUID()}"
             val tempFolder = LocalCloudFile(
@@ -1041,11 +1093,12 @@ class CloudFileRepository @JvmOverloads constructor(
             _storageRefreshing.update { it + safeAccountId }
             storageRefreshTimestamps[safeAccountId] = now
             val apiAccountId = rawAccountId?.takeIf { it.isNotBlank() && it != ALL_ACCOUNTS_KEY && it != "root" }
-            val remote = try {
+            val knownAccounts = db.accountDao().getAllAccounts()
+            val remotePrimary = try {
                 api.getStorageSummary(apiAccountId)
             } catch (primaryErr: Exception) {
                 if (apiAccountId == null) {
-                    val accounts = db.accountDao().getAllAccounts().ifEmpty {
+                    val accounts = knownAccounts.ifEmpty {
                         runCatching { api.getAccounts().map { com.cloudyte.app.db.LocalAccount.fromAccount(it) } }.getOrDefault(emptyList())
                     }
                     if (accounts.isEmpty()) throw primaryErr
@@ -1059,16 +1112,52 @@ class CloudFileRepository @JvmOverloads constructor(
                 }
             }
 
-            val enriched = if (remote.categories == null || remote.fileCount == null) {
-                val localStats = computeLocalCategoriesAndCount(apiAccountId)
-                if (localStats != null) {
-                    remote.copy(
-                        fileCount = remote.fileCount ?: localStats.first,
-                        categories = remote.categories ?: localStats.second
+            // If multi-account summary returned empty/partial stats despite multiple linked drives
+            // having known usage, aggregate per-account summaries directly from the server.
+            val remote = if (
+                apiAccountId == null &&
+                knownAccounts.size > 1 &&
+                (remotePrimary.categories == null || remotePrimary.usedBytes == 0L || remotePrimary.fileCount == null)
+            ) {
+                val perAccount = knownAccounts.mapNotNull { acc ->
+                    runCatching { api.getStorageSummary(acc.id) }.getOrNull()
+                }
+                if (perAccount.isNotEmpty()) {
+                    val aggregated = aggregateStorageSummaries(perAccount)
+                    remotePrimary.copy(
+                        usedBytes = maxOf(remotePrimary.usedBytes, aggregated.usedBytes),
+                        totalBytes = remotePrimary.totalBytes ?: aggregated.totalBytes,
+                        fileCount = remotePrimary.fileCount ?: aggregated.fileCount,
+                        categories = remotePrimary.categories ?: aggregated.categories
                     )
                 } else {
-                    remote
+                    remotePrimary
                 }
+            } else {
+                remotePrimary
+            }
+
+            val enriched = if (remote.categories == null || remote.fileCount == null || remote.usedBytes == 0L) {
+                val localStats = computeLocalCategoriesAndCount(apiAccountId)
+                val matchedAccount = apiAccountId?.let { id -> knownAccounts.firstOrNull { it.id == id } }
+                val fallbackUsedBytes = when {
+                    remote.usedBytes > 0L -> remote.usedBytes
+                    matchedAccount != null && matchedAccount.usageBytes > 0L -> matchedAccount.usageBytes
+                    apiAccountId == null && knownAccounts.isNotEmpty() -> knownAccounts.sumOf { it.usageBytes.coerceAtLeast(0L) }
+                    else -> remote.usedBytes
+                }
+                val fallbackFileCount = remote.fileCount
+                    ?: matchedAccount?.fileCount
+                    ?: if (apiAccountId == null && knownAccounts.any { it.fileCount != null }) {
+                        knownAccounts.sumOf { it.fileCount ?: 0 }
+                    } else {
+                        localStats?.first
+                    }
+                remote.copy(
+                    usedBytes = fallbackUsedBytes,
+                    fileCount = fallbackFileCount,
+                    categories = remote.categories ?: localStats?.second
+                )
             } else {
                 remote
             }

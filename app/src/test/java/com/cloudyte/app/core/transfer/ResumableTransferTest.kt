@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import android.net.Uri
 import com.cloudyte.app.api.Account
 import com.cloudyte.app.api.CloudFile
 import com.cloudyte.app.api.CloudyteApi
@@ -369,6 +370,129 @@ class ResumableTransferTest {
             assertTrue(File(results[0]!!).isFile)
         } finally {
             localImageFile.delete()
+        }
+    }
+
+    @Test
+    fun transferDiagnosticsRecordsUnobfuscatedCommandNames() {
+        val diagnostics = TransferDiagnostics("TestDiag")
+        diagnostics.record(TransferCommand.Start("t-start"))
+        diagnostics.record(TransferCommand.Retry("t-retry"))
+        diagnostics.record(TransferCommand.Pause("t-pause"))
+        diagnostics.record(TransferCommand.Resume("t-resume"))
+        diagnostics.record(TransferCommand.Cancel("t-cancel"))
+
+        val recordedStates = diagnostics.snapshot().events.map { it.state }
+        assertEquals(listOf("Start", "Retry", "Pause", "Resume", "Cancel"), recordedStates)
+        val exported = diagnostics.export(context, 16)
+        assertTrue(exported.contains("database_schema_version=16"))
+        assertTrue(exported.contains("state=Start"))
+    }
+
+    @Test
+    fun chunkedDownloadWithoutContentLengthSucceedsEvenIfMetadataTotalBytesDiffers(): Unit = runBlocking {
+        database.accountDao().insertAccounts(
+            listOf(
+                LocalAccount(
+                    id = "acc-chunked",
+                    name = "Cloudyte",
+                    driveName = "Main",
+                    email = "u@cloudyte.io",
+                    accountType = "cloudyte",
+                    usageBytes = 0L,
+                    totalBytes = 1000L,
+                    percentage = 0f,
+                    fileCount = 0,
+                    isDefault = true,
+                    channelId = null
+                )
+            )
+        )
+
+        val actualPayload = "HelloChunkedStream!".toByteArray() // 19 bytes
+        val destFile = File(context.cacheDir, "chunked_stream_target.bin")
+        destFile.delete()
+
+        val api = object : BaseFakeApi() {
+            override suspend fun downloadFile(
+                accountId: String,
+                fileId: String,
+                preview: Int?,
+                range: String?
+            ): Response<ResponseBody> {
+                // Simulate chunked HTTP stream (contentLength = -1L)
+                val body = object : ResponseBody() {
+                    override fun contentType() = "application/octet-stream".toMediaType()
+                    override fun contentLength(): Long = -1L
+                    override fun source(): okio.BufferedSource = okio.Buffer().write(actualPayload)
+                }
+                return Response.success(body)
+            }
+        }
+
+        val registry = ProviderRegistry(api)
+        val executor = CloudTransferOperationExecutor(
+            context = context,
+            database = database,
+            transfers = TransferRepository(database.transferDao(), registry),
+            providers = registry
+        )
+
+        // Metadata claimed 512 bytes (e.g., server compression/size estimate difference), stream has 19 bytes with chunked framing
+        val transfer = LocalTransfer(
+            id = "dl-chunked-1",
+            accountId = "acc-chunked",
+            fileId = "remote-chunked",
+            remoteId = "remote-chunked",
+            fileName = destFile.name,
+            localPath = destFile.absolutePath,
+            direction = TransferDirection.DOWNLOAD.name,
+            operationType = TransferDirection.DOWNLOAD.name,
+            providerType = "cloudyte",
+            status = "RUNNING",
+            state = TransferState.RUNNING.name,
+            totalBytes = 512L,
+            leaseOwner = "owner-chunked",
+            leaseExpiresAt = System.currentTimeMillis() + 120_000L
+        )
+        database.transferDao().insert(transfer)
+
+        val outcome = executor.execute(transfer, "owner-chunked") { _, _, _, _ -> }
+        assertTrue("Chunked download with unknown Content-Length should succeed", outcome is TransferOutcome.Completed)
+        assertEquals("HelloChunkedStream!", destFile.readText())
+        destFile.delete()
+    }
+
+    @Test
+    fun resumableUploadParsesJsonErrorFromServerSessionFailure(): Unit = runBlocking {
+        val localFile = File(context.cacheDir, "upload_err_test.bin")
+        localFile.writeText("upload-payload")
+        try {
+            val api = object : BaseFakeApi() {
+                override suspend fun createUploadSession(
+                    accountId: String,
+                    request: UploadSessionRequest
+                ): Response<UploadSessionResponse> = Response.error(
+                    413,
+                    """{"error":"Destination drive quota exceeded"}""".toResponseBody("application/json".toMediaType())
+                )
+            }
+            val result = com.cloudyte.app.ui.screens.UploadHelper.uploadFileResumable(
+                context = context,
+                accountId = "acc-1",
+                folderId = "root",
+                uri = Uri.fromFile(localFile),
+                explicitFileName = localFile.name,
+                explicitMimeType = "application/octet-stream",
+                explicitFileSize = localFile.length(),
+                idempotencyKey = "idem-err-1",
+                provider = com.cloudyte.app.data.providers.CloudyteProvider(api)
+            )
+            assertFalse(result.isSuccess)
+            assertEquals(413, result.statusCode)
+            assertEquals("Destination drive quota exceeded", result.errorMessage)
+        } finally {
+            localFile.delete()
         }
     }
 

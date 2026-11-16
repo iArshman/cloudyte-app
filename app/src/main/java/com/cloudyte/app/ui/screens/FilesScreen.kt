@@ -525,18 +525,21 @@ class FilesViewModel(
                 }
             }
         }
-        // Refresh the current folder whenever one of our queued uploads completes.
+        // Refresh the current folder and invalidate storage stats whenever an upload/backup completes.
         viewModelScope.launch {
             val app = getApplication<CloudyteApplication>()
             app.container.transferRepository
                 .observeByStatus(com.cloudyte.app.db.TransferStatus.COMPLETED.name)
                 .map { list ->
-                    list.filter { it.direction == TransferDirection.UPLOAD.name }
-                        .mapTo(mutableSetOf()) { it.id }
+                    list.filter {
+                        it.direction == TransferDirection.UPLOAD.name ||
+                            it.direction == TransferDirection.BACKUP.name
+                    }.mapTo(mutableSetOf()) { it.id }
                 }
                 .distinctUntilChanged()
                 .collect { completedIds ->
                     if (completedIds.isNotEmpty()) {
+                        repo.invalidateStorageCache()
                         refresh(force = true)
                     }
                 }
@@ -629,11 +632,34 @@ class FilesViewModel(
                     _isRefreshing.value = true
                 }
                 val res = repo.refresh(accId, folderId, force = force)
-                if (requestId == refreshRequestId) _isOffline.value = res.isFailure
+                if (requestId == refreshRequestId) {
+                    if (res.isFailure) {
+                        val err = res.exceptionOrNull()
+                        val netStatus = runCatching {
+                            (getApplication<Application>() as? CloudyteApplication)?.container?.networkMonitor?.current()
+                        }.getOrNull()
+                        val isNetworkError = err is java.io.IOException ||
+                            netStatus == com.cloudyte.app.core.network.NetworkStatus.UNAVAILABLE
+                        _isOffline.value = isNetworkError
+                        if (!isNetworkError) {
+                            _userEvents.emit(err?.message ?: "Failed to load files")
+                        }
+                    } else {
+                        _isOffline.value = false
+                    }
+                }
             } catch (e: Exception) {
                 if (e !is kotlinx.coroutines.CancellationException && requestId == refreshRequestId) {
                     Log.w("FilesViewModel", "Sync failed: ${e.message}")
-                    _isOffline.value = true
+                    val netStatus = runCatching {
+                        (getApplication<Application>() as? CloudyteApplication)?.container?.networkMonitor?.current()
+                    }.getOrNull()
+                    val isNetworkError = e is java.io.IOException ||
+                        netStatus == com.cloudyte.app.core.network.NetworkStatus.UNAVAILABLE
+                    _isOffline.value = isNetworkError
+                    if (!isNetworkError) {
+                        _userEvents.tryEmit(e.message ?: "Failed to load files")
+                    }
                 }
             } finally {
                 // A cancelled older request must not hide the active request's state.
@@ -1289,7 +1315,11 @@ fun FilesScreen(
                             val newName = renameInput.trim()
                             fileForRename = null
                             viewModel.renameFile(target.effectiveId, newName) {
-                                snackbarMessage = "Rename saved locally; syncing when online"
+                                snackbarMessage = if (isOffline) {
+                                    "Rename saved locally; syncing when online"
+                                } else {
+                                    "Renamed to $newName"
+                                }
                             }
                         }
                     },
@@ -1370,7 +1400,11 @@ fun FilesScreen(
                             showCreateFolderDialog = false
                             newFolderName = ""
                             viewModel.createFolder(nameToCreate) {
-                                snackbarMessage = "Folder saved locally; syncing when online"
+                                snackbarMessage = if (isOffline) {
+                                    "Folder saved locally; syncing when online"
+                                } else {
+                                    "Folder '$nameToCreate' created"
+                                }
                             }
                         }
                     },
