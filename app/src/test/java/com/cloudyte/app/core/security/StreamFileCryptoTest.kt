@@ -400,7 +400,7 @@ class StreamFileCryptoTest {
         val result = crypto.encryptUriToStagingFile(
             context = context,
             sourceUri = Uri.fromFile(sourceFile),
-            transferId = "transfer-${java.util.UUID.randomUUID()}",
+            transferId = "transfer-${System.nanoTime()}",
             keyMaterial = keyMaterial
         )
 
@@ -432,7 +432,7 @@ class StreamFileCryptoTest {
                 keyMaterial = keyMaterial
             )
             fail("Expected FrameAuthenticationException")
-        } catch (expected: com.cloudyte.app.core.security.CryptoException) {
+        } catch (expected: FrameAuthenticationException) {
             assertFalse(corruptedDest.exists())
         } finally {
             stagingFile.delete()
