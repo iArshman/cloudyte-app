@@ -346,14 +346,14 @@ fun parseBytes(value: Any?): Long {
     when (value) {
         is Number -> return value.toLong()
         is String -> {
-            val v = value.lowercase(Locale.US).replace(" ", "")
+            val v = value.lowercase(Locale.US).replace(" ", "").replace(",", "")
             return when {
                 v.endsWith("tb") -> (v.removeSuffix("tb").toDoubleOrNull() ?: 0.0).times(1024L * 1024 * 1024 * 1024).toLong()
                 v.endsWith("gb") -> (v.removeSuffix("gb").toDoubleOrNull() ?: 0.0).times(1024L * 1024 * 1024).toLong()
                 v.endsWith("mb") -> (v.removeSuffix("mb").toDoubleOrNull() ?: 0.0).times(1024L * 1024).toLong()
                 v.endsWith("kb") -> (v.removeSuffix("kb").toDoubleOrNull() ?: 0.0).times(1024L).toLong()
                 v.endsWith("b") -> v.removeSuffix("b").toLongOrNull() ?: 0L
-                else -> value.toLongOrNull() ?: 0L
+                else -> v.toLongOrNull() ?: 0L
             }
         }
         else -> return 0L

@@ -810,48 +810,62 @@ class CloudFileRepository @JvmOverloads constructor(
     suspend fun createFolder(name: String, accountId: String?, parentFolderId: String?): Result<Unit> {
         val safeParentId = safeFolderId(parentFolderId)
         val normalizedAccount = if (accountId.isNullOrBlank() || accountId == "root") null else accountId
-        val now = nowMillis()
-        val tempId = "temp_${now}_${UUID.randomUUID()}"
-        val tempFolder = LocalCloudFile(
-            id = tempId,
-            name = name,
-            type = "folder",
-            size = "0 B",
-            rawSize = 0L,
-            time = now,
-            isFolder = true,
-            path = "",
-            folderId = safeParentId,
-            accountId = normalizedAccount,
-            cachedAt = now
-        )
+        val apiParentId = safeParentId.takeUnless { it == "root" }
+        
+        return try {
+            val response = api.createFolder(normalizedAccount, FolderRequest(name = name, parentId = apiParentId))
+            if (response.isSuccessful) {
+                invalidateFolderCache(normalizedAccount, safeParentId)
+                refresh(normalizedAccount, safeParentId, force = true)
+                Result.success(Unit)
+            } else {
+                val errBody = response.errorBody()?.string()
+                Result.failure(Exception(ApiClient.parseError(errBody, response.code())))
+            }
+        } catch (e: Exception) {
+            val now = nowMillis()
+            val tempId = "temp_${now}_${UUID.randomUUID()}"
+            val tempFolder = LocalCloudFile(
+                id = tempId,
+                name = name,
+                type = "folder",
+                size = "0 B",
+                rawSize = 0L,
+                time = now,
+                isFolder = true,
+                path = "",
+                folderId = safeParentId,
+                accountId = normalizedAccount,
+                cachedAt = now
+            )
 
-        val operation = LocalFileMutation(
-            operationId = UUID.randomUUID().toString(),
-            accountId = normalizedAccount,
-            operation = LocalFileMutation.CREATE_FOLDER,
-            name = name,
-            parentFolderId = safeParentId,
-            optimisticFileId = tempId,
-            providerType = db.accountDao().getAccountById(normalizedAccount ?: "")?.accountType,
-            payloadJson = "{\"name\":\"${name.replace("\\", "\\\\").replace("\"", "\\\"")}\",\"parentFolderId\":\"$safeParentId\"}",
-            correlationId = UUID.randomUUID().toString(),
-            createdAt = now,
-            updatedAt = now
-        )
-        db.withTransaction {
-            db.cloudFileDao().insertFiles(listOf(tempFolder))
-            db.fileMutationDao().insert(operation)
-            db.folderSyncMetaDao().deleteForFolder(accountMetaKey(normalizedAccount), safeParentId)
+            val operation = LocalFileMutation(
+                operationId = UUID.randomUUID().toString(),
+                accountId = normalizedAccount,
+                operation = LocalFileMutation.CREATE_FOLDER,
+                name = name,
+                parentFolderId = safeParentId,
+                optimisticFileId = tempId,
+                providerType = db.accountDao().getAccountById(normalizedAccount ?: "")?.accountType,
+                payloadJson = "{\"name\":\"${name.replace("\\", "\\\\").replace("\"", "\\\"")}\",\"parentFolderId\":\"$safeParentId\"}",
+                correlationId = UUID.randomUUID().toString(),
+                createdAt = now,
+                updatedAt = now
+            )
+            db.withTransaction {
+                db.cloudFileDao().insertFiles(listOf(tempFolder))
+                db.fileMutationDao().insert(operation)
+                db.folderSyncMetaDao().deleteForFolder(accountMetaKey(normalizedAccount), safeParentId)
+            }
+            val fKey = folderKey(normalizedAccount, safeParentId)
+            etagMap.remove(fKey)
+            val newCloudFolder = tempFolder.toCloudFile()
+            folderMemoryCache.computeIfPresent(fKey) { _, list ->
+                list + newCloudFolder
+            }
+            FileMutationWorker.enqueue()
+            Result.success(Unit)
         }
-        val fKey = folderKey(normalizedAccount, safeParentId)
-        etagMap.remove(fKey)
-        val newCloudFolder = tempFolder.toCloudFile()
-        folderMemoryCache.computeIfPresent(fKey) { _, list ->
-            list + newCloudFolder
-        }
-        FileMutationWorker.enqueue()
-        return Result.success(Unit)
     }
 
     suspend fun searchFiles(accountId: String?, query: String): List<CloudFile> {
