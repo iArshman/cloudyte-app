@@ -100,17 +100,20 @@ import com.cloudyte.app.R
 import com.cloudyte.app.api.Account
 import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.api.UserSettingsRequest
+import com.cloudyte.app.data.UserPreferences
 import com.cloudyte.app.db.AppDatabase
 import com.cloudyte.app.db.LocalAccount
 import com.cloudyte.app.ui.components.AppLoadingIndicator
 import com.cloudyte.app.ui.components.LocalBottomBarInset
 import com.cloudyte.app.ui.components.WavyProgressBar
+import com.cloudyte.app.ui.theme.MetricTextStyle
 import com.cloudyte.app.ui.theme.cloudyteColors
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.Locale
+import kotlin.math.roundToInt
 
 class AccountsViewModel(application: Application) : AndroidViewModel(application) {
     private val db = AppDatabase.getDatabase(application)
@@ -198,6 +201,7 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
                 it.copy(isDefault = (it.effectiveId == id))
             }
             db.accountDao().insertAccounts(_accounts.value.map { LocalAccount.fromAccount(it) })
+            runCatching { UserPreferences.setHomeStorageAccountId(getApplication(), null) }
             onComplete()
         }
     }
@@ -843,12 +847,10 @@ fun AccountCard(
                         }
                     }
 
-                    val subtitleText = when {
-                        !account.email.isNullOrBlank() -> account.email
-                        isTelegram && account.usageBytes > 0L -> "$providerLabel · ${formatBytes(account.usageBytes)} used"
-                        !isTelegram && account.totalBytes > 0L ->
-                            "$providerLabel · ${formatBytes(account.usageBytes)} of ${formatBytes(account.totalBytes)}"
-                        else -> providerLabel
+                    val subtitleText = if (!account.email.isNullOrBlank()) {
+                        account.email
+                    } else {
+                        providerLabel
                     }
                     Text(
                         text = subtitleText,
@@ -923,15 +925,61 @@ fun AccountCard(
                 }
             }
 
+            val fileCountSuffix = account.fileCount?.let { count ->
+                " · $count ${if (count == 1) "file" else "files"}"
+            }.orEmpty()
+            val statsLeftText = if (!isTelegram && account.totalBytes > 0L) {
+                "${formatBytes(account.usageBytes)} of ${formatBytes(account.totalBytes)} used$fileCountSuffix"
+            } else {
+                "${formatBytes(account.usageBytes)} used$fileCountSuffix"
+            }
+            val statsRightText = if (!isTelegram && account.totalBytes > 0L) {
+                "${percent.roundToInt().coerceIn(0, 100)}%"
+            } else if (isTelegram) {
+                stringResource(R.string.home_unlimited_symbol)
+            } else {
+                "—"
+            }
+            val statsAccentColor = if (!isTelegram && account.totalBytes > 0L && percent >= 90f) {
+                MaterialTheme.colorScheme.error
+            } else {
+                ext.mintSuccess
+            }
+
             if (!isTelegram && account.totalBytes > 0L) {
                 Spacer(modifier = Modifier.height(10.dp))
                 WavyProgressBar(
                     progress = animatedProgress,
-                    indicatorColor = if (percent >= 90f) MaterialTheme.colorScheme.error else ext.mintSuccess,
+                    indicatorColor = statsAccentColor,
                     trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f),
                     strokeWidth = 3.5.dp,
                     waveAmplitude = 2.5.dp,
                     waveLength = 16.dp
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+            } else {
+                Spacer(modifier = Modifier.height(10.dp))
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = statsLeftText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = statsRightText,
+                    style = MetricTextStyle.copy(fontSize = 13.sp, fontWeight = FontWeight.Bold),
+                    color = statsAccentColor,
+                    maxLines = 1
                 )
             }
         }

@@ -8,11 +8,13 @@ import com.cloudyte.app.api.Account
 import com.cloudyte.app.api.CloudFile
 import com.cloudyte.app.data.CloudFileRepository
 import com.cloudyte.app.data.FakeCloudyteApi
+import com.cloudyte.app.data.UserPreferences
 import com.cloudyte.app.db.AppDatabase
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -20,6 +22,8 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.ResponseBody.Companion.toResponseBody
@@ -56,6 +60,9 @@ class FilesViewModelTest {
             .edit()
             .clear()
             .commit()
+        kotlinx.coroutines.runBlocking {
+            UserPreferences.resetAllSettings(application)
+        }
         val directExecutor = Executor { it.run() }
         db = Room.inMemoryDatabaseBuilder(application, AppDatabase::class.java)
             .allowMainThreadQueries()
@@ -206,10 +213,16 @@ class FilesViewModelTest {
         assertEquals(listOf("DriveSheet.xlsx"), viewModel.files.value.map { it.name })
         assertEquals(1, fakeApi.getFilesCallCount)
 
-        // Switch to acc2 (cold) -> 1 network request for acc2
+        // Switch to acc2 (cold) -> 1 network request for acc2 and Home card preference syncs
         viewModel.selectAccount("acc2")
         advanceUntilIdle()
         assertEquals("acc2", viewModel.currentAccountId.value)
+        val homeAfterAcc2 = withContext(Dispatchers.Default) {
+            withTimeout(5_000L) {
+                UserPreferences.observe(application).first { it.homeStorageAccountId == "acc2" }.homeStorageAccountId
+            }
+        }
+        assertEquals("acc2", homeAfterAcc2)
         assertEquals(listOf("TelegramVideo.mp4"), viewModel.files.value.map { it.name })
         assertEquals(2, fakeApi.getFilesCallCount)
 
@@ -217,6 +230,12 @@ class FilesViewModelTest {
         viewModel.selectAccount("acc1")
         advanceUntilIdle()
         assertEquals("acc1", viewModel.currentAccountId.value)
+        val homeAfterAcc1 = withContext(Dispatchers.Default) {
+            withTimeout(5_000L) {
+                UserPreferences.observe(application).first { it.homeStorageAccountId == "acc1" }.homeStorageAccountId
+            }
+        }
+        assertEquals("acc1", homeAfterAcc1)
         assertEquals(listOf("DriveSheet.xlsx"), viewModel.files.value.map { it.name })
         assertEquals("Switching back to a warm account within TTL must skip network fetch", 2, fakeApi.getFilesCallCount)
 

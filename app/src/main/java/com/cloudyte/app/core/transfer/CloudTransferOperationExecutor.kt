@@ -364,6 +364,17 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
                     }
                     throw CancellationException("Transfer lease lost before upload progress checkpoint")
                 }
+            },
+            onStreamProgress = { streamedBytes ->
+                currentCoroutineContext().ensureActive()
+                checkInterruptedOutcome(transfer.id)?.let { outcome ->
+                    if (outcome == TransferOutcome.Cancelled && !activeSessionId.isNullOrBlank()) {
+                        runCatching { provider.cancelUploadSession(activeSessionId!!) }
+                    }
+                    throw TransferInterruptedException(outcome)
+                }
+                val metrics = progressCalculator.update(streamedBytes, size)
+                onProgress(streamedBytes, size, metrics.bytesPerSecond, metrics.etaSeconds)
             }
         )
 
@@ -461,6 +472,18 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
                         }
                         throw CancellationException("Transfer lease lost before encrypted upload progress checkpoint")
                     }
+                },
+                onStreamProgress = { streamedBytes ->
+                    currentCoroutineContext().ensureActive()
+                    checkInterruptedOutcome(transfer.id)?.let { outcome ->
+                        if (outcome == TransferOutcome.Cancelled && !activeSessionId.isNullOrBlank()) {
+                            runCatching { provider.cancelUploadSession(activeSessionId!!) }
+                            SecureFileCleanup.cleanupTransferStaging(context, transfer.id, prepared.stagingFile.absolutePath)
+                        }
+                        throw TransferInterruptedException(outcome)
+                    }
+                    val metrics = progressCalculator.update(streamedBytes, encryptedTotalBytes)
+                    onProgress(streamedBytes, encryptedTotalBytes, metrics.bytesPerSecond, metrics.etaSeconds)
                 }
             )
 

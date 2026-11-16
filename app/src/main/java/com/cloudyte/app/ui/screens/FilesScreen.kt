@@ -568,6 +568,9 @@ class FilesViewModel(
             currentFolderId.value = null
             _breadcrumbs.value = listOf(BreadcrumbItem(null, "Files"))
             prefs.edit().putString("last_active_account_id", accountId).apply()
+            viewModelScope.launch {
+                UserPreferences.setActiveAndHomeAccountId(getApplication(), accountId)
+            }
             refresh(force = false)
         }
     }
@@ -1153,6 +1156,10 @@ fun FilesScreen(
     val searchFocusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) {
         OfflineFileManager.init(context)
+    }
+    LaunchedEffect(currentAccountId) {
+        val activeId = currentAccountId?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
+        UserPreferences.setHomeStorageAccountId(context, activeId)
     }
     LaunchedEffect(searchFocusTrigger) {
         if (searchFocusTrigger > 0) {

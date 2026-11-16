@@ -83,7 +83,7 @@ data class UserPreferencesState(
     val viewMode: ViewMode = ViewMode.GRID,
     val gridColumns: Int = 2,
     val layoutDensity: String = "COMFORTABLE",
-    val showRecentFiles: Boolean = true,
+    val showRecentFiles: Boolean = false,
     val sortField: SortField = SortField.DATE,
     val sortDirection: SortDirection = SortDirection.DESC,
     val showHidden: Boolean = false,
@@ -261,7 +261,7 @@ object UserPreferences {
                 } ?: ViewMode.GRID,
                 gridColumns = (prefs[KEY_GRID_COLUMNS] ?: 2).coerceIn(2, 5),
                 layoutDensity = prefs[KEY_LAYOUT_DENSITY] ?: "COMFORTABLE",
-                showRecentFiles = prefs[KEY_SHOW_RECENT_FILES] ?: true,
+                showRecentFiles = prefs[KEY_SHOW_RECENT_FILES] ?: false,
                 sortField = prefs[KEY_SORT_FIELD]?.let {
                     runCatching { SortField.valueOf(it) }.getOrNull()
                 } ?: SortField.DATE,
@@ -533,6 +533,15 @@ object UserPreferences {
             if (accountId == null) it.remove(KEY_HOME_STORAGE_ACCOUNT_ID)
             else it[KEY_HOME_STORAGE_ACCOUNT_ID] = accountId
         }
+    }
+
+    suspend fun setActiveAndHomeAccountId(context: Context, accountId: String) {
+        context.userPreferencesDataStore.edit {
+            it[KEY_LAST_ACTIVE_ACCOUNT_ID] = accountId
+            it[KEY_HOME_STORAGE_ACCOUNT_ID] = accountId
+        }
+        context.getSharedPreferences("cloudyte_drive_state", Context.MODE_PRIVATE)
+            .edit().putString("last_active_account_id", accountId).apply()
     }
 
     suspend fun resetAllSettings(context: Context) {
