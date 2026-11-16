@@ -432,7 +432,7 @@ class StreamFileCryptoTest {
                 keyMaterial = keyMaterial
             )
             fail("Expected FrameAuthenticationException")
-        } catch (expected: FrameAuthenticationException) {
+        } catch (expected: com.cloudyte.app.core.security.CryptoException) {
             assertFalse(corruptedDest.exists())
         } finally {
             stagingFile.delete()
