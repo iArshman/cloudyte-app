@@ -6,6 +6,7 @@ import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import java.util.concurrent.ConcurrentHashMap
@@ -65,24 +66,57 @@ interface TransferSchedulerContract {
 
 enum class ScheduleReason { USER_ENQUEUE, USER_RETRY, APP_START, NETWORK_RESTORED, PERIODIC_MAINTENANCE }
 
-class TransferScheduler(private val context: Context) : TransferSchedulerContract {
-    private val workManager by lazy {
+class TransferScheduler @JvmOverloads constructor(
+    private val context: Context,
+    private val diagnostics: TransferDiagnostics? = null
+) : TransferSchedulerContract {
+    private fun workManager(): WorkManager? =
         runCatching { WorkManager.getInstance(context.applicationContext) }.getOrNull()
-    }
 
     override fun kick(reason: ScheduleReason, allowMetered: Boolean) {
+        val networkType = if (allowMetered) NetworkType.CONNECTED else NetworkType.UNMETERED
         val constraints = Constraints.Builder()
-            .setRequiredNetworkType(if (allowMetered) NetworkType.CONNECTED else NetworkType.UNMETERED)
+            .setRequiredNetworkType(networkType)
             .build()
-        val request = OneTimeWorkRequestBuilder<TransferWorker>()
-            .setInputData(androidx.work.Data.Builder().putBoolean(TransferWorker.KEY_QUEUE_DRAIN, true).putString(TransferWorker.KEY_TRIGGER, reason.name).build())
+        val builder = OneTimeWorkRequestBuilder<TransferWorker>()
+            .setInputData(
+                androidx.work.Data.Builder()
+                    .putBoolean(TransferWorker.KEY_QUEUE_DRAIN, true)
+                    .putString(TransferWorker.KEY_TRIGGER, reason.name)
+                    .build()
+            )
             .setConstraints(constraints)
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
-            .build()
-        workManager?.enqueueUniqueWork(UNIQUE_QUEUE_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
+        if (reason == ScheduleReason.USER_ENQUEUE ||
+            reason == ScheduleReason.USER_RETRY ||
+            reason == ScheduleReason.NETWORK_RESTORED
+        ) {
+            builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+        }
+        val wm = workManager()
+        val policy = if (reason == ScheduleReason.PERIODIC_MAINTENANCE) {
+            ExistingWorkPolicy.KEEP
+        } else {
+            ExistingWorkPolicy.REPLACE
+        }
+        if (wm == null) {
+            diagnostics?.recordEvent(
+                operationType = "queue_kick",
+                state = reason.name,
+                errorCode = "WORKMANAGER_UNAVAILABLE",
+                networkState = networkType.name
+            )
+            return
+        }
+        wm.enqueueUniqueWork(UNIQUE_QUEUE_NAME, policy, builder.build())
+        diagnostics?.recordEvent(
+            operationType = "queue_kick",
+            state = reason.name,
+            networkState = networkType.name
+        )
     }
 
-    override fun retrySoon(reason: ScheduleReason) = kick(reason, allowMetered = false)
+    override fun retrySoon(reason: ScheduleReason) = kick(reason, allowMetered = true)
 
     fun scheduleRetryAt(timestampMillis: Long) {
         val delayMillis = (timestampMillis - System.currentTimeMillis()).coerceAtLeast(0L)
@@ -92,7 +126,7 @@ class TransferScheduler(private val context: Context) : TransferSchedulerContrac
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .build()
-        workManager?.enqueueUniqueWork(RETRY_DUE_WORK_NAME, ExistingWorkPolicy.REPLACE, request)
+        workManager()?.enqueueUniqueWork(RETRY_DUE_WORK_NAME, ExistingWorkPolicy.REPLACE, request)
     }
 
     fun scheduleLeaseRecoveryAt(timestampMillis: Long) {
@@ -102,7 +136,7 @@ class TransferScheduler(private val context: Context) : TransferSchedulerContrac
             .setInitialDelay(delayMillis, TimeUnit.MILLISECONDS)
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .build()
-        workManager?.enqueueUniqueWork(LEASE_RECOVERY_WORK_NAME, ExistingWorkPolicy.REPLACE, request)
+        workManager()?.enqueueUniqueWork(LEASE_RECOVERY_WORK_NAME, ExistingWorkPolicy.REPLACE, request)
     }
 
     fun scheduleNetworkRecovery() {
@@ -111,7 +145,7 @@ class TransferScheduler(private val context: Context) : TransferSchedulerContrac
             .setInitialDelay(60, TimeUnit.SECONDS)
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .build()
-        workManager?.enqueueUniqueWork(NETWORK_RECOVERY_WORK_NAME, ExistingWorkPolicy.KEEP, request)
+        workManager()?.enqueueUniqueWork(NETWORK_RECOVERY_WORK_NAME, ExistingWorkPolicy.KEEP, request)
     }
 
     override fun schedulePeriodicMaintenance() {
@@ -119,14 +153,15 @@ class TransferScheduler(private val context: Context) : TransferSchedulerContrac
             .setInputData(androidx.work.Data.Builder().putBoolean(TransferWorker.KEY_QUEUE_DRAIN, true).putString(TransferWorker.KEY_TRIGGER, ScheduleReason.PERIODIC_MAINTENANCE.name).build())
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .build()
-        workManager?.enqueueUniquePeriodicWork(MAINTENANCE_WORK_NAME, androidx.work.ExistingPeriodicWorkPolicy.KEEP, request)
+        workManager()?.enqueueUniquePeriodicWork(MAINTENANCE_WORK_NAME, androidx.work.ExistingPeriodicWorkPolicy.KEEP, request)
     }
 
     override fun cancelQueuedTransfer(transferId: String) {
         if (transferId.isBlank()) return
         ActiveTransferSignalRegistry.signalCancel(transferId)
-        workManager?.cancelAllWorkByTag(transferWorkTag(transferId))
-        workManager?.cancelUniqueWork("$UNIQUE_TRANSFER_COMMAND_PREFIX$transferId")
+        val wm = workManager()
+        wm?.cancelAllWorkByTag(transferWorkTag(transferId))
+        wm?.cancelUniqueWork("$UNIQUE_TRANSFER_COMMAND_PREFIX$transferId")
     }
 
     override fun pauseActiveTransfer(transferId: String) {

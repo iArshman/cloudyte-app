@@ -15,10 +15,19 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.AutoMode
+import androidx.compose.material.icons.outlined.BatteryChargingFull
+import androidx.compose.material.icons.outlined.CloudUpload
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.FilterAltOff
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.PhotoLibrary
+import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.Scale
+import androidx.compose.material.icons.outlined.Sync
+import androidx.compose.material.icons.outlined.Wifi
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -221,7 +230,7 @@ fun BackupSettingsSection(
                         .heightIn(min = 48.dp)
                         .testTag("backup_now_button")
                 ) {
-                    Icon(Icons.Default.Sync, contentDescription = null)
+                    Icon(Icons.Outlined.Sync, contentDescription = null)
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(stringResource(R.string.settings_backup_now))
                 }
@@ -248,6 +257,7 @@ fun BackupSettingsSection(
             SettingsClickRow(
                 title = stringResource(R.string.settings_backup_target_drive),
                 subtitle = selectedDriveName,
+                icon = Icons.Outlined.CloudUpload,
                 onClick = { showTargetDriveDialog = true },
                 modifier = Modifier.testTag("backup_target_drive_row")
             )
@@ -256,6 +266,7 @@ fun BackupSettingsSection(
             SettingsSwitchRow(
                 title = stringResource(R.string.settings_auto_backup),
                 subtitle = stringResource(R.string.settings_auto_backup_sub),
+                icon = Icons.Outlined.AutoMode,
                 checked = prefsState.autoBackupEnabled,
                 onChange = { enabled ->
                     scope.launch {
@@ -269,6 +280,7 @@ fun BackupSettingsSection(
             SettingsSwitchRow(
                 title = stringResource(R.string.settings_backup_quick_media),
                 subtitle = stringResource(R.string.settings_backup_quick_media_sub),
+                icon = Icons.Outlined.PhotoLibrary,
                 checked = prefsState.quickMediaBackupEnabled,
                 enabled = prefsState.autoBackupEnabled,
                 onChange = { enabled ->
@@ -284,6 +296,7 @@ fun BackupSettingsSection(
             SettingsClickRow(
                 title = stringResource(R.string.settings_backup_schedule),
                 subtitle = if (intervalHours == 1) "Every 1 hour" else "Every $intervalHours hours",
+                icon = Icons.Outlined.Schedule,
                 onClick = { showIntervalDialog = true },
                 modifier = Modifier.testTag("backup_interval_row")
             )
@@ -292,6 +305,7 @@ fun BackupSettingsSection(
             SettingsSwitchRow(
                 title = stringResource(R.string.settings_backup_wifi_only),
                 subtitle = stringResource(R.string.settings_backup_wifi_only_sub),
+                icon = Icons.Outlined.Wifi,
                 checked = prefsState.backupWifiOnly,
                 onChange = { wifiOnly ->
                     scope.launch {
@@ -306,6 +320,7 @@ fun BackupSettingsSection(
             SettingsSwitchRow(
                 title = stringResource(R.string.settings_backup_charging_only),
                 subtitle = stringResource(R.string.settings_backup_charging_only_sub),
+                icon = Icons.Outlined.BatteryChargingFull,
                 checked = prefsState.backupChargingOnly,
                 onChange = { chargingOnly ->
                     scope.launch {
@@ -344,7 +359,7 @@ fun BackupSettingsSection(
                         addFolderLauncher.launch(BackupSourceManager.suggestedInitialUri(preset))
                     },
                     label = { Text(preset.label) },
-                    leadingIcon = { Icon(Icons.Default.FolderOpen, contentDescription = null) },
+                    leadingIcon = { Icon(Icons.Outlined.FolderOpen, contentDescription = null) },
                     modifier = Modifier.testTag("backup_preset_${preset.name.lowercase()}")
                 )
             }
@@ -354,7 +369,7 @@ fun BackupSettingsSection(
                     addFolderLauncher.launch(null)
                 },
                 label = { Text(stringResource(R.string.settings_backup_add_custom)) },
-                leadingIcon = { Icon(Icons.Default.Add, contentDescription = null) },
+                leadingIcon = { Icon(Icons.Outlined.Add, contentDescription = null) },
                 modifier = Modifier.testTag("backup_add_custom_folder_chip")
             )
         }
@@ -400,6 +415,7 @@ fun BackupSettingsSection(
             SettingsClickRow(
                 title = stringResource(R.string.settings_max_file_size),
                 subtitle = maxOption.label,
+                icon = Icons.Outlined.Scale,
                 onClick = { showMaxSizeDialog = true },
                 modifier = Modifier.testTag("backup_max_size_row")
             )
@@ -408,6 +424,7 @@ fun BackupSettingsSection(
             SettingsClickRow(
                 title = stringResource(R.string.settings_exclusions),
                 subtitle = stringResource(R.string.settings_exclusions_sub),
+                icon = Icons.Outlined.FilterAltOff,
                 onClick = onNavigateExclusions,
                 modifier = Modifier.testTag("backup_exclusions_row")
             )
@@ -416,6 +433,7 @@ fun BackupSettingsSection(
             SettingsSwitchRow(
                 title = stringResource(R.string.settings_delete_after_upload),
                 subtitle = stringResource(R.string.settings_delete_after_upload_sub),
+                icon = Icons.Outlined.DeleteSweep,
                 checked = prefsState.deleteAfterUpload,
                 onChange = { wantEnable ->
                     if (wantEnable) {
@@ -570,7 +588,7 @@ private fun BackupSourceCard(
                     modifier = Modifier.testTag("backup_source_remove_${source.id}")
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Delete,
+                        imageVector = Icons.Outlined.DeleteOutline,
                         contentDescription = "Remove ${source.displayName}",
                         tint = MaterialTheme.colorScheme.error
                     )

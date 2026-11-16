@@ -711,12 +711,14 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
 
         val contentRangeTotal = parseContentRangeTotal(response.headers()["Content-Range"])
         val contentLength = body.contentLength()
-        val expectedTotal = when {
+        val authoritativeExpectedTotal: Long? = when {
             contentRangeTotal != null && contentRangeTotal > 0L -> contentRangeTotal
             contentLength >= 0L -> startOffset + contentLength
-            expectedEncryptedOrRawTotal > 0L -> expectedEncryptedOrRawTotal
-            else -> 0L
+            else -> null
         }
+        val expectedTotal = authoritativeExpectedTotal
+            ?: expectedEncryptedOrRawTotal.takeIf { it > 0L }
+            ?: 0L
 
         val chunkSize = (transfer.chunkSize.takeIf { it > 0L } ?: (256L * 1024L)).coerceAtLeast(64L * 1024L)
         var lastCheckpointedIndex = if (chunkSize > 0L) (startOffset / chunkSize).toInt() else 0
@@ -725,27 +727,29 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
         }
 
         body.use { responseBody ->
-            FileOutputStream(partFile, isPartialContent).use { out ->
-                val buffer = ByteArray(64 * 1024)
-                var copied = startOffset
-                val progressCalculator = TransferProgressCalculator()
-                while (true) {
-                    currentCoroutineContext().ensureActive()
-                    checkInterruptedOutcomeInLoop(transfer.id)?.let { outcome ->
-                        out.flush()
-                        if (outcome == TransferOutcome.Cancelled) {
-                            partFile.delete()
+            responseBody.byteStream().use { input ->
+                FileOutputStream(partFile, isPartialContent).use { out ->
+                    val buffer = ByteArray(64 * 1024)
+                    var copied = startOffset
+                    val progressCalculator = TransferProgressCalculator()
+                    while (true) {
+                        currentCoroutineContext().ensureActive()
+                        checkInterruptedOutcomeInLoop(transfer.id)?.let { outcome ->
+                            out.flush()
+                            if (outcome == TransferOutcome.Cancelled) {
+                                partFile.delete()
+                            }
+                            throw TransferInterruptedException(outcome)
                         }
-                        throw TransferInterruptedException(outcome)
-                    }
-                    val count = responseBody.byteStream().read(buffer)
-                    if (count < 0) break
+                        val count = input.read(buffer)
+                        if (count < 0) break
                     out.write(buffer, 0, count)
                     copied += count
+                    val effectiveProgressTotal = maxOf(expectedTotal, copied)
                     val currentChunkIndex = ((copied + chunkSize - 1L) / chunkSize).toInt()
-                    val metrics = progressCalculator.update(copied, expectedTotal)
-                    onProgress(copied, expectedTotal, metrics.bytesPerSecond, metrics.etaSeconds)
-                    if (currentChunkIndex != lastCheckpointedIndex || (expectedTotal > 0L && copied >= expectedTotal)) {
+                    val metrics = progressCalculator.update(copied, effectiveProgressTotal)
+                    onProgress(copied, effectiveProgressTotal, metrics.bytesPerSecond, metrics.etaSeconds)
+                    if (currentChunkIndex != lastCheckpointedIndex || (effectiveProgressTotal > 0L && copied >= effectiveProgressTotal)) {
                         lastCheckpointedIndex = currentChunkIndex
                         if (!transfers.updateResumableProgressOwned(transfer.id, leaseOwner, copied, currentChunkIndex)) {
                             checkInterruptedOutcome(transfer.id)?.let { throw TransferInterruptedException(it) }
@@ -755,8 +759,16 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
                 }
                 out.flush()
                 runCatching { out.fd.sync() }
-                if (expectedTotal > 0L && copied < expectedTotal) {
-                    throw IOException("Download ended before the expected byte count ($copied / $expectedTotal)")
+                if (authoritativeExpectedTotal != null && copied < authoritativeExpectedTotal) {
+                    throw IOException("Download ended before the expected byte count ($copied / $authoritativeExpectedTotal)")
+                }
+                if (copied == 0L && expectedTotal > 0L) {
+                    throw IOException("Download returned 0 bytes (expected $expectedTotal)")
+                }
+                    if (copied > 0L && copied != expectedTotal) {
+                        val metrics = progressCalculator.update(copied, copied)
+                        onProgress(copied, copied, metrics.bytesPerSecond, 0L)
+                    }
                 }
             }
         }
@@ -1029,10 +1041,28 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
         context.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
             if (cursor.moveToFirst()) {
                 val index = cursor.getColumnIndex(OpenableColumns.SIZE)
-                if (index >= 0 && !cursor.isNull(index)) return cursor.getLong(index)
+                if (index >= 0 && !cursor.isNull(index)) {
+                    val queried = cursor.getLong(index)
+                    if (queried >= 0L) return queried
+                }
             }
         }
-        return try { context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L }
+        val fdLength = try { context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L }
         catch (_: Exception) { -1L }
+        if (fdLength >= 0L) return fdLength
+        return try {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                val buf = ByteArray(64 * 1024)
+                var count = 0L
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    count += n
+                }
+                count
+            } ?: -1L
+        } catch (_: Exception) {
+            -1L
+        }
     }
 }

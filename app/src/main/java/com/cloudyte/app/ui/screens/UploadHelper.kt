@@ -206,6 +206,17 @@ object UploadHelper {
         }
     }
 
+    private fun parseResponseError(response: retrofit2.Response<*>, fallback: String): String {
+        val raw = runCatching { response.errorBody()?.string() }.getOrNull()
+        val code = response.code()
+        val parsed = if (code > 0) ApiClient.parseError(raw, code) else raw.orEmpty()
+        return when {
+            parsed.isNotBlank() && !parsed.startsWith("Request failed (HTTP") -> parsed
+            code > 0 -> "$fallback (HTTP $code)"
+            else -> fallback
+        }
+    }
+
     suspend fun uploadFileResumable(
         context: Context,
         accountId: String,
@@ -260,14 +271,24 @@ object UploadHelper {
             )
             var sessionResponse = provider.createUploadSession(accountId, sessionRequest)
             if (!sessionResponse.isSuccessful || sessionResponse.body() == null) {
-                return@withContext UploadResult(false, sessionResponse.code(), "Could not create upload session", explicitFileName)
+                return@withContext UploadResult(
+                    false,
+                    sessionResponse.code(),
+                    parseResponseError(sessionResponse, "Could not create upload session"),
+                    explicitFileName
+                )
             }
             val createdSession = sessionResponse.body()!!
             // Creation is idempotent by logical transfer key; query the provider/server state
             // before resuming so local progress is never mistaken for committed bytes.
             val statusResponse = provider.queryUploadSession(createdSession.sessionId)
             if (!statusResponse.isSuccessful || statusResponse.body() == null) {
-                return@withContext UploadResult(false, statusResponse.code(), "Could not reconcile upload session offset", explicitFileName)
+                return@withContext UploadResult(
+                    false,
+                    statusResponse.code(),
+                    parseResponseError(statusResponse, "Could not reconcile upload session offset"),
+                    explicitFileName
+                )
             }
             var session = statusResponse.body()!!
             if (session.status.equals("expired", ignoreCase = true) || session.status.equals("UPLOAD_SESSION_EXPIRED", ignoreCase = true)) {
@@ -275,11 +296,21 @@ object UploadHelper {
                 // key creates a fresh provider session without changing transfer identity.
                 sessionResponse = provider.createUploadSession(accountId, sessionRequest)
                 if (!sessionResponse.isSuccessful || sessionResponse.body() == null) {
-                    return@withContext UploadResult(false, sessionResponse.code(), "Could not renew expired upload session", explicitFileName)
+                    return@withContext UploadResult(
+                        false,
+                        sessionResponse.code(),
+                        parseResponseError(sessionResponse, "Could not renew expired upload session"),
+                        explicitFileName
+                    )
                 }
                 val renewed = provider.queryUploadSession(sessionResponse.body()!!.sessionId)
                 if (!renewed.isSuccessful || renewed.body() == null || renewed.body()!!.status.equals("expired", ignoreCase = true)) {
-                    return@withContext UploadResult(false, renewed.code(), "Could not reconcile renewed upload session", explicitFileName)
+                    return@withContext UploadResult(
+                        false,
+                        renewed.code(),
+                        parseResponseError(renewed, "Could not reconcile renewed upload session"),
+                        explicitFileName
+                    )
                 }
                 session = renewed.body()!!
             }
@@ -320,7 +351,12 @@ object UploadHelper {
                         chunk = part
                     )
                     if (!response.isSuccessful || response.body() == null) {
-                        return@withContext UploadResult(false, response.code(), "Chunk upload failed at offset $offset", explicitFileName)
+                        return@withContext UploadResult(
+                            false,
+                            response.code(),
+                            parseResponseError(response, "Chunk upload failed at offset $offset"),
+                            explicitFileName
+                        )
                     }
                     val nextOffset = response.body()!!.nextOffset.coerceIn(0L, totalBytes)
                     if (nextOffset <= offset) throw IOException("Provider did not advance the upload offset")
@@ -333,7 +369,12 @@ object UploadHelper {
             if (complete.isSuccessful && complete.body()?.success == true) {
                 UploadResult(true, complete.code(), fileName = explicitFileName)
             } else {
-                UploadResult(false, complete.code(), "Could not finalize upload session", explicitFileName)
+                UploadResult(
+                    false,
+                    complete.code(),
+                    parseResponseError(complete, "Could not finalize upload session"),
+                    explicitFileName
+                )
             }
         } catch (e: CancellationException) {
             throw e

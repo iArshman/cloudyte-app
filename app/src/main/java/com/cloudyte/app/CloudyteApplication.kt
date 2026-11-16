@@ -6,6 +6,7 @@ import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.api.OfflineFileManager
 import com.cloudyte.app.sync.AutoSyncManager
 import com.cloudyte.app.sync.FileMutationWorker
+import com.cloudyte.app.core.transfer.DrainTrigger
 import com.cloudyte.app.core.transfer.ScheduleReason
 import com.cloudyte.app.core.transfer.WorkMaintenanceScheduler
 import com.cloudyte.app.core.cache.CacheCleanupWorker
@@ -36,6 +37,7 @@ class CloudyteApplication : Application(), ImageLoaderFactory {
         } catch (error: IllegalStateException) {
             Log.w("CloudyteApplication", "WorkManager is not initialized; startup queue work will be scheduled on the next trigger", error)
         }
+        container.kickImmediateDrain(DrainTrigger.APP_START, "app_start")
         container.applicationScope.launch(container.dispatchers.io) {
             runCatching {
                 val prefs = com.cloudyte.app.data.UserPreferences.observe(this@CloudyteApplication).first()

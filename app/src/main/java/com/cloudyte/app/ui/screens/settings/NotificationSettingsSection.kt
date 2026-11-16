@@ -13,7 +13,13 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.outlined.CloudDone
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.NotificationsActive
+import androidx.compose.material.icons.outlined.NotificationsOff
+import androidx.compose.material.icons.outlined.SwapVert
+import androidx.compose.material.icons.outlined.TaskAlt
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -102,7 +108,7 @@ fun NotificationSettingsSection(
             Column(modifier = Modifier.padding(16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        imageVector = Icons.Default.NotificationsOff,
+                        imageVector = Icons.Outlined.NotificationsOff,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onErrorContainer
                     )
@@ -147,6 +153,7 @@ fun NotificationSettingsSection(
             SettingsSwitchRow(
                 title = stringResource(R.string.settings_enable_notifications),
                 subtitle = if (osPermGranted) "Master toggle for Cloudyte notifications" else "Requires Android notification permission above",
+                icon = Icons.Outlined.NotificationsActive,
                 checked = prefsState.notificationsEnabled,
                 onChange = { scope.launch { UserPreferences.setNotificationsEnabled(context, it) } },
                 modifier = Modifier.testTag("notif_master_switch")
@@ -156,6 +163,7 @@ fun NotificationSettingsSection(
             SettingsSwitchRow(
                 title = stringResource(R.string.settings_backup_alerts),
                 subtitle = "Summary notifications when automatic backup finishes or hits errors",
+                icon = Icons.Outlined.CloudDone,
                 checked = prefsState.backupNotifications,
                 onChange = { scope.launch { UserPreferences.setBackupNotifications(context, it) } },
                 modifier = Modifier.testTag("notif_backup_switch")
@@ -165,6 +173,7 @@ fun NotificationSettingsSection(
             SettingsSwitchRow(
                 title = stringResource(R.string.settings_progress_alerts),
                 subtitle = "Ongoing foreground transfer notifications during active uploads/downloads",
+                icon = Icons.Outlined.SwapVert,
                 checked = prefsState.progressAlerts,
                 onChange = { scope.launch { UserPreferences.setProgressAlerts(context, it) } },
                 modifier = Modifier.testTag("notif_progress_switch")
@@ -174,6 +183,7 @@ fun NotificationSettingsSection(
             SettingsSwitchRow(
                 title = stringResource(R.string.settings_completed_alerts),
                 subtitle = "Notify when queued backups or transfers complete",
+                icon = Icons.Outlined.TaskAlt,
                 checked = prefsState.completedAlerts,
                 onChange = { scope.launch { UserPreferences.setCompletedAlerts(context, it) } },
                 modifier = Modifier.testTag("notif_completed_switch")
@@ -183,6 +193,7 @@ fun NotificationSettingsSection(
             SettingsSwitchRow(
                 title = stringResource(R.string.settings_failure_alerts),
                 subtitle = "Alert when backups or transfers fail permanently or lose folder access",
+                icon = Icons.Outlined.ErrorOutline,
                 checked = prefsState.failureNotifications,
                 onChange = { scope.launch { UserPreferences.setFailureNotifications(context, it) } },
                 modifier = Modifier.testTag("notif_failure_switch")
@@ -192,6 +203,7 @@ fun NotificationSettingsSection(
             SettingsClickRow(
                 title = stringResource(R.string.settings_system_channel_settings),
                 subtitle = stringResource(R.string.settings_system_channel_settings_sub),
+                icon = Icons.Outlined.Tune,
                 onClick = {
                     runCatching {
                         context.startActivity(NotificationHelper.buildAppNotificationSettingsIntent(context))

@@ -44,3 +44,21 @@
 -dontwarn okio.**
 -keepnames class okhttp3.internal.publicsuffix.PublicSuffixDatabase
 
+# WorkManager Workers & Reflection Instantiation
+-keep class * extends androidx.work.ListenableWorker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
+}
+-keep class * extends androidx.work.Worker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
+}
+-keep class * extends androidx.work.CoroutineWorker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
+}
+
+# Preserve transfer state & diagnostic identifiers from R8 obfuscation
+-keep class com.cloudyte.app.core.transfer.TransferCommand { *; }
+-keep class com.cloudyte.app.core.transfer.TransferCommand$* { *; }
+-keep class com.cloudyte.app.core.transfer.TransferState { *; }
+-keep class com.cloudyte.app.db.TransferDirection { *; }
+-keep class com.cloudyte.app.db.TransferStatus { *; }
+

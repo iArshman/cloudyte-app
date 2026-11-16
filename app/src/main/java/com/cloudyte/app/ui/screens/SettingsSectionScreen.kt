@@ -15,9 +15,49 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.Logout
+import androidx.compose.material.icons.outlined.AddCircleOutline
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Backup
+import androidx.compose.material.icons.outlined.Badge
+import androidx.compose.material.icons.outlined.BugReport
+import androidx.compose.material.icons.outlined.Cloud
+import androidx.compose.material.icons.outlined.CloudQueue
+import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.DarkMode
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Devices
+import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.Email
+import androidx.compose.material.icons.outlined.EnhancedEncryption
+import androidx.compose.material.icons.outlined.Fingerprint
+import androidx.compose.material.icons.outlined.Gavel
+import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.Headphones
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.OfflinePin
+import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.PlayCircle
+import androidx.compose.material.icons.outlined.Policy
+import androidx.compose.material.icons.outlined.PrivacyTip
+import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.outlined.Replay
+import androidx.compose.material.icons.outlined.RestartAlt
+import androidx.compose.material.icons.outlined.Restore
+import androidx.compose.material.icons.outlined.SignalCellularAlt
+import androidx.compose.material.icons.outlined.SmartDisplay
+import androidx.compose.material.icons.outlined.Timer
+import androidx.compose.material.icons.outlined.VerifiedUser
+import androidx.compose.material.icons.outlined.ViewAgenda
+import androidx.compose.material.icons.outlined.ViewColumn
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -63,7 +103,6 @@ import com.cloudyte.app.data.formatStorageSize
 import com.cloudyte.app.db.AppDatabase
 import com.cloudyte.app.db.LocalAccount
 import com.cloudyte.app.sync.AutoSyncManager
-import androidx.compose.material.icons.outlined.Devices
 import com.cloudyte.app.ui.components.ActiveSessionsBottomSheet
 import com.cloudyte.app.ui.components.ChoiceDialog
 import com.cloudyte.app.ui.components.ConfirmDialog
@@ -134,7 +173,7 @@ fun SettingsSectionScreen(
                 title = { Text(stringResource(section.titleRes), fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = onBack, modifier = Modifier.testTag("settings_section_back")) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = stringResource(R.string.action_back))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = topBarContainerColor)
@@ -177,13 +216,14 @@ fun SettingsSectionScreen(
 
                     SettingsSectionTitle("User Profile")
                     val profileItems = buildList {
-                        add(GroupedListItem(key = "username") { SettingsClickRow(title = "Username", subtitle = username, onClick = {}) })
-                        add(GroupedListItem(key = "account_role") { SettingsClickRow(title = "Account Type", subtitle = roleLabel, onClick = {}) })
+                        add(GroupedListItem(key = "username") { SettingsClickRow(title = "Username", subtitle = username, icon = Icons.Outlined.Person, onClick = {}) })
+                        add(GroupedListItem(key = "account_role") { SettingsClickRow(title = "Account Type", subtitle = roleLabel, icon = Icons.Outlined.Badge, onClick = {}) })
                         add(
                             GroupedListItem(key = "user_id") {
                                 SettingsClickRow(
                                     title = "Account ID",
                                     subtitle = userId,
+                                    icon = Icons.Outlined.Fingerprint,
                                     onClick = {
                                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                         clipboard.setPrimaryClip(ClipData.newPlainText("Account ID", userId))
@@ -193,13 +233,14 @@ fun SettingsSectionScreen(
                             }
                         )
                         if (email != "Not set") {
-                            add(GroupedListItem(key = "email") { SettingsClickRow(title = "Email", subtitle = email, onClick = {}) })
+                            add(GroupedListItem(key = "email") { SettingsClickRow(title = "Email", subtitle = email, icon = Icons.Outlined.Email, onClick = {}) })
                         }
                         add(
                             GroupedListItem(key = "server_url") {
                                 SettingsClickRow(
                                     title = stringResource(R.string.settings_server_url),
                                     subtitle = ApiClient.API_BASE_URL,
+                                    icon = Icons.Outlined.Dns,
                                     onClick = {
                                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                         clipboard.setPrimaryClip(ClipData.newPlainText("Server URL", ApiClient.API_BASE_URL))
@@ -255,6 +296,7 @@ fun SettingsSectionScreen(
                                 SettingsClickRow(
                                     title = "Linked Storage Drives (${accounts.size})",
                                     subtitle = if (drivesExpanded) "Tap to collapse connected drives" else "Tap to view connected drives",
+                                    icon = Icons.Outlined.CloudQueue,
                                     trailing = {
                                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                             Text(
@@ -264,7 +306,7 @@ fun SettingsSectionScreen(
                                                 fontWeight = FontWeight.Bold
                                             )
                                             Icon(
-                                                imageVector = if (drivesExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                                imageVector = if (drivesExpanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
                                                 contentDescription = if (drivesExpanded) "Collapse drives" else "Expand drives",
                                                 tint = MaterialTheme.colorScheme.primary
                                             )
@@ -284,13 +326,14 @@ fun SettingsSectionScreen(
                                     append(" • ").append(formatStorageSize(acc.usageBytes))
                                     if (acc.isDefault == true) append(" (Default)")
                                 }
-                                add(GroupedListItem(key = "drive_${acc.effectiveId}") { SettingsClickRow(title = acc.effectiveName, subtitle = accSub, onClick = onNavigateAccounts) })
+                                add(GroupedListItem(key = "drive_${acc.effectiveId}") { SettingsClickRow(title = acc.effectiveName, subtitle = accSub, icon = Icons.Outlined.Cloud, onClick = onNavigateAccounts) })
                             }
                             add(
                                 GroupedListItem(key = "manage_drives") {
                                     SettingsClickRow(
                                         title = "Manage / Add Storage Drives",
                                         subtitle = "Connect Telegram, Google Drive, or OneDrive",
+                                        icon = Icons.Outlined.AddCircleOutline,
                                         titleColor = MaterialTheme.colorScheme.primary,
                                         onClick = onNavigateAccounts
                                     )
@@ -312,6 +355,7 @@ fun SettingsSectionScreen(
                             GroupedListItem(key = "logout") {
                                 SettingsClickRow(
                                     title = stringResource(R.string.settings_logout),
+                                    icon = Icons.AutoMirrored.Outlined.Logout,
                                     titleColor = MaterialTheme.colorScheme.error,
                                     onClick = { showConfirmLogout = true },
                                     modifier = Modifier.testTag("settings_logout_row")
@@ -527,6 +571,7 @@ fun SettingsSectionScreen(
                         GroupedListItem(key = "app_lock") {
                             SettingsSwitchRow(
                                 title = stringResource(R.string.settings_app_lock),
+                                icon = Icons.Outlined.Lock,
                                 checked = prefsState.appLockEnabled,
                                 onChange = { settingsVm.setAppLockEnabled(it) }
                             )
@@ -540,6 +585,7 @@ fun SettingsSectionScreen(
                                     5 -> timeouts[2]
                                     else -> timeouts[3]
                                 },
+                                icon = Icons.Outlined.Timer,
                                 onClick = { activeDialogType = "LOCK_TIMEOUT" }
                             )
                         },
@@ -547,6 +593,7 @@ fun SettingsSectionScreen(
                             SettingsSwitchRow(
                                 title = stringResource(R.string.settings_block_screenshots),
                                 subtitle = stringResource(R.string.settings_block_screenshots_sub),
+                                icon = Icons.Outlined.VisibilityOff,
                                 checked = prefsState.blockScreenshots,
                                 onChange = { scope.launch { UserPreferences.setBlockScreenshots(context, it) } }
                             )
@@ -575,6 +622,7 @@ fun SettingsSectionScreen(
                             SettingsSwitchRow(
                                 title = stringResource(R.string.settings_encrypt_new_uploads),
                                 subtitle = stringResource(R.string.settings_encrypt_new_uploads_sub),
+                                icon = Icons.Outlined.EnhancedEncryption,
                                 checked = prefsState.isUploadEncryptionEnabled,
                                 onChange = { settingsVm.setEncryptNewUploads(it) }
                             )
@@ -583,6 +631,7 @@ fun SettingsSectionScreen(
                             SettingsSwitchRow(
                                 title = stringResource(R.string.settings_encrypt_offline_files),
                                 subtitle = stringResource(R.string.settings_encrypt_offline_files_sub),
+                                icon = Icons.Outlined.OfflinePin,
                                 checked = prefsState.isOfflineEncryptionEnabled,
                                 onChange = { settingsVm.setEncryptOfflineFiles(it) }
                             )
@@ -591,6 +640,7 @@ fun SettingsSectionScreen(
                             SettingsSwitchRow(
                                 title = stringResource(R.string.settings_full_privacy_mode),
                                 subtitle = stringResource(R.string.settings_full_privacy_mode_sub),
+                                icon = Icons.Outlined.PrivacyTip,
                                 checked = prefsState.fullPrivacyMode,
                                 onChange = { settingsVm.setFullPrivacyMode(it) }
                             )
@@ -599,16 +649,23 @@ fun SettingsSectionScreen(
                             SettingsClickRow(
                                 title = stringResource(R.string.settings_encryption_status),
                                 subtitle = encryptionStatusSubtitle,
+                                icon = Icons.Outlined.VerifiedUser,
                                 onClick = { settingsVm.refreshKeyStatus() }
                             )
                         },
                         GroupedListItem(key = "recovery_backup_status") {
-                            SettingsClickRow(title = stringResource(R.string.settings_recovery_backup_status), subtitle = backupStatus, onClick = {})
+                            SettingsClickRow(
+                                title = stringResource(R.string.settings_recovery_backup_status),
+                                subtitle = backupStatus,
+                                icon = Icons.Outlined.Key,
+                                onClick = {}
+                            )
                         },
                         GroupedListItem(key = "create_recovery_backup") {
                             SettingsClickRow(
                                 title = stringResource(R.string.settings_create_recovery_backup),
                                 subtitle = stringResource(R.string.settings_create_recovery_backup_sub),
+                                icon = Icons.Outlined.Backup,
                                 onClick = { showCreateBackupDialog = true }
                             )
                         },
@@ -616,6 +673,7 @@ fun SettingsSectionScreen(
                             SettingsClickRow(
                                 title = stringResource(R.string.settings_restore_recovery_backup),
                                 subtitle = stringResource(R.string.settings_restore_recovery_backup_sub),
+                                icon = Icons.Outlined.Restore,
                                 onClick = { showRestoreBackupDialog = true }
                             )
                         }
@@ -639,6 +697,7 @@ fun SettingsSectionScreen(
                                     ThemeMode.LIGHT -> themes[1]
                                     ThemeMode.DARK -> themes[2]
                                 },
+                                icon = Icons.Outlined.DarkMode,
                                 onClick = { activeDialogType = "THEME" }
                             )
                         },
@@ -650,12 +709,14 @@ fun SettingsSectionScreen(
                                     prefsState.colorTheme == ColorTheme.NOIR -> colorThemes[1]
                                     else -> colorThemes[0]
                                 },
+                                icon = Icons.Outlined.Palette,
                                 onClick = { activeDialogType = "COLOR_THEME" }
                             )
                         },
                         GroupedListItem(key = "dynamic_color") {
                             SettingsSwitchRow(
                                 title = stringResource(R.string.settings_dynamic_color),
+                                icon = Icons.Outlined.AutoAwesome,
                                 checked = prefsState.dynamicColor,
                                 onChange = { scope.launch { UserPreferences.setDynamicColor(context, it) } }
                             )
@@ -668,6 +729,7 @@ fun SettingsSectionScreen(
                                     ViewMode.LIST -> viewModes[1]
                                     ViewMode.COMPACT_LIST -> viewModes[2]
                                 },
+                                icon = Icons.Outlined.GridView,
                                 onClick = { activeDialogType = "VIEW_MODE" }
                             )
                         },
@@ -678,19 +740,22 @@ fun SettingsSectionScreen(
                                 range = 2f..5f,
                                 steps = 2,
                                 onChange = { scope.launch { UserPreferences.setGridColumns(context, it.toInt()) } },
-                                valueLabel = "${prefsState.gridColumns}"
+                                valueLabel = "${prefsState.gridColumns}",
+                                icon = Icons.Outlined.ViewColumn
                             )
                         },
                         GroupedListItem(key = "density") {
                             SettingsClickRow(
                                 title = stringResource(R.string.settings_layout_density),
                                 subtitle = if (prefsState.layoutDensity == "COMFORTABLE") densities[0] else densities[1],
+                                icon = Icons.Outlined.ViewAgenda,
                                 onClick = { activeDialogType = "DENSITY" }
                             )
                         },
                         GroupedListItem(key = "recent_files") {
                             SettingsSwitchRow(
                                 title = stringResource(R.string.settings_show_recent_files),
+                                icon = Icons.Outlined.History,
                                 checked = prefsState.showRecentFiles,
                                 onChange = { scope.launch { UserPreferences.setShowRecentFiles(context, it) } }
                             )
@@ -706,6 +771,7 @@ fun SettingsSectionScreen(
                             SettingsSwitchRow(
                                 title = stringResource(R.string.settings_stream_before_download),
                                 subtitle = stringResource(R.string.settings_stream_before_download_sub),
+                                icon = Icons.Outlined.PlayCircle,
                                 checked = prefsState.streamBeforeDownload,
                                 onChange = { scope.launch { UserPreferences.setStreamBeforeDownload(context, it) } },
                                 modifier = Modifier.testTag("playback_stream_switch")
@@ -715,6 +781,7 @@ fun SettingsSectionScreen(
                             SettingsSwitchRow(
                                 title = stringResource(R.string.settings_background_audio),
                                 subtitle = stringResource(R.string.settings_background_audio_sub),
+                                icon = Icons.Outlined.Headphones,
                                 checked = prefsState.backgroundPlayback,
                                 onChange = { scope.launch { UserPreferences.setBackgroundPlayback(context, it) } },
                                 modifier = Modifier.testTag("playback_background_switch")
@@ -724,6 +791,7 @@ fun SettingsSectionScreen(
                             SettingsSwitchRow(
                                 title = stringResource(R.string.settings_auto_play_video),
                                 subtitle = stringResource(R.string.settings_auto_play_video_sub),
+                                icon = Icons.Outlined.SmartDisplay,
                                 checked = prefsState.autoPlayVideo,
                                 onChange = { scope.launch { UserPreferences.setAutoPlayVideo(context, it) } },
                                 modifier = Modifier.testTag("playback_autoplay_switch")
@@ -754,6 +822,7 @@ fun SettingsSectionScreen(
                                     scope.launch { UserPreferences.setTransferRetryCount(context, raw.roundToInt()) }
                                 },
                                 valueLabel = if (retryCount == 0) "0 (Off)" else "$retryCount",
+                                icon = Icons.Outlined.Replay,
                                 modifier = Modifier.testTag("advanced_retries_slider")
                             )
                         },
@@ -761,6 +830,7 @@ fun SettingsSectionScreen(
                             SettingsSwitchRow(
                                 title = stringResource(R.string.settings_metered_transfers),
                                 subtitle = "Allow active transfers over metered cellular or hotspot connections",
+                                icon = Icons.Outlined.SignalCellularAlt,
                                 checked = prefsState.allowMeteredTransfers,
                                 onChange = { scope.launch { UserPreferences.setAllowMeteredTransfers(context, it) } },
                                 modifier = Modifier.testTag("advanced_metered_switch")
@@ -770,6 +840,7 @@ fun SettingsSectionScreen(
                             SettingsSwitchRow(
                                 title = stringResource(R.string.settings_roaming_transfers),
                                 subtitle = stringResource(R.string.settings_roaming_transfers_sub),
+                                icon = Icons.Outlined.Public,
                                 checked = prefsState.allowRoaming,
                                 onChange = { scope.launch { UserPreferences.setAllowRoaming(context, it) } },
                                 modifier = Modifier.testTag("advanced_roaming_switch")
@@ -779,6 +850,7 @@ fun SettingsSectionScreen(
                             SettingsSwitchRow(
                                 title = stringResource(R.string.settings_debug_logging),
                                 subtitle = "Include redacted verbose sync and transfer diagnostics in logs",
+                                icon = Icons.Outlined.BugReport,
                                 checked = prefsState.debugLogging,
                                 onChange = { scope.launch { UserPreferences.setDebugLogging(context, it) } },
                                 modifier = Modifier.testTag("advanced_debug_logging_switch")
@@ -788,6 +860,7 @@ fun SettingsSectionScreen(
                             SettingsClickRow(
                                 title = stringResource(R.string.settings_export_logs),
                                 subtitle = "View, copy, clear, or export redacted sync & transfer logs",
+                                icon = Icons.Outlined.Description,
                                 onClick = { showSyncLogsDialog = true },
                                 modifier = Modifier.testTag("advanced_export_logs_row")
                             )
@@ -795,6 +868,7 @@ fun SettingsSectionScreen(
                         GroupedListItem(key = "reset_all") {
                             SettingsClickRow(
                                 title = stringResource(R.string.settings_reset_all),
+                                icon = Icons.Outlined.RestartAlt,
                                 titleColor = MaterialTheme.colorScheme.error,
                                 onClick = { showConfirmResetSettings = true },
                                 modifier = Modifier.testTag("advanced_reset_all_row")
@@ -811,6 +885,7 @@ fun SettingsSectionScreen(
                             SettingsClickRow(
                                 title = stringResource(R.string.settings_app_version),
                                 subtitle = "v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})",
+                                icon = Icons.Outlined.Info,
                                 onClick = {
                                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                     clipboard.setPrimaryClip(
@@ -823,18 +898,21 @@ fun SettingsSectionScreen(
                         GroupedListItem(key = "tos") {
                             SettingsClickRow(
                                 title = stringResource(R.string.settings_terms_of_service),
+                                icon = Icons.Outlined.Gavel,
                                 onClick = { activeDialogType = "TOS_INFO" }
                             )
                         },
                         GroupedListItem(key = "privacy") {
                             SettingsClickRow(
                                 title = stringResource(R.string.settings_privacy_policy),
+                                icon = Icons.Outlined.Policy,
                                 onClick = { activeDialogType = "PRIVACY_INFO" }
                             )
                         },
                         GroupedListItem(key = "licenses") {
                             SettingsClickRow(
                                 title = stringResource(R.string.settings_open_source_licenses),
+                                icon = Icons.Outlined.Code,
                                 onClick = { activeDialogType = "LICENSES_INFO" }
                             )
                         }

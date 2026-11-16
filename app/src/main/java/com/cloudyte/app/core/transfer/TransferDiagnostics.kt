@@ -32,7 +32,7 @@ class TransferDiagnostics(
         recordEvent(
             operationType = "command",
             transferId = command.transferId,
-            state = command::class.simpleName ?: "unknown",
+            state = command.diagnosticName,
             correlationId = CorrelationId.newId()
         )
     }

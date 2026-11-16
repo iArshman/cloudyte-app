@@ -20,11 +20,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -156,7 +156,7 @@ fun ExclusionsScreen(
                 title = { Text(stringResource(R.string.exclusions_title), fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = onBack, modifier = Modifier.testTag("exclusions_back_button")) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = stringResource(R.string.action_back))
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = topBarContainerColor)
@@ -173,7 +173,7 @@ fun ExclusionsScreen(
                     .padding(bottom = LocalBottomBarInset.current)
                     .testTag("exclusions_add_fab")
             ) {
-                Icon(Icons.Default.Add, contentDescription = stringResource(R.string.action_add_rule))
+                Icon(Icons.Outlined.Add, contentDescription = stringResource(R.string.action_add_rule))
             }
         },
         snackbarHost = {
@@ -267,7 +267,7 @@ fun ExclusionsScreen(
                                 modifier = Modifier.testTag("exclusion_delete_${rule.id}")
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.Delete,
+                                    imageVector = Icons.Outlined.DeleteOutline,
                                     contentDescription = stringResource(R.string.action_delete),
                                     tint = MaterialTheme.colorScheme.error
                                 )
@@ -388,7 +388,7 @@ fun ExclusionsScreen(
                                     .testTag(if (isFolder) "exclusion_pick_folder_btn" else "exclusion_pick_file_btn")
                             ) {
                                 Icon(
-                                    imageVector = if (isFolder) Icons.Default.FolderOpen else Icons.Default.InsertDriveFile,
+                                    imageVector = if (isFolder) Icons.Outlined.FolderOpen else Icons.Outlined.Description,
                                     contentDescription = null
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
