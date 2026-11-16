@@ -1,50 +1,19 @@
 <div align="center">
-<img src="docs/images/banner.png" alt="Cloudyte: all your drives, one secure place" width="100%">
-<br>
+# ☁️ Cloudyte
+ 
+### All your drives. One secure place.
+ 
 ![Android](https://img.shields.io/badge/Android-7.0%2B-3DDC84?style=for-the-badge&logo=android&logoColor=white)
 ![Kotlin](https://img.shields.io/badge/Kotlin-2.2-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)
 ![Compose](https://img.shields.io/badge/Jetpack%20Compose-Material%203-4285F4?style=for-the-badge&logo=jetpackcompose&logoColor=white)
 ![Version](https://img.shields.io/badge/version-1.1.0-2F6FEB?style=for-the-badge)
+![Encryption](https://img.shields.io/badge/Encrypted%20copies-AES--256--GCM-52C592?style=for-the-badge)
  
 **One app for all your cloud drives.** Link Telegram Cloud, Google Drive and OneDrive, browse and search them together, move files between them, and protect what matters with on-device encryption and an app lock.
  
-[Screens](#-screens) · [Features](#-features) · [Design](#-design) · [Architecture](#-architecture) · [Getting started](#-getting-started) · [Roadmap](#-roadmap)
+[Features](#-features) · [Screens](#-screens) · [Design](#-design) · [Architecture](#-architecture) · [Getting started](#-getting-started) · [Roadmap](#-roadmap)
  
 </div>
----
- 
-> **About the screenshots.** The images in this README are the **Material 3 Expressive UI design** for Cloudyte. They show the target look and feel of the app. See [DESIGN.md](DESIGN.md) for the full design guide.
- 
-## 📱 Screens
- 
-### Get in
- 
-<table>
-  <tr>
-    <td align="center"><img src="docs/images/screens/splash.png" width="220" alt="Splash"><br><b>Splash</b><br><sub>Animated logo and loader</sub></td>
-    <td align="center"><img src="docs/images/screens/login.png" width="220" alt="Log in"><br><b>Log in</b><br><sub>Large fields, thumb-reach button</sub></td>
-    <td align="center"><img src="docs/images/screens/lock.png" width="220" alt="App lock"><br><b>App lock</b><br><sub>Unlock to open your drives</sub></td>
-  </tr>
-</table>
-### Your drives at a glance
- 
-<table>
-  <tr>
-    <td align="center"><img src="docs/images/screens/home.png" width="220" alt="Home"><br><b>Home</b><br><sub>Storage, counts, categories, quick actions</sub></td>
-    <td align="center"><img src="docs/images/screens/files.png" width="220" alt="Files"><br><b>Files</b><br><sub>Grid view, search, sort, filter</sub></td>
-    <td align="center"><img src="docs/images/screens/transfers.png" width="220" alt="Transfers"><br><b>Transfers</b><br><sub>Queue with status and retry</sub></td>
-  </tr>
-</table>
-### Manage and configure
- 
-<table>
-  <tr>
-    <td align="center"><img src="docs/images/screens/file-details.png" width="190" alt="File details"><br><b>File details</b></td>
-    <td align="center"><img src="docs/images/screens/drives.png" width="190" alt="Linked drives"><br><b>Linked drives</b></td>
-    <td align="center"><img src="docs/images/screens/add-drive.png" width="190" alt="Add a drive"><br><b>Add a drive</b></td>
-    <td align="center"><img src="docs/images/screens/settings.png" width="190" alt="Settings"><br><b>Settings</b></td>
-  </tr>
-</table>
 ---
  
 ## ✨ Features
@@ -77,14 +46,64 @@
 - Diagnostics screen for troubleshooting
 ---
  
+## 📱 Screens
+ 
+```mermaid
+flowchart LR
+    A(["🌥️ Splash"]) --> B["🔑 Log in / Register"]
+    A --> L["🔒 App lock"]
+    B --> H
+    L --> H
+    subgraph MAIN["Main navigation"]
+        H["🏠 Home"] --- F["📂 Files"] --- T["🔄 Transfers"]
+    end
+    H --> S["⚙️ Settings"]
+    H --> D["☁️ Linked drives"]
+    D --> AD["➕ Add a drive"]
+    F --> FD["📄 File details"]
+    F --> V["🎬 Viewers<br/>image · video · audio · PDF · text"]
+    S --> SS["Account · Backup · Storage · Permissions<br/>Security · Appearance · Playback<br/>Notifications · Advanced"]
+```
+ 
+| Screen | What it shows |
+|---|---|
+| 🌥️ **Splash** | Animated logo, tagline and a wavy loader |
+| 🔑 **Log in** | Large rounded fields, "Remember me" switch, one big Log in button |
+| 🔒 **App lock** | "Cloudyte Locked" with a single Unlock button |
+| 🏠 **Home** | Storage used, total files, linked drives, category tiles, quick actions |
+| 📂 **Files** | Account switcher, search, view and filter buttons, folder and file cards, **New** button |
+| 🔄 **Transfers** | Filter chips, status chips (Cancelled, Failed), retry button and error details |
+| 📄 **File details** | Preview, name, size and type, details list, Open / Encrypt / Move / Copy |
+| ☁️ **Linked drives** | Each drive with its provider and a **Default** marker |
+| ➕ **Add a drive** | Bottom sheet: Telegram Cloud, Google Drive, OneDrive |
+| ⚙️ **Settings** | Grouped list of nine sections |
+ 
+---
+ 
 ## 🎨 Design
  
-<div align="center">
-  <img src="docs/images/logo.png" width="120" alt="Cloudyte logo">
-</div>
-The logo is one cloud on a soft 8-point shape. The three small dots are your linked drives, in the same colors used for storage categories across the app.
+Cloudyte uses a **Material 3 Expressive** look, dark first: large rounded shapes, bold type, tonal surfaces and a small set of strong colors.
  
-<img src="docs/images/palette.png" alt="Cloudyte color palette" width="100%">
+The logo is a white cloud on a soft 8-point blue shape. The three small dots under the cloud are your linked drives, in the same colors used for storage categories.
+ 
+**Interface colors**
+ 
+![Primary](https://img.shields.io/badge/Primary-%232F6FEB-2F6FEB?style=for-the-badge&labelColor=1B2538)
+![Accent](https://img.shields.io/badge/Accent-%236FA2FF-6FA2FF?style=for-the-badge&labelColor=1B2538)
+![Background](https://img.shields.io/badge/Background-%23060918-060918?style=for-the-badge&labelColor=1B2538)
+![Surface](https://img.shields.io/badge/Surface-%23121B2E-121B2E?style=for-the-badge&labelColor=1B2538)
+![Raised](https://img.shields.io/badge/Raised-%231B2538-1B2538?style=for-the-badge&labelColor=0B1230)
+![Tonal](https://img.shields.io/badge/Tonal%20blue-%2318275A-18275A?style=for-the-badge&labelColor=1B2538)
+ 
+**Storage categories**
+ 
+![Images](https://img.shields.io/badge/Images-%234361EE-4361EE?style=for-the-badge&labelColor=1B2538)
+![Documents](https://img.shields.io/badge/Documents-%23F5B72E-F5B72E?style=for-the-badge&labelColor=1B2538)
+![Media](https://img.shields.io/badge/Media-%23EF4B4B-EF4B4B?style=for-the-badge&labelColor=1B2538)
+![Other](https://img.shields.io/badge/Other-%2352C592-52C592?style=for-the-badge&labelColor=1B2538)
+![Zipped](https://img.shields.io/badge/Zipped-%239B5CE8-9B5CE8?style=for-the-badge&labelColor=1B2538)
+![Unknown](https://img.shields.io/badge/Unknown-%23A7AFC8-A7AFC8?style=for-the-badge&labelColor=1B2538)
+ 
 **Design principles**
  
 | Principle | What it means in the app |
@@ -95,11 +114,6 @@ The logo is one cloud on a soft 8-point shape. The three small dots are your lin
 | **Readable first** | Bold titles, clear hierarchy, comfortable touch targets (48 px+) |
 | **Accessible** | Text contrast of 4.5:1 or better, labels on icon-only buttons, reduced-motion support |
  
-<details>
-<summary><b>Logo and app icon board</b></summary>
-<br>
-<img src="docs/images/brand.png" alt="Cloudyte logo and app icon board" width="100%">
-</details>
 ---
  
 ## 🏗️ Architecture
@@ -212,7 +226,7 @@ Copy `.env.example` to `.env` if you add local secrets. It is currently empty.
  
 - [x] Multi-drive home, files and transfers
 - [x] Encrypted copies and app lock
-- [x] Material 3 Expressive design: Home, Files, Transfers, File details, Settings, Splash, Log in, App lock, Drives
+- [x] Material 3 Expressive design for Home, Files, Transfers, File details, Settings, Splash, Log in, App lock and Drives
 - [ ] Apply the new design in the app (Compose theme and components)
 - [ ] Light theme
 - [ ] Redesign the image, video, audio and PDF viewers
@@ -226,11 +240,11 @@ Copy `.env.example` to `.env` if you add local secrets. It is currently empty.
 2. Make your change and add or update tests
 3. Run `./gradlew testDebugUnitTest`
 4. Open a pull request with a short description and screenshots for any UI change
-See [DESIGN.md](DESIGN.md) for the visual guidelines.
- 
 ---
  
-
+## 📄 License
+ 
+Add your license here.
  
 <div align="center">
   <sub>Cloudyte · All your drives. One secure place.</sub>
