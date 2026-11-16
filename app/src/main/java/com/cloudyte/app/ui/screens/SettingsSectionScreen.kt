@@ -63,6 +63,8 @@ import com.cloudyte.app.data.formatStorageSize
 import com.cloudyte.app.db.AppDatabase
 import com.cloudyte.app.db.LocalAccount
 import com.cloudyte.app.sync.AutoSyncManager
+import androidx.compose.material.icons.outlined.Devices
+import com.cloudyte.app.ui.components.ActiveSessionsBottomSheet
 import com.cloudyte.app.ui.components.ChoiceDialog
 import com.cloudyte.app.ui.components.ConfirmDialog
 import com.cloudyte.app.ui.components.GroupedList
@@ -99,6 +101,7 @@ fun SettingsSectionScreen(
     var showConfirmLogout by remember { mutableStateOf(false) }
     var showConfirmResetSettings by remember { mutableStateOf(false) }
     var showSyncLogsDialog by remember { mutableStateOf(false) }
+    var showActiveSessionsSheet by remember { mutableStateOf(false) }
     var activeDialogType by remember { mutableStateOf<String?>(null) }
 
     var profile by remember { mutableStateOf<UserProfile?>(null) }
@@ -294,6 +297,17 @@ fun SettingsSectionScreen(
                                 }
                             )
                         }
+                        add(
+                            GroupedListItem(key = "active_sessions_account") {
+                                SettingsClickRow(
+                                    title = "Active Devices & Sessions",
+                                    subtitle = "View signed-in devices or sign out of other sessions",
+                                    icon = Icons.Outlined.Devices,
+                                    onClick = { showActiveSessionsSheet = true },
+                                    modifier = Modifier.testTag("settings_active_sessions_account_row")
+                                )
+                            }
+                        )
                         add(
                             GroupedListItem(key = "logout") {
                                 SettingsClickRow(
@@ -535,6 +549,15 @@ fun SettingsSectionScreen(
                                 subtitle = stringResource(R.string.settings_block_screenshots_sub),
                                 checked = prefsState.blockScreenshots,
                                 onChange = { scope.launch { UserPreferences.setBlockScreenshots(context, it) } }
+                            )
+                        },
+                        GroupedListItem(key = "active_sessions_security") {
+                            SettingsClickRow(
+                                title = "Active Devices & Sessions",
+                                subtitle = "Manage signed-in devices and revoke sessions",
+                                icon = Icons.Outlined.Devices,
+                                onClick = { showActiveSessionsSheet = true },
+                                modifier = Modifier.testTag("settings_active_sessions_security_row")
                             )
                         }
                     )
@@ -827,6 +850,15 @@ fun SettingsSectionScreen(
         SyncLogsDialog(
             snackbarHostState = snackbarHostState,
             onDismiss = { showSyncLogsDialog = false }
+        )
+    }
+
+    if (showActiveSessionsSheet) {
+        ActiveSessionsBottomSheet(
+            onDismiss = { showActiveSessionsSheet = false },
+            onFeedback = { msg ->
+                scope.launch { snackbarHostState.showSnackbar(msg) }
+            }
         )
     }
 

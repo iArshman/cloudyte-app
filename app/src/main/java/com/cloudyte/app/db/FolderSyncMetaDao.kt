@@ -4,11 +4,15 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface FolderSyncMetaDao {
     @Query("SELECT * FROM folder_sync_meta WHERE accountKey = :accountKey AND folderId = :folderId LIMIT 1")
     suspend fun getMeta(accountKey: String, folderId: String): LocalFolderSyncMeta?
+
+    @Query("SELECT * FROM folder_sync_meta WHERE accountKey = :accountKey AND folderId = :folderId LIMIT 1")
+    fun observeMeta(accountKey: String, folderId: String): Flow<LocalFolderSyncMeta?>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(meta: LocalFolderSyncMeta)

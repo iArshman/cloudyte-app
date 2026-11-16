@@ -26,6 +26,8 @@ import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.DeleteOutline
 import com.cloudyte.app.R
 import com.cloudyte.app.core.cache.CacheCleanupWorker
 import com.cloudyte.app.core.cache.StorageBreakdown
@@ -41,6 +43,7 @@ import com.cloudyte.app.ui.components.SettingsClickRow
 import com.cloudyte.app.ui.components.SettingsSectionTitle
 import com.cloudyte.app.ui.components.SettingsSliderRow
 import com.cloudyte.app.ui.components.SettingsSwitchRow
+import com.cloudyte.app.ui.components.TrashBottomSheet
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -58,6 +61,7 @@ fun StorageSettingsSection(
     var showConfirmClearThumbnails by remember { mutableStateOf(false) }
     var showConfirmClearDownloads by remember { mutableStateOf(false) }
     var showDownloadDirDialog by remember { mutableStateOf(false) }
+    var showTrashSheet by remember { mutableStateOf(false) }
 
     suspend fun reloadBreakdown() {
         breakdown = StorageManager.measure(context)
@@ -90,6 +94,15 @@ fun StorageSettingsSection(
 
     val downloadDirs = stringArrayResource(R.array.download_dir_options)
     val storageItems = listOf(
+        GroupedListItem(key = "trash_bin") {
+            SettingsClickRow(
+                title = "Trash / Recycle Bin",
+                subtitle = "View, restore, or permanently delete recently removed files",
+                icon = Icons.Outlined.DeleteOutline,
+                onClick = { showTrashSheet = true },
+                modifier = Modifier.testTag("storage_trash_bin_row")
+            )
+        },
         GroupedListItem(key = "clear_cache") {
             SettingsClickRow(
                 title = stringResource(R.string.settings_clear_cache),
@@ -153,6 +166,16 @@ fun StorageSettingsSection(
         }
     )
     GroupedList(items = storageItems)
+
+    if (showTrashSheet) {
+        TrashBottomSheet(
+            accountId = null,
+            onDismiss = { showTrashSheet = false },
+            onRestoredOrChanged = { msg ->
+                scope.launch { snackbarHostState.showSnackbar(msg) }
+            }
+        )
+    }
 
     if (showDownloadDirDialog) {
         ChoiceDialog(

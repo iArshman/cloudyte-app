@@ -31,9 +31,15 @@ import com.cloudyte.app.api.Account
 import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.api.CloudFile
 import com.cloudyte.app.api.FolderRequest
+import com.cloudyte.app.api.JobStatusResponse
 import com.cloudyte.app.api.MoveCopyRequest
+import com.cloudyte.app.data.formatStorageSize
 import com.cloudyte.app.ui.theme.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.Request
 
 @Composable
 fun MoveCopyDialog(
@@ -75,6 +81,8 @@ fun MoveCopyDialog(
     var folderItems by remember { mutableStateOf<List<CloudFile>>(emptyList()) }
     var isLoadingFolders by remember { mutableStateOf(false) }
     var isExecuting by remember { mutableStateOf(false) }
+    var transferProgressPct by remember { mutableStateOf<Int?>(null) }
+    var transferStageLabel by remember { mutableStateOf<String?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var showNewFolderInput by remember { mutableStateOf(false) }
     var newFolderName by remember { mutableStateOf("") }
@@ -454,6 +462,51 @@ fun MoveCopyDialog(
                     }
                 }
 
+                if (isExecuting && (transferProgressPct != null || !transferStageLabel.isNullOrBlank())) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(MaterialTheme.shapes.small)
+                            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = transferStageLabel ?: "Transferring across drives…",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            transferProgressPct?.let { pct ->
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "$pct%",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        val pct = transferProgressPct
+                        if (pct != null) {
+                            LinearProgressIndicator(
+                                progress = { (pct / 100f).coerceIn(0f, 1f) },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        } else {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        }
+                    }
+                }
+
                 if (errorMessage != null) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
@@ -482,27 +535,81 @@ fun MoveCopyDialog(
                         onClick = {
                             isExecuting = true
                             errorMessage = null
+                            transferProgressPct = null
+                            transferStageLabel = null
                             coroutineScope.launch {
                                 try {
                                     val targetFolderParam = currentTargetFolderId ?: "root"
                                     var succeeded = 0
                                     var lastErrorCode: Int? = null
-                                    for (targetFile in files) {
+                                    var lastErrorText: String? = null
+                                    for ((idx, targetFile) in files.withIndex()) {
+                                        val effectiveSourceAcc = targetFile.effectiveAccountId.ifBlank { sourceAccountId }
+                                        val isCrossAccount = effectiveSourceAcc.isNotBlank() && effectiveSourceAcc != selectedAccountId
                                         val req = MoveCopyRequest(
-                                            sourceAccountId = targetFile.effectiveAccountId.ifBlank { sourceAccountId },
+                                            sourceAccountId = effectiveSourceAcc,
                                             fileId = targetFile.effectiveId,
                                             targetAccountId = selectedAccountId,
                                             targetFolderId = targetFolderParam
                                         )
-                                        val res = if (isMove) {
-                                            ApiClient.apiService.moveFile(req)
+                                        val itemPrefix = if (files.size > 1) "(${idx + 1}/${files.size}) " else ""
+                                        if (isCrossAccount) {
+                                            transferProgressPct = 0
+                                            transferStageLabel = "${itemPrefix}Starting cross-drive transfer…"
+                                            val asyncRes = if (isMove) {
+                                                ApiClient.apiService.moveFileAsync(req, async = true)
+                                            } else {
+                                                ApiClient.apiService.copyFileAsync(req, async = true)
+                                            }
+                                            if (asyncRes.isSuccessful) {
+                                                val body = asyncRes.body()
+                                                val jobId = body?.jobId
+                                                if (!jobId.isNullOrBlank()) {
+                                                    val jobResult = awaitTransferJobWithSse(
+                                                        jobId = jobId,
+                                                        onProgress = { pct, stage, bytesDone, totalBytes ->
+                                                            transferProgressPct = pct
+                                                            val stageReadable = when (stage) {
+                                                                "downloading" -> "Downloading from source drive…"
+                                                                "uploading" -> "Uploading to destination drive…"
+                                                                "finalizing" -> "Finalizing transfer…"
+                                                                "completed" -> "Transfer complete"
+                                                                else -> "Transferring across drives…"
+                                                            }
+                                                            val bytesDetail = if (bytesDone != null && bytesDone > 0L) {
+                                                                if (totalBytes != null && totalBytes > 0L) {
+                                                                    " (${formatStorageSize(bytesDone)} / ${formatStorageSize(totalBytes)})"
+                                                                } else {
+                                                                    " (${formatStorageSize(bytesDone)})"
+                                                                }
+                                                            } else ""
+                                                            transferStageLabel = "$itemPrefix$stageReadable$bytesDetail"
+                                                        }
+                                                    )
+                                                    if (jobResult.isSuccess) {
+                                                        succeeded++
+                                                    } else {
+                                                        lastErrorText = jobResult.exceptionOrNull()?.message
+                                                    }
+                                                } else if (body?.success == true) {
+                                                    succeeded++
+                                                } else {
+                                                    lastErrorText = body?.error ?: "Transfer failed"
+                                                }
+                                            } else {
+                                                lastErrorCode = asyncRes.code()
+                                            }
                                         } else {
-                                            ApiClient.apiService.copyFile(req)
-                                        }
-                                        if (res.isSuccessful) {
-                                            succeeded++
-                                        } else {
-                                            lastErrorCode = res.code()
+                                            val res = if (isMove) {
+                                                ApiClient.apiService.moveFile(req)
+                                            } else {
+                                                ApiClient.apiService.copyFile(req)
+                                            }
+                                            if (res.isSuccessful) {
+                                                succeeded++
+                                            } else {
+                                                lastErrorCode = res.code()
+                                            }
                                         }
                                     }
 
@@ -516,13 +623,15 @@ fun MoveCopyDialog(
                                         val actionWord = if (isMove) "Moved" else "Copied"
                                         onSuccess("$actionWord $succeeded of ${files.size} items (some failed)")
                                     } else {
-                                        errorMessage = "Operation failed (HTTP ${lastErrorCode ?: 500})"
+                                        errorMessage = lastErrorText ?: "Operation failed (HTTP ${lastErrorCode ?: 500})"
                                     }
                                 } catch (e: Exception) {
                                     Log.e("MoveCopyDialog", "Move/Copy execution failed", e)
                                     errorMessage = e.localizedMessage ?: "Operation failed"
                                 } finally {
                                     isExecuting = false
+                                    transferProgressPct = null
+                                    transferStageLabel = null
                                 }
                             }
                         },
@@ -556,4 +665,80 @@ fun MoveCopyDialog(
             }
         }
     }
+}
+
+private val jobStatusAdapter by lazy {
+    ApiClient.moshi.adapter(JobStatusResponse::class.java)
+}
+
+private suspend fun awaitTransferJobWithSse(
+    jobId: String,
+    onProgress: (progressPct: Int?, stage: String?, bytesProcessed: Long?, totalBytes: Long?) -> Unit
+): Result<JobStatusResponse> {
+    val streamUrl = "${ApiClient.API_BASE_URL}/api/jobs/$jobId/stream"
+    val sseResult: Result<JobStatusResponse?> = withContext(Dispatchers.IO) {
+        runCatching {
+            val req = Request.Builder()
+                .url(streamUrl)
+                .header("Accept", "text/event-stream")
+                .get()
+                .build()
+            ApiClient.okHttpClient.newCall(req).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw IllegalStateException("SSE HTTP ${response.code}")
+                }
+                val source = response.body?.source() ?: throw IllegalStateException("Empty SSE body")
+                var finalJob: JobStatusResponse? = null
+                while (!source.exhausted()) {
+                    val line = source.readUtf8Line() ?: break
+                    if (line.startsWith("data:")) {
+                        val payload = line.removePrefix("data:").trim()
+                        if (payload.isNotEmpty()) {
+                            val status = runCatching {
+                                jobStatusAdapter.fromJson(payload)
+                            }.getOrNull()
+                            if (status != null) {
+                                withContext(Dispatchers.Main) {
+                                    onProgress(
+                                        status.progressPct,
+                                        status.stage,
+                                        status.bytesProcessed,
+                                        status.totalBytes
+                                    )
+                                }
+                                if (status.status == "completed") {
+                                    finalJob = status
+                                    break
+                                } else if (status.status == "failed") {
+                                    throw IllegalStateException(status.lastError ?: "Cross-account transfer failed")
+                                }
+                            }
+                        }
+                    }
+                }
+                finalJob
+            }
+        }
+    }
+
+    sseResult.getOrNull()?.let { return Result.success(it) }
+    val sseErr = sseResult.exceptionOrNull()
+    if (sseErr is IllegalStateException && sseErr.message?.startsWith("SSE HTTP") == false && sseErr.message != "Empty SSE body") {
+        return Result.failure(sseErr)
+    }
+
+    // Fallback polling if SSE stream disconnected early or wasn't supported by proxy
+    repeat(120) {
+        val pollRes = runCatching { ApiClient.apiService.getJobStatus(jobId) }.getOrNull()
+        val status = pollRes?.body()
+        if (status != null) {
+            onProgress(status.progressPct, status.stage, status.bytesProcessed, status.totalBytes)
+            when (status.status) {
+                "completed" -> return Result.success(status)
+                "failed" -> return Result.failure(IllegalStateException(status.lastError ?: "Transfer failed"))
+            }
+        }
+        delay(1000L)
+    }
+    return Result.failure(IllegalStateException("Transfer timed out"))
 }

@@ -46,6 +46,7 @@ class CloudFileRepository @JvmOverloads constructor(
 ) {
     private val etagMap = ConcurrentHashMap<String, String>()
     private val folderMemoryCache = ConcurrentHashMap<String, List<CloudFile>>()
+    private val recentlyDeletedCache = ConcurrentHashMap<String, LocalCloudFile>()
     private val storageRefreshTimestamps = ConcurrentHashMap<String, Long>()
     private val inFlightRefreshes = ConcurrentHashMap<String, CompletableDeferred<Result<Unit>>>()
 
@@ -124,6 +125,22 @@ class CloudFileRepository @JvmOverloads constructor(
                 folderMemoryCache[key]?.let { cached -> emit(cached) }
             }
             .distinctUntilChanged()
+    }
+
+    fun observeHasMorePages(accountId: String?, folderId: String?): Flow<Boolean> {
+        val normalizedAccount = if (accountId.isNullOrBlank() || accountId == "root") null else accountId
+        val accKey = accountMetaKey(normalizedAccount)
+        val safeFolder = safeFolderId(folderId)
+        return db.folderSyncMetaDao().observeMeta(accKey, safeFolder)
+            .map { meta ->
+                meta != null && !meta.isCompleteSnapshot && !meta.continuationToken.isNullOrBlank()
+            }
+            .distinctUntilChanged()
+    }
+
+    suspend fun loadNextPage(accountId: String?, folderId: String?): Result<Unit> {
+        val normalizedAccount = if (accountId.isNullOrBlank() || accountId == "root") null else accountId
+        return refresh(normalizedAccount, folderId, force = true, maxPages = 1)
     }
 
     /**
@@ -719,6 +736,9 @@ class CloudFileRepository @JvmOverloads constructor(
 
     suspend fun delete(fileId: String, accountId: String?): Result<Unit> {
         val existing = db.cloudFileDao().getFileById(fileId)
+        if (existing != null) {
+            recentlyDeletedCache[fileId] = existing
+        }
         val normalizedAccount = existing?.accountId ?: accountId?.takeUnless { it == "root" }
         val parentFolderId = existing?.folderId ?: "root"
         val operation = LocalFileMutation(
@@ -744,6 +764,46 @@ class CloudFileRepository @JvmOverloads constructor(
         }
         FileRepository.removeCachedFile(fileId)
         FileMutationWorker.enqueue()
+        return Result.success(Unit)
+    }
+
+    suspend fun undoDelete(fileId: String, accountId: String?): Result<Unit> {
+        return undoDeletes(listOf(fileId), accountId)
+    }
+
+    suspend fun undoDeletes(fileIds: List<String>, accountId: String?): Result<Unit> {
+        if (fileIds.isEmpty()) return Result.success(Unit)
+        val restoredRows = mutableListOf<LocalCloudFile>()
+        val affectedFolders = mutableSetOf<Pair<String?, String>>()
+        db.withTransaction {
+            for (fileId in fileIds) {
+                db.fileMutationDao().removeDeletesForFile(fileId)
+                val cached = recentlyDeletedCache.remove(fileId)
+                if (cached != null) {
+                    restoredRows.add(cached)
+                    affectedFolders.add(cached.accountId to cached.folderId)
+                }
+            }
+            if (restoredRows.isNotEmpty()) {
+                db.cloudFileDao().insertFiles(restoredRows)
+            }
+        }
+        for ((acc, folder) in affectedFolders) {
+            val fKey = folderKey(acc, folder)
+            etagMap.remove(fKey)
+            val current = db.cloudFileDao().getFilesForFolder(acc, folder).map { it.toCloudFile() }
+            folderMemoryCache[fKey] = current
+            FileRepository.cacheFiles(current)
+        }
+        val fallbackAcc = accountId?.takeUnless { it == "root" || it == "all" }
+        for (fileId in fileIds) {
+            val rowAcc = restoredRows.firstOrNull { it.id == fileId }?.accountId ?: fallbackAcc
+            if (!rowAcc.isNullOrBlank()) {
+                runCatching {
+                    api.restoreFromTrash(com.cloudyte.app.api.TrashRestoreRequest(accountId = rowAcc, fileId = fileId))
+                }
+            }
+        }
         return Result.success(Unit)
     }
 
@@ -867,66 +927,7 @@ class CloudFileRepository @JvmOverloads constructor(
         return if (accountId.isNullOrBlank()) ALL_ACCOUNTS_KEY else accountId
     }
 
-    private suspend fun nowMillis(): Long {
-        val baseTime = clock()
-        val virtualTime = extractVirtualTime(currentCoroutineContext())
-        return if (virtualTime != null) baseTime + virtualTime else baseTime
-    }
-
-    private fun extractVirtualTime(context: kotlin.coroutines.CoroutineContext): Long? {
-        return context.fold(null as Long?) { acc, element ->
-            acc ?: extractVirtualTimeFromElement(element)
-        }
-    }
-
-    private fun extractVirtualTimeFromElement(element: Any?): Long? {
-        if (element == null) return null
-        if (element.javaClass.name.endsWith("TestCoroutineScheduler")) {
-            return invokeGetCurrentTime(element)
-        }
-        var clazz: Class<*>? = element.javaClass
-        while (clazz != null && clazz != Any::class.java) {
-            for (method in clazz.declaredMethods) {
-                if (method.name.startsWith("getScheduler") && method.parameterCount == 0) {
-                    try {
-                        method.isAccessible = true
-                        val scheduler = method.invoke(element)
-                        val time = invokeGetCurrentTime(scheduler)
-                        if (time != null) return time
-                    } catch (_: Throwable) {
-                    }
-                }
-            }
-            for (field in clazz.declaredFields) {
-                if (field.type.name.endsWith("TestCoroutineScheduler") || field.name.contains("scheduler", ignoreCase = true)) {
-                    try {
-                        field.isAccessible = true
-                        val scheduler = field.get(element)
-                        val time = invokeGetCurrentTime(scheduler)
-                        if (time != null) return time
-                    } catch (_: Throwable) {
-                    }
-                }
-            }
-            clazz = clazz.superclass
-        }
-        return null
-    }
-
-    private fun invokeGetCurrentTime(scheduler: Any?): Long? {
-        if (scheduler == null) return null
-        return try {
-            val m = scheduler.javaClass.methods.firstOrNull {
-                it.name.startsWith("getCurrentTime") && it.parameterCount == 0
-            } ?: scheduler.javaClass.declaredMethods.firstOrNull {
-                it.name.startsWith("getCurrentTime") && it.parameterCount == 0
-            }
-            m?.isAccessible = true
-            m?.invoke(scheduler) as? Long
-        } catch (_: Throwable) {
-            null
-        }
-    }
+    private fun nowMillis(): Long = clock()
 
     /**
      * Returns the saved [StorageSummary] for [accountId] from Room immediately,
@@ -968,6 +969,44 @@ class CloudFileRepository @JvmOverloads constructor(
         return refreshStorageInternal(rawAccountId, safeAccountId, force = false)
     }
 
+    private suspend fun computeLocalCategoriesAndCount(accountId: String?): Pair<Int, com.cloudyte.app.api.StorageCategories>? {
+        val rows = if (accountId == null || accountId == ALL_ACCOUNTS_KEY) {
+            db.cloudFileDao().getAllFiles()
+        } else {
+            db.cloudFileDao().getFilesForAccount(accountId)
+        }
+        val files = rows.filter { !it.isFolder }.map { it.toCloudFile() }
+        if (files.isEmpty()) return null
+        var images = 0L
+        var documents = 0L
+        var videos = 0L
+        var archives = 0L
+        var audio = 0L
+        var other = 0L
+        for (file in files) {
+            val bytes = file.sizeBytes.coerceAtLeast(0L)
+            val ext = file.effectiveType.lowercase(Locale.US)
+            when {
+                file.isImage -> images += bytes
+                file.isVideo -> videos += bytes
+                file.isAudio -> audio += bytes
+                file.isPdf || file.isTextOrCode || ext in listOf("doc", "docx", "xls", "xlsx", "ppt", "pptx", "pdf", "txt", "rtf", "odt") ->
+                    documents += bytes
+                ext in listOf("zip", "rar", "7z", "tar", "gz", "bz2", "xz", "tgz", "iso") ->
+                    archives += bytes
+                else -> other += bytes
+            }
+        }
+        return files.size to com.cloudyte.app.api.StorageCategories(
+            images = images,
+            documents = documents,
+            videos = videos,
+            archives = archives,
+            audio = audio,
+            other = other
+        )
+    }
+
     private suspend fun refreshStorageInternal(
         rawAccountId: String?,
         safeAccountId: String,
@@ -988,9 +1027,40 @@ class CloudFileRepository @JvmOverloads constructor(
             _storageRefreshing.update { it + safeAccountId }
             storageRefreshTimestamps[safeAccountId] = now
             val apiAccountId = rawAccountId?.takeIf { it.isNotBlank() && it != ALL_ACCOUNTS_KEY && it != "root" }
-            val remote = api.getStorageSummary(apiAccountId)
+            val remote = try {
+                api.getStorageSummary(apiAccountId)
+            } catch (primaryErr: Exception) {
+                if (apiAccountId == null) {
+                    val accounts = db.accountDao().getAllAccounts().ifEmpty {
+                        runCatching { api.getAccounts().map { com.cloudyte.app.db.LocalAccount.fromAccount(it) } }.getOrDefault(emptyList())
+                    }
+                    if (accounts.isEmpty()) throw primaryErr
+                    val perAccount = accounts.mapNotNull { acc ->
+                        runCatching { api.getStorageSummary(acc.id) }.getOrNull()
+                    }
+                    if (perAccount.isEmpty()) throw primaryErr
+                    aggregateStorageSummaries(perAccount)
+                } else {
+                    throw primaryErr
+                }
+            }
+
+            val enriched = if (remote.categories == null || remote.fileCount == null) {
+                val localStats = computeLocalCategoriesAndCount(apiAccountId)
+                if (localStats != null) {
+                    remote.copy(
+                        fileCount = remote.fileCount ?: localStats.first,
+                        categories = remote.categories ?: localStats.second
+                    )
+                } else {
+                    remote
+                }
+            } else {
+                remote
+            }
+
             val savedEntity = LocalStorageSummary.fromStorageSummary(
-                summary = remote,
+                summary = enriched,
                 fallbackAccountId = safeAccountId,
                 updatedAt = now
             )

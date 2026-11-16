@@ -11,7 +11,9 @@ import com.cloudyte.app.core.security.EncryptedMetadataCodec
 @Entity(
     tableName = "cloud_files",
     indices = [
-        Index(value = ["accountId", "folderId"])
+        Index(value = ["accountId", "folderId"]),
+        Index(value = ["isEncrypted"]),
+        Index(value = ["isFolder", "time", "updatedAt"])
     ]
 )
 data class LocalCloudFile(
@@ -44,7 +46,7 @@ data class LocalCloudFile(
     fun toCloudFile(): CloudFile {
         val parsedEnvelope = if (!encryptedMetadata.isNullOrBlank()) {
             try {
-                EncryptedMetadataCodec().deserializeEnvelopeFromJson(encryptedMetadata)
+                sharedMetadataCodec.deserializeEnvelopeFromJson(encryptedMetadata)
             } catch (_: Exception) {
                 null
             }
@@ -102,12 +104,14 @@ data class LocalCloudFile(
     }
 
     companion object {
+        private val sharedMetadataCodec = EncryptedMetadataCodec()
+
         fun fromCloudFile(file: CloudFile, accountId: String?, folderId: String? = null): LocalCloudFile {
             val safeFolderId = if (folderId.isNullOrBlank() || folderId == "root") "root" else folderId
             val resolvedAccId = file.effectiveAccountId.ifBlank { accountId.orEmpty() }
             val serializedEnvelope = file.encryptedMetadata?.let {
                 try {
-                    EncryptedMetadataCodec().serializeEnvelopeToJson(it)
+                    sharedMetadataCodec.serializeEnvelopeToJson(it)
                 } catch (_: Exception) {
                     null
                 }

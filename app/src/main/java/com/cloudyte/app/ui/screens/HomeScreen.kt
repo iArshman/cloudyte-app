@@ -253,16 +253,19 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 val accId = defaultAcc?.effectiveId?.takeIf { it.isNotBlank() && it != "root" }
                 _currentAccountId.value = accId
 
-                if (forceStorageRefresh) {
-                    repository.refreshStorage(selectedStorageAccountId.value, force = true)
-                }
-
                 repository.refresh(accId, "root", force = forceStorageRefresh)
                 val updatedFiles = db.cloudFileDao().getRecentFiles(8).map { it.toCloudFile() }
                 if (updatedFiles.isNotEmpty()) {
                     _recentFiles.value = updatedFiles.take(8)
                     FileRepository.cacheFiles(updatedFiles)
                 }
+
+                val targetStorageId = when {
+                    selectedStorageAccountId.value != ALL_ACCOUNTS_STORAGE_ID -> selectedStorageAccountId.value
+                    _accounts.value.size == 1 -> _accounts.value.first().effectiveId.ifBlank { ALL_ACCOUNTS_STORAGE_ID }
+                    else -> ALL_ACCOUNTS_STORAGE_ID
+                }
+                repository.refreshStorage(targetStorageId, force = forceStorageRefresh)
             } catch (e: Exception) {
                 Log.e("HomeViewModel", "General data loading error", e)
                 _errorMessage.value = e.localizedMessage ?: "Failed to load cloud data"
@@ -688,6 +691,8 @@ fun HomeScreen(
                         val mediaBytes = (byCategory[StorageCategoryType.VIDEOS]?.bytes ?: categories.videos) +
                             (byCategory[StorageCategoryType.AUDIO]?.bytes ?: categories.audio)
                         val zippedBytes = byCategory[StorageCategoryType.ARCHIVES]?.bytes ?: categories.archives
+                        val categorizedSum = otherBytes + imageBytes + docsBytes + mediaBytes + zippedBytes
+                        val unknownBytes = ((active?.usedBytes ?: 0L) - categorizedSum).coerceAtLeast(0L)
 
                         // Top 2 Hero Category Cards: Other & Images
                         Row(
@@ -747,7 +752,7 @@ fun HomeScreen(
                             )
                             CompactCategoryTile(
                                 label = stringResource(R.string.category_unknown),
-                                bytesText = formatStorageSize(0L),
+                                bytesText = formatStorageSize(unknownBytes),
                                 icon = Icons.Default.HelpOutline,
                                 badgeColor = ext.categoryUnknown,
                                 iconTint = ext.onCategoryUnknown,
@@ -988,11 +993,6 @@ private fun deriveCategoriesFromFiles(
                 archives += bytes
             else -> other += bytes
         }
-    }
-
-    val sum = images + documents + videos + archives + audio + other
-    if (totalUsedBytes > sum) {
-        other += (totalUsedBytes - sum)
     }
 
     return StorageCategories(

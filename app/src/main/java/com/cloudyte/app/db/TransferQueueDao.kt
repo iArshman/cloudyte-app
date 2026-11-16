@@ -63,11 +63,19 @@ abstract class TransferQueueDao {
     @Query("SELECT MIN(leaseExpiresAt) FROM transfers WHERE state='RUNNING' AND leaseExpiresAt > :now")
     abstract suspend fun nextLeaseExpiry(now: Long): Long?
 
+    data class TransferProgressTotals(
+        val bytesTransferred: Long,
+        val totalBytes: Long
+    )
+
     @Query("SELECT COALESCE(SUM(bytesTransferred), 0) FROM transfers WHERE state IN ('QUEUED','RUNNING','WAITING_FOR_NETWORK','WAITING_FOR_AUTH')")
     abstract suspend fun aggregateBytesTransferred(): Long
 
     @Query("SELECT COALESCE(SUM(totalBytes), 0) FROM transfers WHERE state IN ('QUEUED','RUNNING','WAITING_FOR_NETWORK','WAITING_FOR_AUTH')")
     abstract suspend fun aggregateTotalBytes(): Long
+
+    @Query("SELECT COALESCE(SUM(bytesTransferred), 0) AS bytesTransferred, COALESCE(SUM(totalBytes), 0) AS totalBytes FROM transfers WHERE state IN ('QUEUED','RUNNING','WAITING_FOR_NETWORK','WAITING_FOR_AUTH')")
+    abstract suspend fun aggregateProgressTotals(): TransferProgressTotals
 
     fun leaseFor(row: LocalTransfer, ownerId: String, acquiredAt: Long): TransferExecutionLease? {
         val expiresAt = row.leaseExpiresAt ?: return null
