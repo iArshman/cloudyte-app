@@ -1,0 +1,6 @@
+{
+  "name": "Cloudyte",
+  "description": "Cloud storage manager web app connecting to REST API",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
