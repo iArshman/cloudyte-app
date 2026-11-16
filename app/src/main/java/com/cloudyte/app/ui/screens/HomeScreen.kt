@@ -618,14 +618,26 @@ fun HomeScreen(
                     .fillMaxSize()
                     .background(MaterialTheme.colorScheme.background)
                     .padding(innerPadding)
-                    .padding(bottom = LocalBottomBarInset.current)
                     .testTag("home_initial_loading"),
                 contentAlignment = Alignment.Center
             ) {
-                LoadingIndicator(
-                    modifier = Modifier.size(72.dp),
-                    color = MaterialTheme.colorScheme.primary
-                )
+                androidx.compose.material3.Surface(
+                    shape = RoundedCornerShape(32.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    tonalElevation = 6.dp,
+                    shadowElevation = 8.dp,
+                    modifier = Modifier.padding(32.dp)
+                ) {
+                    Box(
+                        modifier = Modifier.padding(horizontal = 48.dp, vertical = 48.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        LoadingIndicator(
+                            modifier = Modifier.size(92.dp),
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
             }
         } else {
         PullToRefreshBox(
