@@ -1,5 +1,6 @@
 package com.cloudyte.app.ui.screens
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -47,6 +48,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.WavyProgressIndicatorDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -189,7 +191,7 @@ fun TransfersScreen(
                     }
                     Text(
                         text = stringResource(R.string.transfers_title),
-                        style = MaterialTheme.typography.displayMedium,
+                        style = MaterialTheme.typography.headlineLarge,
                         fontWeight = FontWeight.ExtraBold,
                         color = MaterialTheme.colorScheme.onBackground,
                         maxLines = 1,
@@ -673,10 +675,32 @@ fun TransferItemCard(
 
             if (isActiveOrPaused) {
                 Spacer(modifier = Modifier.height(10.dp))
-                LinearWavyProgressIndicator(
-                    progress = { progress },
-                    modifier = Modifier.fillMaxWidth()
+                val animatedProgress by animateFloatAsState(
+                    targetValue = progress,
+                    animationSpec = WavyProgressIndicatorDefaults.ProgressAnimationSpec,
+                    label = "transfer_wavy_progress"
                 )
+                val trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+                val isPausedState = transfer.status == TransferStatus.PAUSED.name
+                if (!isPausedState && progress <= 0f) {
+                    LinearWavyProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = ext.mintSuccess,
+                        trackColor = trackColor
+                    )
+                } else {
+                    LinearWavyProgressIndicator(
+                        progress = { animatedProgress },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = ext.mintSuccess,
+                        trackColor = trackColor,
+                        waveSpeed = if (transfer.status == TransferStatus.RUNNING.name) {
+                            WavyProgressIndicatorDefaults.LinearDeterminateWavelength
+                        } else {
+                            0.dp
+                        }
+                    )
+                }
             }
 
             val displayError = transfer.errorMessage?.takeIf { it.isNotBlank() }

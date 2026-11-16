@@ -400,7 +400,7 @@ class StreamFileCryptoTest {
         val result = crypto.encryptUriToStagingFile(
             context = context,
             sourceUri = Uri.fromFile(sourceFile),
-            transferId = "transfer-${System.nanoTime()}",
+            transferId = "transfer-${java.util.UUID.randomUUID()}",
             keyMaterial = keyMaterial
         )
 

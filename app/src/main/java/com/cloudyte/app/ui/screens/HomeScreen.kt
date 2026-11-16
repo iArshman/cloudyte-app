@@ -62,9 +62,11 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -108,6 +110,7 @@ import com.cloudyte.app.R
 import com.cloudyte.app.api.Account
 import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.api.CloudFile
+import com.cloudyte.app.api.CloudyteApi
 import com.cloudyte.app.api.FileRepository
 import com.cloudyte.app.api.StorageCategories
 import com.cloudyte.app.api.StorageSummary
@@ -131,13 +134,17 @@ import com.cloudyte.app.ui.openFileInViewer
 import com.cloudyte.app.ui.theme.RobotoFlexFontFamily
 import com.cloudyte.app.ui.theme.cloudyteColors
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -146,10 +153,20 @@ import kotlin.math.roundToInt
 private val EmphasizedDecelerate = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1.0f)
 
 @OptIn(ExperimentalCoroutinesApi::class)
-class HomeViewModel(application: Application) : AndroidViewModel(application) {
-    private val db = AppDatabase.getDatabase(application)
-    private val repository = (application as? com.cloudyte.app.CloudyteApplication)?.container?.cloudFileRepository
-        ?: CloudFileRepository(db, ApiClient.apiService)
+class HomeViewModel(
+    application: Application,
+    private val db: AppDatabase,
+    private val api: CloudyteApi,
+    private val repository: CloudFileRepository
+) : AndroidViewModel(application) {
+
+    constructor(application: Application) : this(
+        application = application,
+        db = AppDatabase.getDatabase(application),
+        api = ApiClient.apiService,
+        repository = (application as? com.cloudyte.app.CloudyteApplication)?.container?.cloudFileRepository
+            ?: CloudFileRepository(AppDatabase.getDatabase(application), ApiClient.apiService)
+    )
 
     private val _profile = MutableStateFlow<UserProfile?>(null)
     val profile: StateFlow<UserProfile?> = _profile.asStateFlow()
@@ -163,8 +180,11 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private val _recentFiles = MutableStateFlow<List<CloudFile>>(emptyList())
     val recentFiles: StateFlow<List<CloudFile>> = _recentFiles.asStateFlow()
 
-    private val _isLoading = MutableStateFlow(false)
+    private val _isLoading = MutableStateFlow(true)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+
+    private val _hasInitialContent = MutableStateFlow(false)
+    val hasInitialContent: StateFlow<Boolean> = _hasInitialContent.asStateFlow()
 
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
@@ -177,18 +197,25 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         preferredStorageAccountFlow,
         _accounts
     ) { preferredId, accs ->
+        val defaultAccId = accs.firstOrNull { it.isDefault == true }?.effectiveId ?: accs.firstOrNull()?.effectiveId
         when {
             !preferredId.isNullOrBlank() && (preferredId == ALL_ACCOUNTS_STORAGE_ID || accs.isEmpty() || accs.any { it.effectiveId == preferredId }) ->
                 preferredId
-            accs.size > 1 -> ALL_ACCOUNTS_STORAGE_ID
+            !defaultAccId.isNullOrBlank() -> defaultAccId
             accs.size == 1 -> accs.first().effectiveId.ifBlank { ALL_ACCOUNTS_STORAGE_ID }
             else -> ALL_ACCOUNTS_STORAGE_ID
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ALL_ACCOUNTS_STORAGE_ID)
 
-    val storageSummary: StateFlow<StorageSummary?> = selectedStorageAccountId
+    val storageSummary: StateFlow<StorageSummary?> = combine(
+        selectedStorageAccountId,
+        _accounts
+    ) { accountId, accs ->
+        if (accountId == ALL_ACCOUNTS_STORAGE_ID && accs.isEmpty()) null else accountId
+    }
+        .distinctUntilChanged()
         .flatMapLatest { accountId ->
-            repository.observeStorage(accountId)
+            if (accountId == null) flowOf(null) else repository.observeStorage(accountId)
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
@@ -206,9 +233,33 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         errorsMap[accountId]
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
+    init {
+        viewModelScope.launch {
+            db.accountDao().getAllAccountsFlow()
+                .map { rows -> rows.map { it.toAccount() } }
+                .collect { accs ->
+                    if (accs.isNotEmpty()) {
+                        _accounts.value = accs
+                    }
+                }
+        }
+    }
+
     fun selectStorageAccount(accountId: String) {
         viewModelScope.launch {
             UserPreferences.setHomeStorageAccountId(getApplication(), accountId)
+        }
+    }
+
+    private fun resolveTargetStorageId(accs: List<Account>, preferredStorageId: String?): String {
+        val defaultAcc = accs.firstOrNull { it.isDefault == true } ?: accs.firstOrNull()
+        val resolvedDefaultId = defaultAcc?.effectiveId?.takeIf { it.isNotBlank() && it != "root" }
+        return when {
+            !preferredStorageId.isNullOrBlank() &&
+                (preferredStorageId == ALL_ACCOUNTS_STORAGE_ID || accs.any { it.effectiveId == preferredStorageId }) ->
+                preferredStorageId
+            !resolvedDefaultId.isNullOrBlank() -> resolvedDefaultId
+            else -> ALL_ACCOUNTS_STORAGE_ID
         }
     }
 
@@ -217,62 +268,108 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             _isLoading.value = true
             _errorMessage.value = null
             try {
-                val cachedAccounts = db.accountDao().getAllAccounts()
+                val cachedAccounts = db.accountDao().getAllAccounts().map { it.toAccount() }
+                var cachedPreferredStorageId: String? = null
                 if (cachedAccounts.isNotEmpty()) {
-                    _accounts.value = cachedAccounts.map { it.toAccount() }
+                    cachedPreferredStorageId = preferredStorageAccountFlow.first()
+                    _accounts.value = cachedAccounts
+                    val cachedDefault = cachedAccounts.firstOrNull { it.isDefault == true } ?: cachedAccounts.firstOrNull()
+                    _currentAccountId.value = cachedDefault?.effectiveId?.takeIf { it.isNotBlank() && it != "root" }
+                    val cachedTargetId = resolveTargetStorageId(cachedAccounts, cachedPreferredStorageId)
+                    val cachedSummary = db.storageSummaryDao().getByAccountId(
+                        if (cachedTargetId == ALL_ACCOUNTS_STORAGE_ID) "all" else cachedTargetId
+                    )
+                    if (cachedSummary != null) {
+                        _hasInitialContent.value = true
+                    }
                 }
 
-                val cachedDefault = _accounts.value.firstOrNull { it.isDefault == true } ?: _accounts.value.firstOrNull()
-                val cachedAccountId = cachedDefault?.effectiveId?.takeIf { it.isNotBlank() && it != "root" }
-                _currentAccountId.value = cachedAccountId
                 val cachedFiles = db.cloudFileDao().getRecentFiles(8)
                 if (cachedFiles.isNotEmpty()) {
                     _recentFiles.value = cachedFiles.map { it.toCloudFile() }.take(8)
                     FileRepository.cacheFiles(_recentFiles.value)
                 }
 
-                try {
-                    val p = ApiClient.apiService.getProfile()
-                    _profile.value = p
-                } catch (e: Exception) {
-                    Log.w("HomeViewModel", "Profile call failed: ${e.message}")
+                coroutineScope {
+                    val profileDeferred = async {
+                        runCatching { api.getProfile() }
+                            .onFailure { Log.w("HomeViewModel", "Profile call failed: ${it.message}") }
+                            .getOrNull()
+                    }
+                    val accountsDeferred = async {
+                        runCatching { api.getAccounts() }
+                            .onFailure { Log.w("HomeViewModel", "Accounts call failed: ${it.message}") }
+                    }
+                    val preferredDeferred = async {
+                        cachedPreferredStorageId ?: preferredStorageAccountFlow.first()
+                    }
+
+                    // If cached accounts already exist, start storage & file refresh immediately in parallel
+                    val preTargetStorageId = if (cachedAccounts.isNotEmpty()) {
+                        resolveTargetStorageId(cachedAccounts, cachedPreferredStorageId)
+                    } else null
+                    val preStorageJob = preTargetStorageId?.let { targetId ->
+                        val needsForce = forceStorageRefresh ||
+                            (storageSummary.value?.usedBytes == 0L && cachedAccounts.any { it.usageBytes > 0L }) ||
+                            storageSummary.value?.categories == null
+                        async { repository.refreshStorage(targetId, force = needsForce) }
+                    }
+                    val preAccId = preTargetStorageId?.takeIf { it != ALL_ACCOUNTS_STORAGE_ID }
+                        ?: (cachedAccounts.firstOrNull { it.isDefault == true } ?: cachedAccounts.firstOrNull())
+                            ?.effectiveId?.takeIf { it.isNotBlank() && it != "root" }
+                    val preFilesJob = if (cachedAccounts.isNotEmpty()) {
+                        async { repository.refresh(preAccId, "root", force = forceStorageRefresh) }
+                    } else null
+
+                    val accountsResult = accountsDeferred.await()
+                    val preferredStorageId = preferredDeferred.await()
+                    val freshAccounts = accountsResult.getOrNull()
+                    if (freshAccounts != null) {
+                        _accounts.value = freshAccounts
+                        if (freshAccounts.isNotEmpty()) {
+                            db.accountDao().insertAccounts(freshAccounts.map { LocalAccount.fromAccount(it) })
+                        }
+                    } else if (cachedAccounts.isEmpty()) {
+                        _errorMessage.value = accountsResult.exceptionOrNull()?.localizedMessage
+                            ?: "Failed to load cloud data"
+                    }
+
+                    val activeAccounts = _accounts.value
+                    val defaultAcc = activeAccounts.firstOrNull { it.isDefault == true } ?: activeAccounts.firstOrNull()
+                    val resolvedDefaultId = defaultAcc?.effectiveId?.takeIf { it.isNotBlank() && it != "root" }
+                    val targetStorageId = resolveTargetStorageId(activeAccounts, preferredStorageId)
+                    val accId = targetStorageId.takeIf { it != ALL_ACCOUNTS_STORAGE_ID } ?: resolvedDefaultId
+                    _currentAccountId.value = accId
+
+                    val storageJob = if (preTargetStorageId == targetStorageId && preStorageJob != null) {
+                        preStorageJob
+                    } else {
+                        val needsForce = forceStorageRefresh ||
+                            (storageSummary.value?.usedBytes == 0L && activeAccounts.any { it.usageBytes > 0L }) ||
+                            storageSummary.value?.categories == null
+                        async { repository.refreshStorage(targetStorageId, force = needsForce) }
+                    }
+                    val filesJob = if (preFilesJob != null && preAccId == accId) {
+                        preFilesJob
+                    } else {
+                        async { repository.refresh(accId, "root", force = forceStorageRefresh) }
+                    }
+
+                    profileDeferred.await()?.let { _profile.value = it }
+                    storageJob.await()
+                    filesJob.await()
                 }
 
-                val accs = try {
-                    ApiClient.apiService.getAccounts()
-                } catch (e: Exception) {
-                    Log.w("HomeViewModel", "Accounts call failed: ${e.message}")
-                    emptyList()
-                }
-                if (accs.isNotEmpty()) {
-                    _accounts.value = accs
-                    db.accountDao().insertAccounts(accs.map { LocalAccount.fromAccount(it) })
-                }
-
-                val defaultAcc = _accounts.value.firstOrNull { it.isDefault == true } ?: _accounts.value.firstOrNull()
-                val accId = defaultAcc?.effectiveId?.takeIf { it.isNotBlank() && it != "root" }
-                _currentAccountId.value = accId
-
-                repository.refresh(accId, "root", force = forceStorageRefresh)
                 val updatedFiles = db.cloudFileDao().getRecentFiles(8).map { it.toCloudFile() }
                 if (updatedFiles.isNotEmpty()) {
                     _recentFiles.value = updatedFiles.take(8)
                     FileRepository.cacheFiles(updatedFiles)
                 }
-
-                val targetStorageId = when {
-                    selectedStorageAccountId.value != ALL_ACCOUNTS_STORAGE_ID -> selectedStorageAccountId.value
-                    _accounts.value.size == 1 -> _accounts.value.first().effectiveId.ifBlank { ALL_ACCOUNTS_STORAGE_ID }
-                    else -> ALL_ACCOUNTS_STORAGE_ID
-                }
-                val needsForce = forceStorageRefresh ||
-                    (storageSummary.value?.usedBytes == 0L && _accounts.value.any { it.usageBytes > 0L }) ||
-                    storageSummary.value?.categories == null
-                repository.refreshStorage(targetStorageId, force = needsForce)
             } catch (e: Exception) {
                 Log.e("HomeViewModel", "General data loading error", e)
                 _errorMessage.value = e.localizedMessage ?: "Failed to load cloud data"
             } finally {
+                _hasInitialContent.value = true
                 _isLoading.value = false
             }
         }
@@ -339,7 +436,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun HomeScreen(
     navController: NavController,
@@ -352,6 +449,7 @@ fun HomeScreen(
     val currentAccountId by viewModel.currentAccountId.collectAsStateWithLifecycle()
     val recentFiles by viewModel.recentFiles.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
+    val hasInitialContent by viewModel.hasInitialContent.collectAsStateWithLifecycle()
     val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
 
     val selectedStorageAccountId by viewModel.selectedStorageAccountId.collectAsStateWithLifecycle()
@@ -514,6 +612,22 @@ fun HomeScreen(
             )
         }
     ) { innerPadding ->
+        if (!hasInitialContent) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
+                    .padding(innerPadding)
+                    .padding(bottom = LocalBottomBarInset.current)
+                    .testTag("home_initial_loading"),
+                contentAlignment = Alignment.Center
+            ) {
+                LoadingIndicator(
+                    modifier = Modifier.size(72.dp),
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        } else {
         PullToRefreshBox(
             isRefreshing = isManualRefreshing && isLoading,
             onRefresh = {
@@ -859,6 +973,7 @@ fun HomeScreen(
                     }
                 }
             }
+        }
         }
     }
 }

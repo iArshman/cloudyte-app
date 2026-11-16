@@ -496,6 +496,78 @@ class ResumableTransferTest {
         }
     }
 
+    @Test
+    fun resumableUploadStreamsLiveBytesDuringChunkWrite(): Unit = runBlocking {
+        val payloadSize = 128 * 1024
+        val localFile = File(context.cacheDir, "upload_stream_test.bin")
+        localFile.writeBytes(ByteArray(payloadSize) { (it % 251).toByte() })
+        val streamedProgress = mutableListOf<Long>()
+        val chunkCheckpoints = mutableListOf<Long>()
+        try {
+            val api = object : BaseFakeApi() {
+                override suspend fun createUploadSession(
+                    accountId: String,
+                    request: UploadSessionRequest
+                ): Response<UploadSessionResponse> = Response.success(
+                    UploadSessionResponse(
+                        sessionId = "s-stream",
+                        status = "active",
+                        totalBytes = request.size,
+                        chunkSize = payloadSize.toLong()
+                    )
+                )
+
+                override suspend fun getUploadSession(sessionId: String): Response<UploadSessionResponse> =
+                    Response.success(
+                        UploadSessionResponse(
+                            sessionId = sessionId,
+                            status = "active",
+                            receivedBytes = 0L,
+                            totalBytes = payloadSize.toLong(),
+                            chunkSize = payloadSize.toLong()
+                        )
+                    )
+
+                override suspend fun uploadChunk(
+                    sessionId: String,
+                    contentRange: String,
+                    chunk: MultipartBody.Part
+                ): Response<UploadChunkResponse> {
+                    val sink = okio.Buffer()
+                    chunk.body.writeTo(sink)
+                    val byteCount = sink.size
+                    return Response.success(
+                        UploadChunkResponse(
+                            sessionId = sessionId,
+                            receivedBytes = byteCount,
+                            totalBytes = payloadSize.toLong(),
+                            nextOffset = byteCount
+                        )
+                    )
+                }
+            }
+            val result = com.cloudyte.app.ui.screens.UploadHelper.uploadFileResumable(
+                context = context,
+                accountId = "acc-1",
+                folderId = "root",
+                uri = Uri.fromFile(localFile),
+                explicitFileName = localFile.name,
+                explicitMimeType = "application/octet-stream",
+                explicitFileSize = localFile.length(),
+                idempotencyKey = "idem-stream-1",
+                provider = com.cloudyte.app.data.providers.CloudyteProvider(api),
+                onProgress = { bytes, _ -> chunkCheckpoints += bytes },
+                onStreamProgress = { bytes -> streamedProgress += bytes }
+            )
+            assertTrue(result.isSuccess)
+            assertTrue("Expected live streamed progress during chunk write", streamedProgress.isNotEmpty())
+            assertTrue("Streamed progress must advance cleanly", streamedProgress.last() > 0L)
+            assertEquals(listOf(payloadSize.toLong()), chunkCheckpoints)
+        } finally {
+            localFile.delete()
+        }
+    }
+
     private open class BaseFakeApi : CloudyteApi {
         override suspend fun getPublicSettings(): PublicSettingsResponse = PublicSettingsResponse()
         override suspend fun register(request: RegisterRequest): Response<ResponseBody> =

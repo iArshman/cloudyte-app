@@ -23,6 +23,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,11 +39,12 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.cloudyte.app.R
 import com.cloudyte.app.data.AccountSessionHelper
+import com.cloudyte.app.data.UserPreferences
+import com.cloudyte.app.data.UserPreferencesState
 import com.cloudyte.app.ui.components.GroupedList
 import com.cloudyte.app.ui.components.GroupedListItem
 import com.cloudyte.app.ui.components.LocalBottomBarInset
 import com.cloudyte.app.ui.components.SectionRow
-import com.cloudyte.app.ui.components.SettingsSectionTitle
 import com.cloudyte.app.ui.theme.cloudyteColors
 import kotlinx.coroutines.launch
 
@@ -117,24 +119,25 @@ fun SettingsScreen(
 
     val scrollState = rememberScrollState()
     val ext = MaterialTheme.cloudyteColors
+    val prefsState by UserPreferences.observe(context).collectAsState(initial = UserPreferencesState())
 
     val groups = remember {
         listOf(
-            R.string.settings_group_cloud to listOf(
+            listOf(
                 SettingsSectionType.ACCOUNT,
                 SettingsSectionType.BACKUP,
                 SettingsSectionType.STORAGE
             ),
-            R.string.settings_group_security to listOf(
+            listOf(
                 SettingsSectionType.PERMISSIONS,
                 SettingsSectionType.SECURITY
             ),
-            R.string.settings_group_preferences to listOf(
+            listOf(
                 SettingsSectionType.APPEARANCE,
                 SettingsSectionType.PLAYBACK,
                 SettingsSectionType.NOTIFICATIONS
             ),
-            R.string.settings_group_system to listOf(
+            listOf(
                 SettingsSectionType.ADVANCED,
                 SettingsSectionType.ABOUT
             )
@@ -167,30 +170,26 @@ fun SettingsScreen(
                         fontWeight = FontWeight.ExtraBold,
                         color = MaterialTheme.colorScheme.onBackground
                     )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = stringResource(R.string.settings_subtitle),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
-                IconButton(
-                    onClick = { currentSubScreen = "DIAGNOSTICS" },
-                    modifier = Modifier
-                        .size(48.dp)
-                        .testTag("settings_diagnostics_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.BugReport,
-                        contentDescription = "Open diagnostics",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(24.dp)
-                    )
+                if (prefsState.debugLogging) {
+                    IconButton(
+                        onClick = { currentSubScreen = "DIAGNOSTICS" },
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("settings_diagnostics_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.BugReport,
+                            contentDescription = "Open diagnostics",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
                 }
             }
 
-            groups.forEach { (groupTitleRes, sections) ->
-                SettingsSectionTitle(title = stringResource(groupTitleRes))
+            groups.forEachIndexed { groupIndex, sections ->
+                Spacer(modifier = Modifier.height(if (groupIndex == 0) 8.dp else 16.dp))
                 val items = sections.mapIndexed { index, section ->
                     GroupedListItem(key = section.name) {
                         SectionRow(

@@ -36,6 +36,8 @@ class UserPreferencesTest {
         assertFalse(state.backupChargingOnly)
         assertFalse(state.quickMediaBackupEnabled)
         assertFalse(state.deleteAfterUpload)
+        assertFalse(state.showRecentFiles)
+        assertFalse(state.debugLogging)
         assertEquals("INTERNAL", state.downloadDirectory)
         assertEquals(3, state.transferRetryCount)
     }
