@@ -424,3 +424,44 @@ data class UploadCompleteResponse(
     val sessionId: String,
     val checksum: String? = null
 )
+
+@JsonClass(generateAdapter = true)
+data class TrashRestoreRequest(
+    val accountId: String,
+    val fileId: String
+)
+
+@JsonClass(generateAdapter = true)
+data class ActiveSessionDto(
+    val id: String = "",
+    val sessionId: String? = null,
+    val deviceName: String = "Cloudyte Client",
+    val userAgent: String? = null,
+    val createdAt: String? = null,
+    val lastActiveAt: String? = null,
+    val expiresAt: String? = null,
+    val isCurrent: Boolean = false
+) {
+    val effectiveId: String get() = sessionId?.takeIf { it.isNotBlank() } ?: id
+}
+
+@JsonClass(generateAdapter = true)
+data class TransferActionResponse(
+    val success: Boolean = false,
+    val async: Boolean? = null,
+    val jobId: String? = null,
+    val status: String? = null,
+    val error: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class JobStatusResponse(
+    val id: String = "",
+    val status: String = "",
+    val stage: String? = null,
+    val progressPct: Int? = null,
+    val bytesProcessed: Long? = null,
+    val totalBytes: Long? = null,
+    val lastError: String? = null
+)
+

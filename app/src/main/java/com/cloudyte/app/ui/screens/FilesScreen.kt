@@ -85,6 +85,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Upload
+import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -99,11 +100,14 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -172,6 +176,7 @@ import com.cloudyte.app.ui.components.FileQuickFilter
 import com.cloudyte.app.ui.components.FilesFilterSortSheet
 import com.cloudyte.app.ui.components.FileThumb
 import com.cloudyte.app.ui.components.LocalBottomBarInset
+import com.cloudyte.app.ui.components.TrashBottomSheet
 import com.cloudyte.app.ui.navigation.NavigationTransitions
 import com.cloudyte.app.ui.openFileInViewer
 import com.cloudyte.app.ui.theme.cloudyteColors
@@ -301,6 +306,33 @@ class FilesViewModel(
     val isFolderDataLoaded: StateFlow<Boolean> = combine(selectedFolder, folderSnapshot) { folderKey, snapshot ->
         snapshot?.folderKey == folderKey || repo.getCachedFolderSnapshot(folderKey.first, folderKey.second) != null
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    val hasMorePages: StateFlow<Boolean> = selectedFolder
+        .flatMapLatest { folderKey ->
+            repo.observeHasMorePages(folderKey.first, folderKey.second)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    private val _isLoadingMore = MutableStateFlow(false)
+    val isLoadingMore: StateFlow<Boolean> = _isLoadingMore.asStateFlow()
+
+    fun loadNextPage() {
+        if (_isLoadingMore.value) return
+        val accId = currentAccountId.value
+            ?: accounts.value.firstOrNull { it.isDefault == true }?.effectiveId
+            ?: accounts.value.firstOrNull()?.effectiveId
+        val folderId = currentFolderId.value
+        viewModelScope.launch {
+            _isLoadingMore.value = true
+            try {
+                repo.loadNextPage(accId, folderId)
+            } catch (e: Exception) {
+                Log.w("FilesViewModel", "Load next page failed: ${e.message}")
+            } finally {
+                _isLoadingMore.value = false
+            }
+        }
+    }
 
     private val folderScrollPositions = java.util.concurrent.ConcurrentHashMap<String, Pair<Int, Int>>()
 
@@ -613,6 +645,10 @@ class FilesViewModel(
         }
     }
 
+    private val _undoDeleteEvents = MutableSharedFlow<String>()
+    val undoDeleteEvents: SharedFlow<String> = _undoDeleteEvents.asSharedFlow()
+    private var lastDeletedBatch: Pair<String?, List<String>>? = null
+
     fun deleteFile(fileId: String, onSuccess: () -> Unit = {}) {
         viewModelScope.launch {
             val accId = currentAccountId.value
@@ -620,11 +656,29 @@ class FilesViewModel(
                 ?: accounts.value.firstOrNull()?.effectiveId
             try {
                 val res = repo.delete(fileId, accId)
-                if (res.isSuccess) onSuccess()
-                else _userEvents.emit(res.exceptionOrNull()?.message ?: "Failed to delete item")
+                if (res.isSuccess) {
+                    lastDeletedBatch = accId to listOf(fileId)
+                    onSuccess()
+                    _undoDeleteEvents.emit("Moved to Trash")
+                } else {
+                    _userEvents.emit(res.exceptionOrNull()?.message ?: "Failed to delete item")
+                }
             } catch (e: Exception) {
                 Log.e("FilesViewModel", "Delete failed", e)
                 _userEvents.emit(e.message ?: "Failed to delete item")
+            }
+        }
+    }
+
+    fun undoLastDelete() {
+        val batch = lastDeletedBatch ?: return
+        lastDeletedBatch = null
+        viewModelScope.launch {
+            try {
+                repo.undoDeletes(batch.second, batch.first)
+                _userEvents.emit("Restored ${batch.second.size} item(s)")
+            } catch (e: Exception) {
+                _userEvents.emit(e.message ?: "Could not undo delete")
             }
         }
     }
@@ -726,12 +780,13 @@ class FilesViewModel(
             val accId = currentAccountId.value
                 ?: accounts.value.firstOrNull { it.isDefault == true }?.effectiveId
                 ?: accounts.value.firstOrNull()?.effectiveId
-            var queued = 0
+            val deletedIds = mutableListOf<String>()
             fileIds.forEach { fid ->
-                if (repo.delete(fid, accId).isSuccess) queued++
+                if (repo.delete(fid, accId).isSuccess) deletedIds.add(fid)
             }
-            if (queued > 0) {
-                _userEvents.emit("$queued ${if (queued == 1) "delete" else "deletes"} queued for sync")
+            if (deletedIds.isNotEmpty()) {
+                lastDeletedBatch = accId to deletedIds
+                _undoDeleteEvents.emit("Moved ${deletedIds.size} ${if (deletedIds.size == 1) "item" else "items"} to Trash")
             } else {
                 _userEvents.emit("Failed to delete selected items")
             }
@@ -1099,6 +1154,8 @@ fun FilesScreen(
     }
 
     val displayFoldersAndFiles by viewModel.displayFoldersAndFiles.collectAsStateWithLifecycle()
+    val hasMorePages by viewModel.hasMorePages.collectAsStateWithLifecycle()
+    val isLoadingMore by viewModel.isLoadingMore.collectAsStateWithLifecycle()
     val folders = displayFoldersAndFiles.first
     val regularFiles = displayFoldersAndFiles.second
     val filteredAndSortedFiles = remember(folders, regularFiles) { folders + regularFiles }
@@ -1114,6 +1171,8 @@ fun FilesScreen(
     // Dialogs state
     val snackbarHostState = remember { SnackbarHostState() }
     var snackbarMessage by remember { mutableStateOf<String?>(null) }
+    var showTrashSheet by remember { mutableStateOf(false) }
+
     LaunchedEffect(snackbarMessage) {
         val msg = snackbarMessage
         if (msg != null) {
@@ -1124,6 +1183,31 @@ fun FilesScreen(
 
     LaunchedEffect(viewModel.userEvents) {
         viewModel.userEvents.collect { message -> snackbarMessage = message }
+    }
+
+    LaunchedEffect(viewModel.undoDeleteEvents) {
+        viewModel.undoDeleteEvents.collect { message ->
+            snackbarHostState.currentSnackbarData?.dismiss()
+            val result = snackbarHostState.showSnackbar(
+                message = message,
+                actionLabel = "Undo",
+                duration = SnackbarDuration.Short
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                viewModel.undoLastDelete()
+            }
+        }
+    }
+
+    if (showTrashSheet) {
+        TrashBottomSheet(
+            accountId = effectiveAccountId,
+            onDismiss = { showTrashSheet = false },
+            onRestoredOrChanged = { feedback ->
+                snackbarMessage = feedback
+                viewModel.refresh(force = true)
+            }
+        )
     }
 
     LaunchedEffect(currentAccountId) {
@@ -1228,10 +1312,10 @@ fun FilesScreen(
             onDismissRequest = { fileForDelete = null },
             shape = MaterialTheme.shapes.extraLarge,
             containerColor = MaterialTheme.colorScheme.surfaceContainer,
-            title = { Text("Delete item?", color = MaterialTheme.colorScheme.onSurface) },
+            title = { Text("Move to Trash?", color = MaterialTheme.colorScheme.onSurface) },
             text = {
                 Text(
-                    "Are you sure you want to delete '${fileForDelete?.effectiveName}'?",
+                    "Move '${fileForDelete?.effectiveName}' to Trash? You can restore it within 30 days.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             },
@@ -1240,13 +1324,11 @@ fun FilesScreen(
                     onClick = {
                         val target = fileForDelete ?: return@Button
                         fileForDelete = null
-                        viewModel.deleteFile(target.effectiveId) {
-                            snackbarMessage = "Delete queued; it will sync when online"
-                        }
+                        viewModel.deleteFile(target.effectiveId)
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                 ) {
-                    Text("Delete", color = MaterialTheme.colorScheme.onError)
+                    Text("Move to Trash", color = MaterialTheme.colorScheme.onError)
                 }
             },
             dismissButton = {
@@ -1670,7 +1752,8 @@ fun FilesScreen(
                         }
                     },
                     hasActiveFilter = quickFilter != FileQuickFilter.ALL,
-                    onOpenFilterSheet = { showSortDropdown = true }
+                    onOpenFilterSheet = { showSortDropdown = true },
+                    onOpenTrash = { showTrashSheet = true }
                 )
             }
             // M3 LinearProgressIndicator below header when refreshing or uploading
@@ -2025,6 +2108,36 @@ fun FilesScreen(
                             }
                         }
 
+                        if (hasMorePages && searchQuery.isBlank() && quickFilter == FileQuickFilter.ALL) {
+                            item(span = { GridItemSpan(maxLineSpan) }, key = "load_more_grid") {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 12.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    OutlinedButton(
+                                        onClick = { viewModel.loadNextPage() },
+                                        enabled = !isLoadingMore,
+                                        modifier = Modifier
+                                            .heightIn(min = 48.dp)
+                                            .testTag("files_load_more_button")
+                                    ) {
+                                        if (isLoadingMore) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(18.dp),
+                                                strokeWidth = 2.dp
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text("Loading more…")
+                                        } else {
+                                            Text("Load more files")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         if (pane.folders.isEmpty() && pane.regularFiles.isEmpty() && !pane.busy) {
                             item(span = { GridItemSpan(maxLineSpan) }, key = "empty_state") {
                                 if (isOffline && !pane.hasFiles) {
@@ -2149,6 +2262,36 @@ fun FilesScreen(
                             }
                         }
 
+                        if (hasMorePages && searchQuery.isBlank() && quickFilter == FileQuickFilter.ALL) {
+                            item(key = "load_more_list") {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 12.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    OutlinedButton(
+                                        onClick = { viewModel.loadNextPage() },
+                                        enabled = !isLoadingMore,
+                                        modifier = Modifier
+                                            .heightIn(min = 48.dp)
+                                            .testTag("files_load_more_button")
+                                    ) {
+                                        if (isLoadingMore) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(18.dp),
+                                                strokeWidth = 2.dp
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text("Loading more…")
+                                        } else {
+                                            Text("Load more files")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         if (pane.folders.isEmpty() && pane.regularFiles.isEmpty() && !pane.busy) {
                             item(key = "empty_state") {
                                 if (isOffline && !pane.hasFiles) {
@@ -2243,7 +2386,8 @@ private fun OriginalFilesHeaderBar(
     isGridView: Boolean,
     onToggleViewMode: () -> Unit,
     hasActiveFilter: Boolean,
-    onOpenFilterSheet: () -> Unit
+    onOpenFilterSheet: () -> Unit,
+    onOpenTrash: () -> Unit = {}
 ) {
     val driveInitial = (activeAccount?.effectiveName?.firstOrNull() ?: 'C').uppercaseChar().toString()
     val ext = MaterialTheme.cloudyteColors
@@ -2253,7 +2397,7 @@ private fun OriginalFilesHeaderBar(
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         // 1. Left Drive Avatar Button (48.dp circle with 2.dp accent border)
         Box {
@@ -2338,6 +2482,25 @@ private fun OriginalFilesHeaderBar(
                     )
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = "Trash",
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Outlined.DeleteOutline,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    },
+                    onClick = {
+                        onToggleDriveDropdown(false)
+                        onOpenTrash()
+                    }
+                )
                 DropdownMenuItem(
                     text = {
                         Text(
@@ -2441,7 +2604,27 @@ private fun OriginalFilesHeaderBar(
             }
         }
 
-        // 4. Filter / Sort Button (48.dp circle)
+        // 4. Trash Button (48.dp circle)
+        Surface(
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            modifier = Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .clickable { onOpenTrash() }
+                .testTag("files_trash_button")
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = Icons.Outlined.DeleteOutline,
+                    contentDescription = "Trash",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(21.dp)
+                )
+            }
+        }
+
+        // 5. Filter / Sort Button (48.dp circle)
         Box {
             Surface(
                 shape = CircleShape,

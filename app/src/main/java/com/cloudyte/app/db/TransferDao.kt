@@ -22,6 +22,9 @@ interface TransferDao {
     @Query("SELECT * FROM transfers WHERE id = :id")
     suspend fun getById(id: String): LocalTransfer?
 
+    @Query("SELECT * FROM transfers WHERE id = :id")
+    fun observeById(id: String): Flow<LocalTransfer?>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(transfer: LocalTransfer)
 
@@ -37,8 +40,14 @@ interface TransferDao {
     @Delete
     suspend fun delete(transfer: LocalTransfer)
 
+    @Query("UPDATE transfers SET state = 'QUEUED', status = 'PENDING', operationType = COALESCE(:operationType, operationType), nextAttemptAt = NULL, leaseOwner = NULL, leaseExpiresAt = NULL, errorMessage = NULL, lastErrorCode = NULL, lastErrorMessage = NULL, updatedAt = :now WHERE id = :id AND state IN ('FAILED_RETRYABLE', 'WAITING_FOR_NETWORK', 'WAITING_FOR_AUTH')")
+    suspend fun resetRetryNow(id: String, operationType: String? = null, now: Long = System.currentTimeMillis()): Int
+
     @Query("DELETE FROM transfers WHERE status IN ('COMPLETED', 'CANCELLED', 'FAILED')")
     suspend fun deleteCompletedTransfers()
+
+    @Query("DELETE FROM transfers")
+    suspend fun clearAll()
 
     @Query("UPDATE transfers SET status = :status, state = CASE :status WHEN 'PENDING' THEN 'QUEUED' WHEN 'RUNNING' THEN 'RUNNING' WHEN 'PAUSED' THEN 'PAUSED' WHEN 'COMPLETED' THEN 'COMPLETED' WHEN 'FAILED' THEN 'FAILED_RETRYABLE' WHEN 'CANCELLED' THEN 'CANCELLED' ELSE state END, bytesTransferred = :bytes, totalBytes = :total, errorMessage = NULL, lastProgressAt = :updatedAt, updatedAt = :updatedAt WHERE id = :id")
     suspend fun updateProgress(id: String, status: String, bytes: Long, total: Long, updatedAt: Long = System.currentTimeMillis())

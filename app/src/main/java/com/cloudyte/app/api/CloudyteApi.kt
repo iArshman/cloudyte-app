@@ -145,8 +145,25 @@ interface CloudyteApi {
     @POST("/api/files/move")
     suspend fun moveFile(@Body request: MoveCopyRequest): Response<Unit>
 
+    @POST("/api/files/move")
+    suspend fun moveFileAsync(
+        @Body request: MoveCopyRequest,
+        @Query("async") async: Boolean = true
+    ): Response<TransferActionResponse>
+
     @POST("/api/files/copy")
     suspend fun copyFile(@Body request: MoveCopyRequest): Response<Unit>
+
+    @POST("/api/files/copy")
+    suspend fun copyFileAsync(
+        @Body request: MoveCopyRequest,
+        @Query("async") async: Boolean = true
+    ): Response<TransferActionResponse>
+
+    @GET("/api/jobs/{jobId}")
+    suspend fun getJobStatus(
+        @Path("jobId") jobId: String
+    ): Response<JobStatusResponse>
 
     @POST("/api/share")
     suspend fun shareFile(@Body request: ShareRequest): ShareResponse
@@ -155,4 +172,37 @@ interface CloudyteApi {
     suspend fun getStorageSummary(
         @Query("accountId") accountId: String? = null
     ): StorageSummary
+
+    @GET("/api/trash")
+    suspend fun getTrash(
+        @Query("accountId") accountId: String? = null
+    ): List<CloudFile>
+
+    @POST("/api/trash/restore")
+    suspend fun restoreFromTrash(
+        @Body request: TrashRestoreRequest
+    ): Response<Unit>
+
+    @DELETE("/api/trash/{fileId}")
+    suspend fun deleteFromTrash(
+        @Path("fileId") fileId: String,
+        @Query("accountId") accountId: String
+    ): Response<Unit>
+
+    @DELETE("/api/trash")
+    suspend fun emptyTrash(
+        @Query("accountId") accountId: String? = null
+    ): Response<Unit>
+
+    @GET("/api/sessions")
+    suspend fun getSessions(): List<ActiveSessionDto>
+
+    @DELETE("/api/sessions/{sessionId}")
+    suspend fun revokeSession(
+        @Path("sessionId") sessionId: String
+    ): Response<Unit>
+
+    @DELETE("/api/sessions")
+    suspend fun revokeOtherSessions(): Response<Unit>
 }
+

@@ -447,5 +447,18 @@ class ResumableTransferTest {
         override suspend fun shareFile(request: ShareRequest): ShareResponse = ShareResponse()
         override suspend fun getStorageSummary(accountId: String?): StorageSummary =
             StorageSummary(accountId = accountId ?: "all", accountType = "cloudyte", usedBytes = 0L)
+        override suspend fun moveFileAsync(request: MoveCopyRequest, async: Boolean): Response<com.cloudyte.app.api.TransferActionResponse> =
+            Response.success(com.cloudyte.app.api.TransferActionResponse(success = true))
+        override suspend fun copyFileAsync(request: MoveCopyRequest, async: Boolean): Response<com.cloudyte.app.api.TransferActionResponse> =
+            Response.success(com.cloudyte.app.api.TransferActionResponse(success = true))
+        override suspend fun getJobStatus(jobId: String): Response<com.cloudyte.app.api.JobStatusResponse> =
+            Response.success(com.cloudyte.app.api.JobStatusResponse(id = jobId, status = "completed", progressPct = 100))
+        override suspend fun getTrash(accountId: String?): List<CloudFile> = emptyList()
+        override suspend fun restoreFromTrash(request: com.cloudyte.app.api.TrashRestoreRequest): Response<Unit> = Response.success(Unit)
+        override suspend fun deleteFromTrash(fileId: String, accountId: String): Response<Unit> = Response.success(Unit)
+        override suspend fun emptyTrash(accountId: String?): Response<Unit> = Response.success(Unit)
+        override suspend fun getSessions(): List<com.cloudyte.app.api.ActiveSessionDto> = emptyList()
+        override suspend fun revokeSession(sessionId: String): Response<Unit> = Response.success(Unit)
+        override suspend fun revokeOtherSessions(): Response<Unit> = Response.success(Unit)
     }
 }

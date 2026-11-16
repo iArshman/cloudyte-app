@@ -1,11 +1,15 @@
 package com.cloudyte.app.api
 
 import com.cloudyte.app.db.AppDatabase
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import java.util.concurrent.ConcurrentHashMap
 
 object FileRepository {
-    private val filesCache = mutableMapOf<String, CloudFile>()
-    private var activeList = listOf<CloudFile>()
+    private val filesCache = ConcurrentHashMap<String, CloudFile>()
+    @Volatile
+    private var activeList: List<CloudFile> = emptyList()
+    @Volatile
     private var activeAccountId: String? = null
 
     fun cacheFiles(files: List<CloudFile>) {

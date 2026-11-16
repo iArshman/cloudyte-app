@@ -108,18 +108,34 @@ fun FileThumb(
             file.effectiveId.isNotBlank() && !file.isFolderItem
     }
 
-    var cachedThumbFile by remember(file.effectiveId, file.isEncrypted) {
-        mutableStateOf<File?>(
-            if (file.isEncrypted) null else localSource?.takeIf { it.isFile && it.length() > 0L }
-        )
+    val initialCachedThumb = remember(effectiveAccountId, file.effectiveId, file.isEncrypted, targetSizePx, localSource) {
+        val memHit = if (effectiveAccountId.isNotBlank()) {
+            app?.container?.thumbnailStore?.getMemoryCached(effectiveAccountId, file, targetSizePx)
+        } else null
+        memHit ?: if (file.isEncrypted) null else localSource?.takeIf { it.isFile && it.length() > 0L }
     }
 
-    LaunchedEffect(effectiveAccountId, file.effectiveId, isPreviewable, isDownloadedOffline, localSource?.absolutePath) {
-        if (isPreviewable && app != null) {
+    var cachedThumbFile by remember(file.effectiveId, file.isEncrypted, targetSizePx) {
+        mutableStateOf<File?>(initialCachedThumb)
+    }
+    var resolvedFallbackUrl by remember(file.effectiveId, file.isEncrypted, targetSizePx) {
+        mutableStateOf<String?>(null)
+    }
+
+    LaunchedEffect(effectiveAccountId, file.effectiveId, isPreviewable, isDownloadedOffline, localSource?.absolutePath, targetSizePx) {
+        if (cachedThumbFile == null && initialCachedThumb != null) {
+            cachedThumbFile = initialCachedThumb
+        }
+        if (isPreviewable && app != null && cachedThumbFile == null) {
             val resolvedAccId = effectiveAccountId.ifBlank {
                 app.container.database.accountDao().getAllAccounts().firstOrNull()?.id.orEmpty()
             }
             if (resolvedAccId.isBlank()) return@LaunchedEffect
+            val memFast = app.container.thumbnailStore.getMemoryCached(resolvedAccId, file, targetSizePx)
+            if (memFast != null) {
+                cachedThumbFile = memFast
+                return@LaunchedEffect
+            }
             val account = app.container.database.accountDao().getAccountById(resolvedAccId)
             val providerType = account?.accountType ?: "tgdrive"
             val previewRevision = file.updatedAt?.toString() ?: file.time?.toString()
@@ -138,10 +154,14 @@ fun FileThumb(
                 sizePx = targetSizePx,
                 localSource = resolvedLocalSource
             )
-            if (!resolvedPath.isNullOrBlank() && resolvedPath.startsWith("/")) {
-                val f = File(resolvedPath)
-                if (f.isFile && f.length() > 0L) {
-                    cachedThumbFile = f
+            if (!resolvedPath.isNullOrBlank()) {
+                if (resolvedPath.startsWith("/")) {
+                    val f = File(resolvedPath)
+                    if (f.isFile && f.length() > 0L) {
+                        cachedThumbFile = f
+                    }
+                } else if (!file.isEncrypted && (resolvedPath.startsWith("http://") || resolvedPath.startsWith("https://"))) {
+                    resolvedFallbackUrl = resolvedPath
                 }
             }
         }
@@ -152,16 +172,10 @@ fun FileThumb(
             null
         } else {
             val raw = file.thumbUrl
-            val token = ApiClient.getToken()
             when {
                 !raw.isNullOrBlank() -> {
-                    val full = if (raw.startsWith("http://") || raw.startsWith("https://")) raw else "${ApiClient.API_BASE_URL}/${raw.trimStart('/')}"
-                    if (!token.isNullOrBlank() && !full.contains("token=")) {
-                        val sep = if (full.contains("?")) "&" else "?"
-                        "$full${sep}token=${Uri.encode(token.orEmpty())}"
-                    } else {
-                        full
-                    }
+                    if (raw.startsWith("http://") || raw.startsWith("https://")) raw
+                    else "${ApiClient.API_BASE_URL}/${raw.trimStart('/')}"
                 }
                 effectiveAccountId.isNotBlank() && file.effectiveId.isNotBlank() -> {
                     ApiClient.getThumbUrl(effectiveAccountId, file.effectiveId, targetSizePx)
@@ -171,11 +185,12 @@ fun FileThumb(
         }
     }
 
-    val imageModel: Any? = remember(file.isEncrypted, cachedThumbFile, localSource, remoteThumbUrl) {
+    val imageModel: Any? = remember(file.isEncrypted, cachedThumbFile, localSource, resolvedFallbackUrl, remoteThumbUrl, app) {
         when {
             cachedThumbFile != null && cachedThumbFile!!.isFile && cachedThumbFile!!.length() > 0L -> cachedThumbFile
             !file.isEncrypted && localSource != null && localSource.isFile && localSource.length() > 0L -> localSource
-            !file.isEncrypted && !remoteThumbUrl.isNullOrBlank() -> remoteThumbUrl
+            !file.isEncrypted && !resolvedFallbackUrl.isNullOrBlank() -> resolvedFallbackUrl
+            !file.isEncrypted && app == null && !remoteThumbUrl.isNullOrBlank() -> remoteThumbUrl
             else -> null
         }
     }
@@ -205,11 +220,11 @@ fun FileThumb(
         contentAlignment = Alignment.Center
     ) {
         if (isPreviewable && imageModel != null) {
-            val imageRequest = remember(imageModel, context, targetSizePx) {
+            val imageRequest = remember(imageModel, context, targetSizePx, initialCachedThumb != null) {
                 coil.request.ImageRequest.Builder(context)
                     .data(imageModel)
                     .size(targetSizePx)
-                    .crossfade(150)
+                    .crossfade(if (initialCachedThumb != null) false else true)
                     .build()
             }
             SubcomposeAsyncImage(

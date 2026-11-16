@@ -1,7 +1,13 @@
 package com.cloudyte.app.features.player
 
+import android.app.Activity
+import android.app.PictureInPictureParams
 import android.content.Context
+import android.content.ContextWrapper
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
+import android.util.Rational
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.annotation.OptIn
@@ -36,6 +42,7 @@ import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Replay10
@@ -181,31 +188,39 @@ fun GDriveVideoContent(
             return@LaunchedEffect
         }
 
-        val mediaItem = if (file.isEncrypted || !prefs.streamBeforeDownload) {
+        val cachedLocal = PreviewFetcher.resolveCachedOnly(context, acc, file)
+        if (cachedLocal != null && cachedLocal.isFile && cachedLocal.length() > 0L) {
+            statusNote = null
+            exoPlayer.setMediaItem(MediaItem.fromUri(Uri.fromFile(cachedLocal)))
+            exoPlayer.prepare()
+            exoPlayer.playWhenReady = isActive && prefs.autoPlayVideo
+        } else if (file.isEncrypted && prefs.streamBeforeDownload) {
+            statusNote = null
+            val cyteFactory = CyteStreamingDataSource.Factory(context, acc, file)
+            val streamItem = MediaItem.fromUri(ApiClient.getFileUrl(acc, file.effectiveId, preview = true))
+            val mediaSource = DefaultMediaSourceFactory(cyteFactory).createMediaSource(streamItem)
+            exoPlayer.setMediaSource(mediaSource)
+            exoPlayer.prepare()
+            exoPlayer.playWhenReady = isActive && prefs.autoPlayVideo
+        } else if (file.isEncrypted || !prefs.streamBeforeDownload) {
             statusNote = if (file.isEncrypted) "Decrypting video…" else "Preparing preview…"
             val ready = PreviewFetcher.resolvePreviewFile(context, acc, file).getOrNull()
             statusNote = null
             if (ready != null && ready.isFile && ready.length() > 0L) {
-                MediaItem.fromUri(Uri.fromFile(ready))
+                exoPlayer.setMediaItem(MediaItem.fromUri(Uri.fromFile(ready)))
+                exoPlayer.prepare()
+                exoPlayer.playWhenReady = isActive && prefs.autoPlayVideo
             } else if (file.isEncrypted) {
                 isBuffering = false
                 playbackError = "Unable to prepare encrypted video"
-                null
             } else {
-                MediaItem.fromUri(ApiClient.getFileUrl(acc, file.effectiveId, preview = true))
+                exoPlayer.setMediaItem(MediaItem.fromUri(ApiClient.getFileUrl(acc, file.effectiveId, preview = true)))
+                exoPlayer.prepare()
+                exoPlayer.playWhenReady = isActive && prefs.autoPlayVideo
             }
         } else {
-            val cached = PreviewFetcher.resolveCachedOnly(context, acc, file)
             statusNote = null
-            if (cached != null) {
-                MediaItem.fromUri(Uri.fromFile(cached))
-            } else {
-                MediaItem.fromUri(ApiClient.getFileUrl(acc, file.effectiveId, preview = true))
-            }
-        }
-
-        if (mediaItem != null) {
-            exoPlayer.setMediaItem(mediaItem)
+            exoPlayer.setMediaItem(MediaItem.fromUri(ApiClient.getFileUrl(acc, file.effectiveId, preview = true)))
             exoPlayer.prepare()
             exoPlayer.playWhenReady = isActive && prefs.autoPlayVideo
         }
@@ -237,7 +252,7 @@ fun GDriveVideoContent(
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                if (!attemptedFallback && !file.isEncrypted) {
+                if (!attemptedFallback) {
                     attemptedFallback = true
                     scope.launch {
                         val acc = PreviewFetcher.resolveAccountId(context, accountId, file)
@@ -246,7 +261,7 @@ fun GDriveVideoContent(
                             playbackError = error.localizedMessage ?: "Video playback failed"
                             return@launch
                         }
-                        statusNote = "Buffering local preview…"
+                        statusNote = if (file.isEncrypted) "Decrypting local preview…" else "Buffering local preview…"
                         val localFile = PreviewFetcher.resolvePreviewFile(context, acc, file).getOrNull()
                         statusNote = null
                         if (localFile != null && localFile.isFile && localFile.length() > 0L) {
@@ -769,6 +784,33 @@ fun GDriveVideoContent(
                                 }
                             }
 
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                                context.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+                            ) {
+                                IconButton(
+                                    onClick = {
+                                        context.findHostActivity()?.let { activity ->
+                                            runCatching {
+                                                val params = PictureInPictureParams.Builder()
+                                                    .setAspectRatio(Rational(16, 9))
+                                                    .build()
+                                                activity.enterPictureInPictureMode(params)
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .testTag("video_pip_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.PictureInPictureAlt,
+                                        contentDescription = "Picture-in-Picture",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+
                             IconButton(
                                 onClick = {
                                     resizeMode = when (resizeMode) {
@@ -795,6 +837,12 @@ fun GDriveVideoContent(
             }
         }
     }
+}
+
+private tailrec fun Context.findHostActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findHostActivity()
+    else -> null
 }
 
 private fun formatVideoTime(millis: Long): String {

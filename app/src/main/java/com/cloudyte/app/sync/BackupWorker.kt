@@ -116,6 +116,7 @@ class BackupWorker(
         trySetForeground(createForegroundInfo(context, "Preparing backup…", 0, 0))
 
         val isManual = inputData.getBoolean("is_manual", false)
+        val operationType = if (isManual) "MANUAL_BACKUP" else "BACKUP"
         forceReupload = inputData.getBoolean("force_reupload", false)
         val prefs = UserPreferences.observe(context).first()
 
@@ -136,7 +137,7 @@ class BackupWorker(
             accountId = prefs.backupAccountId ?: "",
             fileName = "backup_probe",
             direction = TransferDirection.BACKUP.name,
-            operationType = "BACKUP"
+            operationType = operationType
         )
         val policyDecision = DefaultNetworkPolicy().canStart(probeTransfer, snapshot)
         if (policyDecision != PolicyDecision.Allowed) {
@@ -200,8 +201,8 @@ class BackupWorker(
                 SyncLogger.log("Recovered $recovered interrupted transfer lease(s).", SyncLogLevel.WARNING)
             }
 
-            // Inspect all enabled sources first and count files for healthy sources.
-            val healthySources = mutableListOf<Triple<BackupSourceEntity, DocumentFile, String>>()
+            // Inspect all enabled sources first and scan files once per healthy source.
+            val healthySources = mutableListOf<HealthyBackupSource>()
             val sourceErrors = mutableListOf<String>()
 
             for (source in sources) {
@@ -259,8 +260,9 @@ class BackupWorker(
                     continue
                 }
 
-                totalFilesToProcess += countCandidateFiles(rootDoc, exclusions, "")
-                healthySources += Triple(source, rootDoc, targetAccountId)
+                val rootNode = scanCandidateTree(rootDoc, exclusions, "")
+                totalFilesToProcess += rootNode.candidateFileCount
+                healthySources += HealthyBackupSource(source, rootNode, targetAccountId)
             }
 
             if (healthySources.isNotEmpty()) {
@@ -274,7 +276,7 @@ class BackupWorker(
                 trySetForeground(createForegroundInfo(context, "Scanning files…", 0, totalFilesToProcess))
             }
 
-            for ((source, rootDoc, accountId) in healthySources) {
+            for ((source, rootNode, accountId) in healthySources) {
                 val prevQueued = queuedFilesCount
                 val prevSkipped = skippedUpToDateCount + skippedExcludedCount + skippedMaxSizeCount
                 val prevFailed = failedFilesCount
@@ -285,10 +287,10 @@ class BackupWorker(
                     db = db,
                     accountId = accountId,
                     currentCloudFolderId = baseFolderId,
-                    localDir = rootDoc,
-                    relativeDirPath = "",
+                    folderNode = rootNode,
                     exclusions = exclusions,
-                    encryptUploads = prefs.isUploadEncryptionEnabled
+                    encryptUploads = prefs.isUploadEncryptionEnabled,
+                    operationType = operationType
                 )
 
                 val sourceQueued = queuedFilesCount - prevQueued
@@ -312,13 +314,14 @@ class BackupWorker(
             }
 
             if (queuedFilesCount > 0) {
+                val allowMeteredKick = isManual || !prefs.backupWifiOnly
                 val kickOverride = BackupWorkerHooks.scheduleKickOverride
                 if (kickOverride != null) {
-                    kickOverride(context, !prefs.backupWifiOnly)
+                    kickOverride(context, allowMeteredKick)
                 } else {
                     appContainer?.transferScheduler?.kick(
                         reason = ScheduleReason.USER_ENQUEUE,
-                        allowMetered = !prefs.backupWifiOnly
+                        allowMetered = allowMeteredKick
                     )
                 }
             }
@@ -442,13 +445,60 @@ class BackupWorker(
         }
     }
 
-    private fun countCandidateFiles(
+    private data class ExcludedSubdirEntry(
+        val relPath: String,
+        val humanReason: String
+    )
+
+    private data class ScannedFolderNode(
+        val dir: DocumentFile,
+        val relPath: String,
+        val files: List<DocumentFile>,
+        val subdirectories: List<ScannedFolderNode>,
+        val excludedSubdirs: List<ExcludedSubdirEntry>,
+        val candidateFileCount: Int,
+        val listError: String? = null
+    )
+
+    private data class HealthyBackupSource(
+        val entity: BackupSourceEntity,
+        val rootNode: ScannedFolderNode,
+        val targetAccountId: String
+    )
+
+    private fun scanCandidateTree(
         dir: DocumentFile,
         exclusions: List<LocalExclusion>,
         relativePrefix: String
-    ): Int {
+    ): ScannedFolderNode {
+        val folderLabel = relativePrefix.ifBlank { dir.name ?: "Root" }
+        val children = try {
+            dir.listFiles()
+        } catch (sec: SecurityException) {
+            return ScannedFolderNode(
+                dir = dir,
+                relPath = relativePrefix,
+                files = emptyList(),
+                subdirectories = emptyList(),
+                excludedSubdirs = emptyList(),
+                candidateFileCount = 0,
+                listError = "Lost read access while listing '$folderLabel': ${sec.message}"
+            )
+        } catch (err: Exception) {
+            return ScannedFolderNode(
+                dir = dir,
+                relPath = relativePrefix,
+                files = emptyList(),
+                subdirectories = emptyList(),
+                excludedSubdirs = emptyList(),
+                candidateFileCount = 0,
+                listError = "Error listing '$folderLabel': ${err.message}"
+            )
+        }
+        val files = ArrayList<DocumentFile>(children.size)
+        val subdirectories = ArrayList<ScannedFolderNode>()
+        val excludedSubdirs = ArrayList<ExcludedSubdirEntry>()
         var count = 0
-        val children = runCatching { dir.listFiles() }.getOrDefault(emptyArray())
         for (item in children) {
             val name = item.name ?: continue
             val relPath = if (relativePrefix.isBlank()) name else "$relativePrefix/$name"
@@ -463,14 +513,26 @@ class BackupWorker(
                     exclusions = exclusions,
                     globalMaxFileSizeBytes = globalMaxUploadBytes
                 )
-                if (!dirEval.excluded) {
-                    count += countCandidateFiles(item, exclusions, relPath)
+                if (dirEval.excluded) {
+                    excludedSubdirs += ExcludedSubdirEntry(relPath, dirEval.humanReason ?: "Excluded by rule")
+                } else {
+                    val childNode = scanCandidateTree(item, exclusions, relPath)
+                    subdirectories += childNode
+                    count += childNode.candidateFileCount
                 }
             } else if (item.isFile) {
+                files += item
                 count++
             }
         }
-        return count
+        return ScannedFolderNode(
+            dir = dir,
+            relPath = relativePrefix,
+            files = files,
+            subdirectories = subdirectories,
+            excludedSubdirs = excludedSubdirs,
+            candidateFileCount = count
+        )
     }
 
     private suspend fun syncDirectory(
@@ -478,30 +540,24 @@ class BackupWorker(
         db: AppDatabase,
         accountId: String,
         currentCloudFolderId: String?,
-        localDir: DocumentFile,
-        relativeDirPath: String,
+        folderNode: ScannedFolderNode,
         exclusions: List<LocalExclusion>,
-        encryptUploads: Boolean
+        encryptUploads: Boolean,
+        operationType: String
     ) {
         val safeFolderId = currentCloudFolderId ?: "root"
-        val folderLabel = relativeDirPath.ifBlank { localDir.name ?: "Root" }
+        val relativeDirPath = folderNode.relPath
+        val folderLabel = relativeDirPath.ifBlank { folderNode.dir.name ?: "Root" }
         val appContainer = (context.applicationContext as? CloudyteApplication)?.container
 
         val cloudFiles = fetchRemoteFiles(context, db, appContainer, accountId, currentCloudFolderId, safeFolderId, folderLabel)
-        val localItems = try {
-            localDir.listFiles()
-        } catch (sec: SecurityException) {
+        if (folderNode.listError != null) {
             failedFilesCount++
-            SyncLogger.log("✗ Lost read access while listing '$folderLabel': ${sec.message}", SyncLogLevel.ERROR)
-            return
-        } catch (err: Exception) {
-            failedFilesCount++
-            SyncLogger.log("✗ Error listing '$folderLabel': ${err.message}", SyncLogLevel.ERROR)
+            SyncLogger.log("✗ ${folderNode.listError}", SyncLogLevel.ERROR)
             return
         }
 
-        for (file in localItems) {
-            if (!file.isFile) continue
+        for (file in folderNode.files) {
             val fileName = file.name ?: continue
             processedFilesCount++
             val relativeFilePath = if (relativeDirPath.isBlank()) fileName else "$relativeDirPath/$fileName"
@@ -646,7 +702,7 @@ class BackupWorker(
                             parentFolderId = currentCloudFolderId,
                             providerType = accountType,
                             direction = TransferDirection.BACKUP.name,
-                            operationType = "BACKUP",
+                            operationType = operationType,
                             totalBytes = fileSize,
                             checksum = computedHash,
                             isEncrypted = encryptUploads,
@@ -669,14 +725,18 @@ class BackupWorker(
                 val queued = when (existingTransfer?.state) {
                     TransferState.FAILED_RETRYABLE.name,
                     TransferState.WAITING_FOR_NETWORK.name,
-                    TransferState.WAITING_FOR_AUTH.name -> true
+                    TransferState.WAITING_FOR_AUTH.name -> {
+                        db.transferDao().resetRetryNow(transferId, operationType = operationType)
+                        true
+                    }
                     else -> transferRepository.queueTransfer(
                         id = transferId,
                         direction = TransferDirection.BACKUP,
                         localUri = fileUriStr,
                         parentFolderId = currentCloudFolderId,
                         providerType = accountType,
-                        totalBytes = fileSize
+                        totalBytes = fileSize,
+                        operationTypeOverride = operationType
                     )
                 }
                 activeTransferId = null
@@ -719,27 +779,14 @@ class BackupWorker(
             }
         }
 
-        // Process subdirectories recursively AFTER evaluating folder exclusion rules.
-        for (dir in localItems) {
-            if (!dir.isDirectory) continue
-            val subFolderName = dir.name ?: continue
-            val subRelPath = if (relativeDirPath.isBlank()) subFolderName else "$relativeDirPath/$subFolderName"
-            val dirEval = EvaluateExclusions.evaluate(
-                candidate = ExclusionCandidate(
-                    fileName = subFolderName,
-                    relativePath = subRelPath,
-                    fileUri = dir.uri.toString(),
-                    isDirectory = true
-                ),
-                exclusions = exclusions,
-                globalMaxFileSizeBytes = globalMaxUploadBytes
-            )
-            if (dirEval.excluded) {
-                skippedExcludedCount++
-                SyncLogger.log("• Excluding folder '$subRelPath': ${dirEval.humanReason}", SyncLogLevel.INFO)
-                continue
-            }
+        for (excluded in folderNode.excludedSubdirs) {
+            skippedExcludedCount++
+            SyncLogger.log("• Excluding folder '${excluded.relPath}': ${excluded.humanReason}", SyncLogLevel.INFO)
+        }
 
+        // Process non-excluded subdirectories recursively using pre-scanned nodes.
+        for (subNode in folderNode.subdirectories) {
+            val subFolderName = subNode.dir.name ?: continue
             var cloudFolder = cloudFiles.find { it.isFolderItem && it.effectiveName == subFolderName }
             if (cloudFolder == null) {
                 cloudFolder = createOrFindRemoteFolder(
@@ -757,10 +804,10 @@ class BackupWorker(
                     db = db,
                     accountId = accountId,
                     currentCloudFolderId = cloudFolder.effectiveId,
-                    localDir = dir,
-                    relativeDirPath = subRelPath,
+                    folderNode = subNode,
                     exclusions = exclusions,
-                    encryptUploads = encryptUploads
+                    encryptUploads = encryptUploads,
+                    operationType = operationType
                 )
             }
         }
@@ -863,7 +910,7 @@ class BackupWorker(
     private fun computeSha256(context: Context, uri: Uri): String? {
         return runCatching {
             val digest = MessageDigest.getInstance("SHA-256")
-            val buffer = ByteArray(16 * 1024)
+            val buffer = ByteArray(256 * 1024)
             context.contentResolver.openInputStream(uri)?.use { input ->
                 var read = input.read(buffer)
                 while (read >= 0) {

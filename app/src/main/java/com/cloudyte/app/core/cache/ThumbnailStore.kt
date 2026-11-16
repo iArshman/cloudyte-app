@@ -2,6 +2,7 @@ package com.cloudyte.app.core.cache
 
 import android.content.Context
 import android.graphics.BitmapFactory
+import android.util.LruCache
 import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.api.CloudFile
 import com.cloudyte.app.db.ThumbnailDao
@@ -36,6 +37,28 @@ class ThumbnailStore @JvmOverloads constructor(
     private val concurrencySemaphore = Semaphore(MAX_CONCURRENT_REQUESTS)
     private val inFlightMutex = Mutex()
     private val inFlightRequests: MutableMap<String, Deferred<File?>> = mutableMapOf()
+    private val memoryPathCache = LruCache<String, String>(300)
+
+    private fun memoryCacheKey(accountId: String, file: CloudFile, sizePx: Int): String {
+        val revision = file.updatedAt?.toString() ?: file.time?.toString() ?: "0"
+        return "$accountId:${file.effectiveId}:$revision:${sizePx.coerceIn(64, 512)}"
+    }
+
+    fun getMemoryCached(accountId: String, file: CloudFile, sizePx: Int = 256): File? {
+        val resolvedAccId = when {
+            file.effectiveAccountId.isNotBlank() -> file.effectiveAccountId
+            accountId.isNotBlank() && accountId != "all" && accountId != "root" -> accountId
+            else -> ""
+        }
+        if (resolvedAccId.isBlank() || file.effectiveId.isBlank() || file.isFolderItem) return null
+        if (file.isEncrypted && !file.originalMetadataAvailable) return null
+        val memKey = memoryCacheKey(resolvedAccId, file, sizePx)
+        val path = synchronized(memoryPathCache) { memoryPathCache.get(memKey) } ?: return null
+        val f = File(path)
+        if (f.isFile && f.length() > 0L) return f
+        synchronized(memoryPathCache) { memoryPathCache.remove(memKey) }
+        return null
+    }
 
     suspend fun resolve(
         accountId: String,
@@ -54,6 +77,16 @@ class ThumbnailStore @JvmOverloads constructor(
         if (file.isEncrypted && !file.originalMetadataAvailable) return@withContext null
 
         val normalizedSize = sizePx.coerceIn(64, 512)
+        val memKey = memoryCacheKey(resolvedAccId, file, normalizedSize)
+        synchronized(memoryPathCache) { memoryPathCache.get(memKey) }?.let { cachedPath ->
+            val memFile = File(cachedPath)
+            if (memFile.isFile && memFile.length() > 0L) {
+                return@withContext memFile.absolutePath
+            } else {
+                synchronized(memoryPathCache) { memoryPathCache.remove(memKey) }
+            }
+        }
+
         val key = CacheKeyFactory.thumbnail(resolvedAccId, providerType, file, normalizedSize)
         // CRITICAL: Never use remote fallback URL for encrypted files
         val fallback = if (file.isEncrypted) null else fallbackUrl(resolvedAccId, file)
@@ -63,6 +96,7 @@ class ThumbnailStore @JvmOverloads constructor(
         if (existing != null) {
             val cached = File(existing.path)
             if (cached.isFile && cached.length() > 0L) {
+                synchronized(memoryPathCache) { memoryPathCache.put(memKey, cached.absolutePath) }
                 if (now - existing.lastAccessAt >= ACCESS_TOUCH_INTERVAL_MS) dao.touch(key, now)
                 return@withContext cached.absolutePath
             }
@@ -138,7 +172,13 @@ class ThumbnailStore @JvmOverloads constructor(
                 }
             }
             completable.complete(resolvedFile)
-            resolvedFile?.takeIf { it.isFile && it.length() > 0L }?.absolutePath ?: fallback
+            val validResolved = resolvedFile?.takeIf { it.isFile && it.length() > 0L }
+            if (validResolved != null) {
+                synchronized(memoryPathCache) { memoryPathCache.put(memKey, validResolved.absolutePath) }
+                validResolved.absolutePath
+            } else {
+                fallback
+            }
         } catch (t: Throwable) {
             completable.completeExceptionally(t)
             throw t
@@ -180,11 +220,14 @@ class ThumbnailStore @JvmOverloads constructor(
     }
 
     suspend fun clearAccount(accountId: String) = withContext(Dispatchers.IO) {
+        synchronized(memoryPathCache) { memoryPathCache.evictAll() }
         quotaManager.clearAccount(accountId)
     }
 
-    suspend fun enforceQuota(maxBytes: Long = CacheQuotaManager.DEFAULT_THUMBNAIL_QUOTA_BYTES) =
+    suspend fun enforceQuota(maxBytes: Long = CacheQuotaManager.DEFAULT_THUMBNAIL_QUOTA_BYTES) {
+        synchronized(memoryPathCache) { memoryPathCache.evictAll() }
         quotaManager.enforceThumbnailQuota(maxBytes)
+    }
 
     private suspend fun generateFromLocal(
         source: File,
@@ -273,7 +316,7 @@ class ThumbnailStore @JvmOverloads constructor(
     ): File? {
         val candidateUrls = mutableListOf(sourceUrl)
         if (file.isImage) {
-            val previewFallback = ApiClient.getFileUrl(accountId, file.effectiveId, preview = true)
+            val previewFallback = ApiClient.getCleanDownloadUrl(accountId, file.effectiveId, preview = true)
             if (previewFallback != sourceUrl && !candidateUrls.contains(previewFallback)) {
                 candidateUrls.add(previewFallback)
             }
@@ -403,18 +446,11 @@ class ThumbnailStore @JvmOverloads constructor(
             } else {
                 "${ApiClient.API_BASE_URL}/${remote.trimStart('/')}"
             }
-            val sizedFull = if (Regex("""([?&])s=\d+""").containsMatchIn(baseFull)) {
+            return if (Regex("""([?&])s=\d+""").containsMatchIn(baseFull)) {
                 baseFull.replace(Regex("""([?&])s=\d+"""), "$1s=$sizePx")
             } else {
                 val sep = if (baseFull.contains("?")) "&" else "?"
                 "$baseFull${sep}s=$sizePx"
-            }
-            val token = ApiClient.getToken()
-            return if (!token.isNullOrBlank() && !sizedFull.contains("token=")) {
-                val sep = if (sizedFull.contains("?")) "&" else "?"
-                "$sizedFull${sep}token=${android.net.Uri.encode(token)}"
-            } else {
-                sizedFull
             }
         }
         val acc = file.effectiveAccountId.ifBlank { accountId.takeIf { it != "all" && it != "root" }.orEmpty() }
@@ -425,14 +461,14 @@ class ThumbnailStore @JvmOverloads constructor(
         if (file.isEncrypted) return null
         val acc = file.effectiveAccountId.ifBlank { accountId.takeIf { it != "all" && it != "root" }.orEmpty() }
         if (acc.isBlank()) return null
-        return if (file.isImage || file.isVideo) ApiClient.getFileUrl(acc, file.effectiveId, preview = true) else null
+        return if (file.isImage || file.isVideo) ApiClient.getCleanDownloadUrl(acc, file.effectiveId, preview = true) else null
     }
 
     private fun backoffMs(failureCount: Int): Long =
         (5_000L * (1L shl failureCount.coerceIn(0, 6))).coerceAtMost(60L * 60L * 1000L)
 
     companion object {
-        const val MAX_CONCURRENT_REQUESTS = 4
+        const val MAX_CONCURRENT_REQUESTS = 8
         private const val ACCESS_TOUCH_INTERVAL_MS = 60_000L
     }
 }

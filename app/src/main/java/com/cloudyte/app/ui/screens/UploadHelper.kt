@@ -232,11 +232,11 @@ object UploadHelper {
             val checksum = knownChecksum ?: run {
                 val digest = MessageDigest.getInstance("SHA-256")
                 openUriStream(context, uri)?.use { input ->
-                    val buffer = ByteArray(1024 * 1024)
+                    val buffer = ByteArray(256 * 1024)
                     while (true) {
                         val read = input.read(buffer)
-                        if (read <= 0) break
-                        digest.update(buffer, 0, read)
+                        if (read < 0) break
+                        if (read > 0) digest.update(buffer, 0, read)
                     }
                 } ?: throw IOException("Cannot open local file stream")
                 digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
@@ -289,21 +289,30 @@ object UploadHelper {
             onSessionReady(session.sessionId, chunkSize, checksum, offset, nextChunkIndex)
             openUriStream(context, uri)?.use { input ->
                 var skipped = 0L
+                var skipDrainBuffer: ByteArray? = null
                 while (skipped < offset) {
                     val n = input.skip(offset - skipped)
-                    if (n <= 0L) throw IOException("Could not seek to resumable upload offset $offset")
-                    skipped += n
+                    if (n > 0L) {
+                        skipped += n
+                    } else {
+                        val drainBuf = skipDrainBuffer ?: ByteArray(64 * 1024).also { skipDrainBuffer = it }
+                        val toRead = minOf(drainBuf.size.toLong(), offset - skipped).toInt()
+                        val read = input.read(drainBuf, 0, toRead)
+                        if (read < 0) throw IOException("Could not seek to resumable upload offset $offset")
+                        skipped += read
+                    }
                 }
+                val chunkMediaType = effectiveSessionMimeType.toMediaTypeOrNull()
+                val chunkBuffer = ByteArray(minOf(chunkSize, totalBytes).coerceAtLeast(1L).toInt())
                 while (offset < totalBytes) {
                     val expected = minOf(chunkSize, totalBytes - offset).toInt()
-                    val bytes = ByteArray(expected)
                     var readTotal = 0
                     while (readTotal < expected) {
-                        val read = input.read(bytes, readTotal, expected - readTotal)
-                        if (read <= 0) throw IOException("Unexpected end of local file")
+                        val read = input.read(chunkBuffer, readTotal, expected - readTotal)
+                        if (read < 0) throw IOException("Unexpected end of local file")
                         readTotal += read
                     }
-                    val body = bytes.toRequestBody(effectiveSessionMimeType.toMediaTypeOrNull())
+                    val body = chunkBuffer.toRequestBody(chunkMediaType, offset = 0, byteCount = readTotal)
                     val part = MultipartBody.Part.createFormData("chunk", explicitFileName, body)
                     val response = provider.uploadChunk(
                         sessionId = session.sessionId,
