@@ -10,6 +10,7 @@ import java.io.File
 object SecureFileCleanup {
 
     private const val STALE_TEMP_MAX_AGE_MS = 6L * 60L * 60L * 1000L // 6 hours
+    private const val IN_FLIGHT_TMP_GRACE_MS = 5L * 60L * 1000L // 5 minutes
     private const val VIEW_CACHE_MAX_AGE_MS = 30L * 60L * 1000L // 30 minutes
 
     fun getEncryptedStagingDir(context: Context): File {
@@ -96,8 +97,10 @@ object SecureFileCleanup {
                     name == "$id.cyte" || name == "$id.cyte.tmp"
                 }
                 val isTmp = name.endsWith(".tmp")
-                val isStale = (nowMs - file.lastModified()) > STALE_TEMP_MAX_AGE_MS
-                if (!matchesActive && (isTmp || purgeAll || isStale)) {
+                val ageMs = (nowMs - file.lastModified()).coerceAtLeast(0L)
+                val isStaleTmp = isTmp && ageMs > IN_FLIGHT_TMP_GRACE_MS
+                val isStale = ageMs > STALE_TEMP_MAX_AGE_MS
+                if (!matchesActive && (purgeAll || isStaleTmp || isStale)) {
                     if (deleteFileSafely(file)) deletedCount++
                 }
             }
@@ -111,8 +114,10 @@ object SecureFileCleanup {
                     name.startsWith("$id.")
                 }
                 val isPlaintextTmp = name.endsWith(".plaintext.tmp") || name.endsWith(".tmp")
-                val isStale = (nowMs - file.lastModified()) > STALE_TEMP_MAX_AGE_MS
-                if (isPlaintextTmp && !matchesActive) {
+                val ageMs = (nowMs - file.lastModified()).coerceAtLeast(0L)
+                val isStalePlaintextTmp = isPlaintextTmp && ageMs > IN_FLIGHT_TMP_GRACE_MS
+                val isStale = ageMs > STALE_TEMP_MAX_AGE_MS
+                if (isStalePlaintextTmp && !matchesActive) {
                     if (deleteFileSafely(file)) deletedCount++
                 } else if (!matchesActive && (purgeAll || isStale)) {
                     if (deleteFileSafely(file)) deletedCount++
@@ -124,8 +129,10 @@ object SecureFileCleanup {
         if (viewCacheDir.exists()) {
             viewCacheDir.listFiles()?.forEach { file ->
                 val isTmp = file.name.endsWith(".tmp")
-                val isStale = (nowMs - file.lastModified()) > VIEW_CACHE_MAX_AGE_MS
-                if (isTmp || isStale || purgeAll) {
+                val ageMs = (nowMs - file.lastModified()).coerceAtLeast(0L)
+                val isStaleTmp = isTmp && ageMs > IN_FLIGHT_TMP_GRACE_MS
+                val isStale = ageMs > VIEW_CACHE_MAX_AGE_MS
+                if (purgeAll || isStaleTmp || isStale) {
                     if (deleteFileSafely(file)) deletedCount++
                 }
             }

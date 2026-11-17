@@ -125,12 +125,14 @@ class TransferWorker(
                             .build()
                     )
                     val totals = queueDao.aggregateProgressTotals()
+                    val activeFileName = queueDao.currentActiveFileName()
+                        ?: queueDao.currentRow(snapshot.transferId)?.fileName
                     trySetForeground(
                         TransferNotification.foregroundInfo(
                             applicationContext,
                             totals.bytesTransferred,
                             totals.totalBytes,
-                            snapshot.transferId,
+                            activeFileName,
                             showDetailedProgress = showDetailedProgress
                         )
                     )

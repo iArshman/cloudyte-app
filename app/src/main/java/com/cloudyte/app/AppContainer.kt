@@ -42,19 +42,24 @@ import com.cloudyte.app.domain.usecase.ResumeTransfer
 import com.cloudyte.app.domain.usecase.RetryTransfer
 import com.cloudyte.app.sync.AutoSyncManager
 import kotlinx.coroutines.CoroutineScope
+import com.cloudyte.app.core.network.isOnline
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import android.os.Process
 import com.cloudyte.app.core.transfer.DrainResult
 import com.cloudyte.app.core.transfer.DrainTrigger
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Composition root for application-scoped dependencies.
@@ -67,7 +72,11 @@ class AppContainer(context: Context) {
 
     val dispatchers: DispatcherProvider = DefaultDispatcherProvider
     val applicationScope: CoroutineScope = CoroutineScope(SupervisorJob() + dispatchers.default)
-    val networkMonitor: ConnectivityNetworkMonitor = ConnectivityNetworkMonitor(appContext)
+    val networkMonitor: ConnectivityNetworkMonitor = ConnectivityNetworkMonitor(appContext) {
+        applicationScope.launch(dispatchers.io) {
+            ApiClient.evictIdleConnections()
+        }
+    }
     val networkPolicy = DefaultNetworkPolicy()
     val transferNetworkGate = TransferNetworkGate(
         monitor = networkMonitor,
@@ -132,8 +141,51 @@ class AppContainer(context: Context) {
 
     private val immediateDrainMutex = Mutex()
     private val immediateDrainRequested = AtomicBoolean(false)
+    private val _isImmediateDrainActive = MutableStateFlow(false)
+    val isImmediateDrainActive: StateFlow<Boolean> = _isImmediateDrainActive.asStateFlow()
+    private val _liveTransferSnapshot = MutableStateFlow<com.cloudyte.app.core.transfer.TransferProgressSnapshot?>(null)
+    val liveTransferSnapshot: StateFlow<com.cloudyte.app.core.transfer.TransferProgressSnapshot?> = _liveTransferSnapshot.asStateFlow()
+    private val _foregroundEpoch = MutableStateFlow(0L)
+    val foregroundEpoch: StateFlow<Long> = _foregroundEpoch.asStateFlow()
+    private val lastForegroundAtMs = AtomicLong(0L)
     private val startupCleanupCompleted = AtomicBoolean(false)
     private val startupCleanupMutex = Mutex()
+
+    /**
+     * Called when the application transitions back to the foreground (`onActivityStarted` from background).
+     * Immediately re-validates connectivity, drops stale pooled sockets, notifies active screens
+     * via [foregroundEpoch], and resumes any pending transfers/mutations if online.
+     */
+    fun onAppForegrounded(nowMs: Long = System.currentTimeMillis()) {
+        val status = networkMonitor.refresh()
+        val prev = lastForegroundAtMs.get()
+        if (prev != 0L && (nowMs - prev) < FOREGROUND_RESUME_COOLDOWN_MS) {
+            return
+        }
+        lastForegroundAtMs.set(nowMs)
+        _foregroundEpoch.update { it + 1L }
+
+        applicationScope.launch(dispatchers.io) {
+            ApiClient.evictIdleConnections()
+            if (status.isOnline()) {
+                runCatching {
+                    if (database.fileMutationDao().pendingDue().isNotEmpty()) {
+                        com.cloudyte.app.sync.FileMutationWorker.enqueue()
+                    }
+                }
+                runCatching {
+                    val queueDao = database.transferQueueDao()
+                    val now = System.currentTimeMillis()
+                    queueDao.recoverExpiredLeases(now)
+                    queueDao.requeueNetworkWaiters(now)
+                    if (queueDao.hasRunnableTransfers(now)) {
+                        runCatching { transferScheduler.kick(ScheduleReason.APP_START, allowMetered = true) }
+                        kickImmediateDrain(DrainTrigger.APP_START, "app_foreground")
+                    }
+                }
+            }
+        }
+    }
 
     suspend fun runStartupCleanupOnce() {
         if (startupCleanupCompleted.get()) return
@@ -156,14 +208,26 @@ class AppContainer(context: Context) {
     /**
      * Immediately drains runnable transfers in-process on [dispatchers.io] using the atomic Room
      * lease queue so user uploads/downloads start in 0ms without stalling behind OEM WorkManager
-     * throttling, while WorkManager handles process-death recovery and scheduled retries.
+     * throttling, while promoting [TransferForegroundService] (`dataSync`) so the OS does not
+     * abort active sockets when leaving the app, and keeping WorkManager as process-death recovery.
      */
-    fun kickImmediateDrain(trigger: DrainTrigger = DrainTrigger.USER_ENQUEUE, reason: String? = null) {
+    fun kickImmediateDrain(
+        trigger: DrainTrigger = DrainTrigger.USER_ENQUEUE,
+        reason: String? = null,
+        startForegroundService: Boolean = true
+    ) {
         immediateDrainRequested.set(true)
+        val isInteractiveTrigger = trigger == DrainTrigger.USER_ENQUEUE ||
+            trigger == DrainTrigger.USER_RETRY ||
+            trigger == DrainTrigger.USER_REQUEST
+        if (startForegroundService && isInteractiveTrigger) {
+            com.cloudyte.app.core.transfer.TransferForegroundService.startIfAllowed(appContext, trigger)
+        }
         applicationScope.launch(dispatchers.io) {
             runStartupCleanupOnce()
             while (immediateDrainRequested.get()) {
                 if (!immediateDrainMutex.tryLock()) break
+                _isImmediateDrainActive.value = true
                 try {
                     while (immediateDrainRequested.getAndSet(false)) {
                         if (!transferRolloutGate.isEnabled()) break
@@ -172,6 +236,9 @@ class AppContainer(context: Context) {
                         queueDao.recoverExpiredLeases(now)
                         queueDao.requeueNetworkWaiters(now)
                         if (!queueDao.hasRunnableTransfers(now)) continue
+                        if (startForegroundService) {
+                            com.cloudyte.app.core.transfer.TransferForegroundService.startIfAllowed(appContext, trigger)
+                        }
                         transferDiagnostics.recordEvent(
                             operationType = "immediate_drain_start",
                             state = trigger.name,
@@ -180,7 +247,9 @@ class AppContainer(context: Context) {
                         var processedTotal = 0
                         var iterations = 0
                         while (iterations < 25) {
-                            val result = transferQueueDrainer.drain(trigger, { false }) { }
+                            val result = transferQueueDrainer.drain(trigger, { false }) { snapshot ->
+                                _liveTransferSnapshot.value = snapshot
+                            }
                             iterations++
                             if (result is DrainResult.Drained) {
                                 processedTotal += result.processed
@@ -210,6 +279,8 @@ class AppContainer(context: Context) {
                         networkState = error.message?.take(120)
                     )
                 } finally {
+                    _liveTransferSnapshot.value = null
+                    _isImmediateDrainActive.value = false
                     immediateDrainMutex.unlock()
                 }
             }
@@ -230,6 +301,11 @@ class AppContainer(context: Context) {
                 contentKeyProvider = contentKeyManager,
                 streamFileCrypto = streamFileCrypto,
                 metadataCodec = metadataCodec,
+                isNetworkConnected = {
+                    val status = networkMonitor.current()
+                    status != com.cloudyte.app.core.network.NetworkStatus.UNAVAILABLE &&
+                        status != com.cloudyte.app.core.network.NetworkStatus.CAPTIVE_PORTAL
+                },
                 onLocalDeletionFailed = { transfer, message ->
                     com.cloudyte.app.core.transfer.notification.NotificationHelper.postEventIfEnabled(
                         context = appContext,
@@ -333,16 +409,34 @@ class AppContainer(context: Context) {
             runStartupCleanupOnce()
         }
         applicationScope.launch {
+            var wasOnline = networkMonitor.current().isOnline()
             networkMonitor.status
                 .distinctUntilChanged()
                 .drop(1)
                 .collect { status ->
-                    if (status != com.cloudyte.app.core.network.NetworkStatus.UNAVAILABLE &&
-                        status != com.cloudyte.app.core.network.NetworkStatus.CAPTIVE_PORTAL) {
-                        transferScheduler.kick(ScheduleReason.NETWORK_RESTORED, allowMetered = true)
+                    val nowOnline = status.isOnline()
+                    if (nowOnline) {
+                        if (!wasOnline) {
+                            applicationScope.launch(dispatchers.io) {
+                                ApiClient.evictIdleConnections()
+                            }
+                        }
+                        runCatching {
+                            if (database.fileMutationDao().pendingDue().isNotEmpty()) {
+                                com.cloudyte.app.sync.FileMutationWorker.enqueue()
+                            }
+                        }
+                        runCatching {
+                            transferScheduler.kick(ScheduleReason.NETWORK_RESTORED, allowMetered = true)
+                        }
                         kickImmediateDrain(DrainTrigger.NETWORK_RESTORED, "network_restored")
                     }
+                    wasOnline = nowOnline
                 }
         }
+    }
+
+    companion object {
+        private const val FOREGROUND_RESUME_COOLDOWN_MS = 3_000L
     }
 }

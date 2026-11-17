@@ -14,6 +14,8 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -106,7 +108,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
+import com.cloudyte.app.CloudyteApplication
 import com.cloudyte.app.R
+import com.cloudyte.app.core.network.NetworkStatus
+import com.cloudyte.app.core.network.isOnline
 import com.cloudyte.app.api.Account
 import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.api.CloudFile
@@ -134,8 +139,10 @@ import com.cloudyte.app.ui.openFileInViewer
 import com.cloudyte.app.ui.theme.RobotoFlexFontFamily
 import com.cloudyte.app.ui.theme.cloudyteColors
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -196,6 +203,15 @@ class HomeViewModel(
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
     private val _immediateStorageSummary = MutableStateFlow<StorageSummary?>(null)
+
+    private var loadJob: Job? = null
+    private var lastLoadForced = false
+    @Volatile
+    private var lastLoadedAtMs: Long = 0L
+
+    companion object {
+        internal const val AUTO_REFRESH_INTERVAL_MS = 30_000L
+    }
 
     private val preferredStorageAccountFlow = UserPreferences.observe(application)
         .map { it.homeStorageAccountId }
@@ -283,7 +299,15 @@ class HomeViewModel(
     }
 
     fun loadData(forceStorageRefresh: Boolean = false) {
-        viewModelScope.launch {
+        val active = loadJob
+        if (active?.isActive == true && (!forceStorageRefresh || lastLoadForced)) {
+            return
+        }
+        if (forceStorageRefresh) {
+            active?.cancel()
+        }
+        lastLoadForced = forceStorageRefresh
+        loadJob = viewModelScope.launch {
             _isLoading.value = true
             _errorMessage.value = null
             try {
@@ -345,6 +369,7 @@ class HomeViewModel(
                     val preferredStorageId = preferredDeferred.await()
                     val freshAccounts = accountsResult.getOrNull()
                     if (freshAccounts != null) {
+                        lastLoadedAtMs = System.currentTimeMillis()
                         _accounts.value = freshAccounts
                         if (freshAccounts.isNotEmpty()) {
                             db.accountDao().insertAccounts(freshAccounts.map { LocalAccount.fromAccount(it) })
@@ -396,14 +421,35 @@ class HomeViewModel(
                     _recentFiles.value = updatedFiles.take(8)
                     FileRepository.cacheFiles(updatedFiles)
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e("HomeViewModel", "General data loading error", e)
-                _errorMessage.value = e.localizedMessage ?: "Failed to load cloud data"
+                if (_accounts.value.isEmpty()) {
+                    _errorMessage.value = e.localizedMessage ?: "Failed to load cloud data"
+                }
             } finally {
                 _hasInitialContent.value = true
                 _isLoading.value = false
             }
         }
+    }
+
+    fun refreshIfNeeded(
+        isOnline: Boolean,
+        wasOffline: Boolean = false,
+        nowMs: Long = System.currentTimeMillis()
+    ) {
+        if (!isOnline) return
+        val stale = lastLoadedAtMs == 0L || (nowMs - lastLoadedAtMs) >= AUTO_REFRESH_INTERVAL_MS
+        if (wasOffline || stale) {
+            loadData(forceStorageRefresh = wasOffline)
+        }
+    }
+
+    @androidx.annotation.VisibleForTesting
+    internal fun resetLoadTimestampForTest(timestampMs: Long) {
+        lastLoadedAtMs = timestampMs
     }
 
     fun createFolder(name: String, onSuccess: () -> Unit) {
@@ -496,12 +542,46 @@ fun HomeScreen(
     var showCreateFolderDialog by remember { mutableStateOf(false) }
     var folderNameInput by remember { mutableStateOf("") }
 
+    val appContainer = remember(context) {
+        (context.applicationContext as? CloudyteApplication)?.container
+    }
+    val networkStatus by remember(appContainer) {
+        appContainer?.networkMonitor?.status ?: flowOf(NetworkStatus.VALIDATED_UNMETERED)
+    }.collectAsStateWithLifecycle(
+        initialValue = appContainer?.networkMonitor?.current() ?: NetworkStatus.VALIDATED_UNMETERED
+    )
+    val foregroundEpoch by remember(appContainer) {
+        appContainer?.foregroundEpoch ?: flowOf(0L)
+    }.collectAsStateWithLifecycle(initialValue = 0L)
+
+    var previouslyOnline by remember { mutableStateOf(networkStatus.isOnline()) }
+    var showBackOnlineBadge by remember { mutableStateOf(false) }
+
     LaunchedEffect(isLoading) {
         if (!isLoading) isManualRefreshing = false
     }
 
     LaunchedEffect(Unit) {
         viewModel.loadData(forceStorageRefresh = false)
+    }
+
+    LaunchedEffect(networkStatus) {
+        val onlineNow = networkStatus.isOnline()
+        if (!previouslyOnline && onlineNow) {
+            showBackOnlineBadge = true
+            viewModel.refreshIfNeeded(isOnline = true, wasOffline = true)
+            delay(2_200L)
+            showBackOnlineBadge = false
+        } else if (!onlineNow) {
+            showBackOnlineBadge = false
+        }
+        previouslyOnline = onlineNow
+    }
+
+    LaunchedEffect(foregroundEpoch) {
+        if (foregroundEpoch > 0L) {
+            viewModel.refreshIfNeeded(isOnline = networkStatus.isOnline(), wasOffline = false)
+        }
     }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
@@ -712,12 +792,21 @@ fun HomeScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = stringResource(R.string.home_welcome_lower),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Medium
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.home_welcome_lower),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                HomeConnectionStatusPill(
+                                    networkStatus = networkStatus,
+                                    showRecovered = showBackOnlineBadge
+                                )
+                            }
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = profile?.displayUsername ?: stringResource(R.string.home_default_user),
@@ -1957,3 +2046,83 @@ fun FileListItem(
         }
     }
 }
+
+@Composable
+private fun HomeConnectionStatusPill(
+    networkStatus: NetworkStatus,
+    showRecovered: Boolean
+) {
+    val isOffline = networkStatus == NetworkStatus.UNAVAILABLE
+    val isCaptive = networkStatus == NetworkStatus.CAPTIVE_PORTAL
+    val visible = isOffline || isCaptive || showRecovered
+
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(tween(200)),
+        exit = fadeOut(tween(300))
+    ) {
+        val ext = MaterialTheme.cloudyteColors
+        val containerColor = when {
+            isOffline -> MaterialTheme.colorScheme.errorContainer
+            isCaptive -> MaterialTheme.colorScheme.tertiaryContainer
+            else -> ext.mintContainer
+        }
+        val contentColor = when {
+            isOffline -> MaterialTheme.colorScheme.onErrorContainer
+            isCaptive -> MaterialTheme.colorScheme.onTertiaryContainer
+            else -> ext.onMintSuccess
+        }
+        val dotColor = when {
+            isOffline -> MaterialTheme.colorScheme.error
+            isCaptive -> MaterialTheme.colorScheme.tertiary
+            else -> ext.mintSuccess
+        }
+        val label = when {
+            isOffline -> stringResource(R.string.status_offline)
+            isCaptive -> stringResource(R.string.status_captive_portal)
+            else -> stringResource(R.string.status_back_online)
+        }
+        val pulseAlpha = if (isOffline || isCaptive) {
+            val transition = rememberInfiniteTransition(label = "net_dot_pulse")
+            transition.animateFloat(
+                initialValue = 0.35f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(durationMillis = 800, easing = FastOutSlowInEasing),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "net_dot_alpha"
+            ).value
+        } else {
+            1f
+        }
+
+        Surface(
+            shape = RoundedCornerShape(50),
+            color = containerColor,
+            modifier = Modifier.testTag("home_connection_status_pill")
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(dotColor.copy(alpha = pulseAlpha))
+                )
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = contentColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+

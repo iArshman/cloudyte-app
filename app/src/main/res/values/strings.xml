@@ -344,4 +344,8 @@
     <string name="provider_google_desc">15 GB free · OAuth2 link</string>
     <string name="provider_onedrive_title">OneDrive</string>
     <string name="provider_onedrive_desc">5 GB free · Microsoft link</string>
+
+    <string name="status_offline">Offline</string>
+    <string name="status_captive_portal">Network sign-in required</string>
+    <string name="status_back_online">Back online</string>
 </resources>

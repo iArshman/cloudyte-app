@@ -236,6 +236,14 @@ object ApiClient {
         apiService = retrofit.create(CloudyteApi::class.java)
     }
 
+    /**
+     * Drops idle pooled sockets when the active network route changes or when resuming from sleep
+     * so subsequent API calls open fresh connections without stalling on half-closed sockets.
+     */
+    fun evictIdleConnections() {
+        runCatching { okHttpClient.connectionPool.evictAll() }
+    }
+
     fun getThumbUrl(accountId: String, fileId: String, size: Int = 256): String {
         val account = Uri.encode(accountId)
         val file = Uri.encode(fileId)

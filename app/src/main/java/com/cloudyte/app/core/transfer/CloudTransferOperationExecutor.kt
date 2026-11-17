@@ -64,7 +64,9 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
     private val shouldDeleteAfterBackupUpload: suspend () -> Boolean = {
         runCatching { UserPreferences.observe(context).first().deleteAfterUpload }.getOrDefault(false)
     },
-    private val onLocalDeletionFailed: (suspend (LocalTransfer, String) -> Unit)? = null
+    private val onLocalDeletionFailed: (suspend (LocalTransfer, String) -> Unit)? = null,
+    private val isNetworkConnected: () -> Boolean = { true },
+    private val inlineIoRetryDelayMs: (Int) -> Long = { attempt -> 250L * attempt }
 ) : TransferOperationExecutor {
 
     private val inFlightPlaintextHashes = ConcurrentHashMap<String, String>()
@@ -728,6 +730,60 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
             ?: cachedCloudFile?.encryptedSizeBytes
             ?: transfer.totalBytes
 
+        val maxAttempts = 1 + MAX_INLINE_DOWNLOAD_IO_RETRIES
+        var lastIoError: IOException? = null
+        for (attempt in 1..maxAttempts) {
+            currentCoroutineContext().ensureActive()
+            checkInterruptedOutcome(transfer.id)?.let { return it }
+            try {
+                return downloadAttempt(
+                    transfer = transfer,
+                    leaseOwner = leaseOwner,
+                    remoteId = remoteId,
+                    expectedEncryptedOrRawTotal = expectedEncryptedOrRawTotal,
+                    provider = provider,
+                    uri = uri,
+                    isContentUri = isContentUri,
+                    targetFile = targetFile,
+                    partFile = partFile,
+                    supportsResume = supportsResume,
+                    isKnownEncrypted = isKnownEncrypted,
+                    expectedKeyId = expectedKeyId,
+                    onProgress = onProgress
+                )
+            } catch (ioError: IOException) {
+                lastIoError = ioError
+                checkInterruptedOutcome(transfer.id)?.let { return it }
+                val canRetryInline = attempt < maxAttempts &&
+                    isTransientNetworkAbort(ioError) &&
+                    (supportsResume || partFile.length() == 0L)
+                if (!canRetryInline) {
+                    throw ioError
+                }
+                val delayMs = inlineIoRetryDelayMs(attempt)
+                if (delayMs > 0L) {
+                    kotlinx.coroutines.delay(delayMs)
+                }
+            }
+        }
+        throw lastIoError ?: IOException("Download interrupted")
+    }
+
+    private suspend fun downloadAttempt(
+        transfer: LocalTransfer,
+        leaseOwner: String,
+        remoteId: String,
+        expectedEncryptedOrRawTotal: Long,
+        provider: com.cloudyte.app.data.providers.CloudProvider,
+        uri: Uri,
+        isContentUri: Boolean,
+        targetFile: File?,
+        partFile: File,
+        supportsResume: Boolean,
+        isKnownEncrypted: Boolean,
+        expectedKeyId: String?,
+        onProgress: suspend (Long, Long, Long, Long?) -> Unit
+    ): TransferOutcome {
         var existingOffset = if (supportsResume && partFile.isFile) partFile.length().coerceAtLeast(0L) else 0L
         var rangeHeader = if (existingOffset > 0L) "bytes=$existingOffset-" else null
 
@@ -847,28 +903,28 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
                         }
                         val count = input.read(buffer)
                         if (count < 0) break
-                    out.write(buffer, 0, count)
-                    copied += count
-                    val effectiveProgressTotal = maxOf(expectedTotal, copied)
-                    val currentChunkIndex = ((copied + chunkSize - 1L) / chunkSize).toInt()
-                    val metrics = progressCalculator.update(copied, effectiveProgressTotal)
-                    onProgress(copied, effectiveProgressTotal, metrics.bytesPerSecond, metrics.etaSeconds)
-                    if (currentChunkIndex != lastCheckpointedIndex || (effectiveProgressTotal > 0L && copied >= effectiveProgressTotal)) {
-                        lastCheckpointedIndex = currentChunkIndex
-                        if (!transfers.updateResumableProgressOwned(transfer.id, leaseOwner, copied, currentChunkIndex)) {
-                            checkInterruptedOutcome(transfer.id)?.let { throw TransferInterruptedException(it) }
-                            throw CancellationException("Transfer lease lost before download progress checkpoint")
+                        out.write(buffer, 0, count)
+                        copied += count
+                        val effectiveProgressTotal = maxOf(expectedTotal, copied)
+                        val currentChunkIndex = ((copied + chunkSize - 1L) / chunkSize).toInt()
+                        val metrics = progressCalculator.update(copied, effectiveProgressTotal)
+                        onProgress(copied, effectiveProgressTotal, metrics.bytesPerSecond, metrics.etaSeconds)
+                        if (currentChunkIndex != lastCheckpointedIndex || (effectiveProgressTotal > 0L && copied >= effectiveProgressTotal)) {
+                            lastCheckpointedIndex = currentChunkIndex
+                            if (!transfers.updateResumableProgressOwned(transfer.id, leaseOwner, copied, currentChunkIndex)) {
+                                checkInterruptedOutcome(transfer.id)?.let { throw TransferInterruptedException(it) }
+                                throw CancellationException("Transfer lease lost before download progress checkpoint")
+                            }
                         }
                     }
-                }
-                out.flush()
-                runCatching { out.fd.sync() }
-                if (authoritativeExpectedTotal != null && copied < authoritativeExpectedTotal) {
-                    throw IOException("Download ended before the expected byte count ($copied / $authoritativeExpectedTotal)")
-                }
-                if (copied == 0L && expectedTotal > 0L) {
-                    throw IOException("Download returned 0 bytes (expected $expectedTotal)")
-                }
+                    out.flush()
+                    runCatching { out.fd.sync() }
+                    if (authoritativeExpectedTotal != null && copied < authoritativeExpectedTotal) {
+                        throw IOException("Download ended before the expected byte count ($copied / $authoritativeExpectedTotal)")
+                    }
+                    if (copied == 0L && expectedTotal > 0L) {
+                        throw IOException("Download returned 0 bytes (expected $expectedTotal)")
+                    }
                     if (copied > 0L && copied != expectedTotal) {
                         val metrics = progressCalculator.update(copied, copied)
                         onProgress(copied, copied, metrics.bytesPerSecond, 0L)
@@ -1054,7 +1110,14 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
     private fun mapUploadResultOutcome(result: UploadResult): TransferOutcome {
         return when {
             result.isSuccess -> TransferOutcome.Completed
-            result.isIoError -> TransferOutcome.WaitingForNetwork("NETWORK_IO", result.errorMessage ?: "Network interrupted")
+            result.isIoError -> {
+                val msg = result.errorMessage ?: "Network interrupted"
+                if (!isNetworkConnected()) {
+                    TransferOutcome.WaitingForNetwork("NETWORK_IO", msg)
+                } else {
+                    TransferOutcome.Retryable("NETWORK_IO", msg)
+                }
+            }
             result.statusCode == 401 -> TransferOutcome.WaitingForAuth("AUTH_REQUIRED", result.errorMessage ?: "Authentication required")
             result.serverRetryable == true || (result.errorCode != null && result.errorCode in UploadResult.RETRYABLE_ERROR_CODES) ->
                 TransferOutcome.Retryable(
@@ -1178,6 +1241,37 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
         }
     }
 
+    private fun isTransientNetworkAbort(error: IOException): Boolean {
+        if (error is PlaintextChecksumMismatchException || isExplicitlyUnrecoverableIo(error)) {
+            return false
+        }
+        var cur: Throwable? = error
+        while (cur != null) {
+            when (cur) {
+                is java.net.SocketException,
+                is java.net.SocketTimeoutException,
+                is java.io.InterruptedIOException,
+                is java.io.EOFException,
+                is java.net.ProtocolException,
+                is java.net.UnknownHostException,
+                is javax.net.ssl.SSLException -> return true
+            }
+            val msg = cur.message.orEmpty()
+            if (msg.contains("connection abort", ignoreCase = true) ||
+                msg.contains("connection reset", ignoreCase = true) ||
+                msg.contains("broken pipe", ignoreCase = true) ||
+                msg.contains("unexpected end of stream", ignoreCase = true) ||
+                msg.contains("ended before the expected byte count", ignoreCase = true) ||
+                msg.contains("stream was reset", ignoreCase = true) ||
+                msg.contains("timeout", ignoreCase = true)
+            ) {
+                return true
+            }
+            cur = cur.cause
+        }
+        return false
+    }
+
     private fun isExplicitlyUnrecoverableIo(error: IOException): Boolean {
         val msg = error.message.orEmpty()
         return error is FileNotFoundException ||
@@ -1237,5 +1331,9 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
         } catch (_: Exception) {
             -1L
         }
+    }
+
+    companion object {
+        private const val MAX_INLINE_DOWNLOAD_IO_RETRIES = 3
     }
 }

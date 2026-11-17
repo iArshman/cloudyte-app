@@ -120,7 +120,12 @@ class TransferRepository(
     ): String {
         val stableId = "offline:$accountId:$fileId"
         val existing = transferDao.getById(stableId)
-        if (existing != null && existing.state !in setOf("COMPLETED", "CANCELLED", "EXPIRED", "FAILED_PERMANENT")) return stableId
+        if (existing != null && existing.state !in setOf("COMPLETED", "CANCELLED", "EXPIRED", "FAILED_PERMANENT")) {
+            if (existing.state in setOf("PAUSED", "FAILED_RETRYABLE", "WAITING_FOR_NETWORK")) {
+                transferDao.requestResume(stableId)
+            }
+            return stableId
+        }
         val id = if (existing == null) stableId else "$stableId:${UUID.randomUUID()}"
         transferDao.insertIfAbsent(
             LocalTransfer(
