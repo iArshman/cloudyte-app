@@ -48,6 +48,9 @@ import com.cloudyte.app.ui.components.SectionRow
 import com.cloudyte.app.ui.theme.cloudyteColors
 import kotlinx.coroutines.launch
 
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+
 @Composable
 fun SettingsScreen(
     bottomNavController: NavController? = null,
@@ -55,7 +58,8 @@ fun SettingsScreen(
     onNavigateSection: (SettingsSectionType) -> Unit = {},
     onNavigateExclusions: () -> Unit = {},
     onNavigateTransfers: () -> Unit = {},
-    onLogout: (() -> Unit)? = null
+    onLogout: (() -> Unit)? = null,
+    onSubScreenChanged: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -73,8 +77,19 @@ fun SettingsScreen(
 
     var selectedSection by remember { mutableStateOf<SettingsSectionType?>(null) }
     var currentSubScreen by remember { mutableStateOf<String?>(null) }
+    val isInSubSection = selectedSection != null || currentSubScreen != null
 
-    BackHandler(enabled = currentSubScreen != null || selectedSection != null) {
+    LaunchedEffect(isInSubSection) {
+        onSubScreenChanged(isInSubSection)
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            onSubScreenChanged(false)
+        }
+    }
+
+    BackHandler(enabled = isInSubSection) {
         when {
             currentSubScreen != null -> currentSubScreen = null
             else -> selectedSection = null
