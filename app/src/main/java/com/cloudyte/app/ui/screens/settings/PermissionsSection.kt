@@ -4,7 +4,7 @@ import android.Manifest
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -12,16 +12,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.outlined.AdminPanelSettings
-import androidx.compose.material.icons.outlined.FolderOpen
-import androidx.compose.material.icons.outlined.Notifications
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material.icons.outlined.Cancel
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -36,7 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -69,6 +68,7 @@ fun PermissionsSection(
                 notificationsState = PermissionState.DENIED,
                 runtimePostNotificationsGranted = false,
                 osNotificationsEnabled = false,
+                ignoringBatteryOptimizations = false,
                 folderSources = emptyList(),
                 healthyFolderCount = 0,
                 brokenFolderCount = 0
@@ -125,33 +125,27 @@ fun PermissionsSection(
         }
     }
 
-    SettingsSectionTitle(stringResource(R.string.settings_section_permissions))
+    Spacer(modifier = Modifier.height(8.dp))
 
     val notifGranted = summary.notificationsState == PermissionState.GRANTED
-    val folderStatusText = when {
-        summary.folderSources.isEmpty() -> "No backup folders selected yet (uses Android folder picker per folder)"
-        summary.brokenFolderCount > 0 -> "${summary.healthyFolderCount} granted • ${summary.brokenFolderCount} need attention"
-        else -> "Granted (${summary.healthyFolderCount} folder${if (summary.healthyFolderCount == 1) "" else "s"} accessible)"
-    }
+    val batteryUnrestricted = summary.ignoringBatteryOptimizations
+    val foldersGranted = summary.folderSources.isNotEmpty() && summary.brokenFolderCount == 0
+    val folderCritical = summary.brokenFolderCount > 0
 
-    val topItems = listOf(
+    val permissionItems = listOf(
         GroupedListItem(key = "perm_notif") {
-            val sub = when {
-                notifGranted -> stringResource(R.string.settings_perm_granted)
-                !summary.runtimePostNotificationsGranted -> "Not Granted — tap to request Android notification permission"
-                else -> "Disabled in Android system settings — tap to open notification settings"
-            }
-            SettingsClickRow(
+            TeleWardenPermissionRow(
                 title = stringResource(R.string.settings_perm_notifications),
-                subtitle = sub,
-                icon = Icons.Outlined.Notifications,
-                trailing = {
-                    StatusBadge(
-                        text = if (notifGranted) stringResource(R.string.settings_perm_granted)
-                        else stringResource(R.string.settings_perm_not_granted),
-                        isPositive = notifGranted
+                subtitle = if (notifGranted) {
+                    stringResource(R.string.settings_perm_allowed)
+                } else {
+                    stringResource(
+                        R.string.settings_perm_not_allowed_rationale,
+                        stringResource(R.string.settings_perm_notifications_rationale)
                     )
                 },
+                granted = notifGranted,
+                critical = false,
                 onClick = {
                     if (notifGranted) {
                         context.startActivity(PermissionsHelper.buildNotificationSettingsIntent(context))
@@ -164,21 +158,38 @@ fun PermissionsSection(
                 modifier = Modifier.testTag("perm_notifications_row")
             )
         },
-        GroupedListItem(key = "perm_folders_overview") {
-            SettingsClickRow(
-                title = "Scoped Backup Folder Access",
-                subtitle = folderStatusText,
-                icon = Icons.Outlined.FolderOpen,
-                trailing = {
-                    StatusBadge(
-                        text = when {
-                            summary.folderSources.isEmpty() -> "None Selected"
-                            summary.brokenFolderCount == 0 -> stringResource(R.string.settings_perm_granted)
-                            else -> "Action Needed"
-                        },
-                        isPositive = summary.folderSources.isNotEmpty() && summary.brokenFolderCount == 0
+        GroupedListItem(key = "perm_battery") {
+            TeleWardenPermissionRow(
+                title = stringResource(R.string.settings_perm_battery),
+                subtitle = if (batteryUnrestricted) {
+                    stringResource(R.string.settings_perm_allowed)
+                } else {
+                    stringResource(
+                        R.string.settings_perm_not_allowed_rationale,
+                        stringResource(R.string.settings_perm_battery_rationale)
                     )
                 },
+                granted = batteryUnrestricted,
+                critical = false,
+                onClick = {
+                    context.startActivity(PermissionsHelper.buildBatteryOptimizationSettingsIntent(context))
+                },
+                modifier = Modifier.testTag("perm_battery_row")
+            )
+        },
+        GroupedListItem(key = "perm_folders_overview") {
+            val subtitle = when {
+                summary.folderSources.isEmpty() -> stringResource(R.string.settings_perm_folders_rationale)
+                summary.brokenFolderCount > 0 ->
+                    "Not allowed · ${summary.healthyFolderCount} granted, ${summary.brokenFolderCount} need access"
+                else ->
+                    "Allowed (${summary.healthyFolderCount} backup folder${if (summary.healthyFolderCount == 1) "" else "s"})"
+            }
+            TeleWardenPermissionRow(
+                title = stringResource(R.string.settings_perm_media),
+                subtitle = subtitle,
+                granted = foldersGranted,
+                critical = folderCritical,
                 onClick = onOpenBackupFolders,
                 modifier = Modifier.testTag("perm_folders_row")
             )
@@ -186,120 +197,115 @@ fun PermissionsSection(
         GroupedListItem(key = "perm_app_settings") {
             SettingsClickRow(
                 title = "Open Android App Settings",
-                subtitle = "Review system permissions or revoke/restore app capabilities",
+                subtitle = "Review system permissions, notifications, or battery usage",
                 icon = Icons.Outlined.AdminPanelSettings,
                 onClick = { context.startActivity(PermissionsHelper.buildAppDetailsSettingsIntent(context)) },
                 modifier = Modifier.testTag("perm_open_system_settings_row")
             )
         }
     )
-    GroupedList(items = topItems)
+    GroupedList(items = permissionItems)
 
     if (summary.folderSources.isNotEmpty()) {
-        SettingsSectionTitle("Folder Access Details")
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            summary.folderSources.forEach { source ->
-                FolderPermissionCard(
+        SettingsSectionTitle("Backup folder permissions")
+        val folderItems = summary.folderSources.map { source ->
+            GroupedListItem(key = "folder_perm_${source.id}") {
+                FolderPermissionRow(
                     source = source,
-                    onRegrant = {
+                    onClick = {
                         pendingRegrantSourceId = source.id
-                        regrantFolderLauncher.launch(null)
+                        val preset = runCatching {
+                            com.cloudyte.app.db.BackupPresetType.valueOf(source.presetType)
+                        }.getOrDefault(com.cloudyte.app.db.BackupPresetType.CUSTOM)
+                        regrantFolderLauncher.launch(BackupSourceManager.suggestedInitialUri(preset))
                     }
                 )
             }
         }
-        Spacer(modifier = Modifier.height(8.dp))
+        GroupedList(items = folderItems)
+    }
+
+    Spacer(modifier = Modifier.height(16.dp))
+}
+
+@Composable
+private fun TeleWardenPermissionRow(
+    title: String,
+    subtitle: String,
+    granted: Boolean,
+    critical: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (granted || !critical) {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.error
+                }
+            )
+        }
+        Spacer(modifier = Modifier.width(16.dp))
+        Icon(
+            imageVector = if (granted) Icons.Filled.CheckCircle else Icons.Outlined.Cancel,
+            contentDescription = if (granted) {
+                stringResource(R.string.settings_perm_allowed)
+            } else {
+                stringResource(R.string.settings_perm_not_allowed)
+            },
+            modifier = Modifier.size(22.dp),
+            tint = when {
+                granted -> MaterialTheme.colorScheme.primary
+                critical -> MaterialTheme.colorScheme.error
+                else -> MaterialTheme.colorScheme.outline
+            }
+        )
     }
 }
 
 @Composable
-private fun FolderPermissionCard(
+private fun FolderPermissionRow(
     source: BackupSourceEntity,
-    onRegrant: () -> Unit
+    onClick: () -> Unit
 ) {
     val status = runCatching { BackupSourcePermissionStatus.valueOf(source.permissionStatus) }
         .getOrDefault(BackupSourcePermissionStatus.UNKNOWN)
     val isHealthy = status == BackupSourcePermissionStatus.GRANTED
-    val statusLabel = when (status) {
-        BackupSourcePermissionStatus.GRANTED -> stringResource(R.string.settings_perm_granted)
-        BackupSourcePermissionStatus.REVOKED -> "Permission Revoked"
-        BackupSourcePermissionStatus.MISSING -> "Folder Missing"
-        BackupSourcePermissionStatus.UNREADABLE -> "Unreadable"
-        BackupSourcePermissionStatus.UNKNOWN -> stringResource(R.string.settings_perm_not_granted)
+    val subtitle = when (status) {
+        BackupSourcePermissionStatus.GRANTED -> stringResource(R.string.settings_perm_allowed)
+        BackupSourcePermissionStatus.REVOKED ->
+            "Not allowed · Tap to re-grant access"
+        BackupSourcePermissionStatus.MISSING ->
+            "Not allowed · Folder missing, tap to pick again"
+        BackupSourcePermissionStatus.UNREADABLE ->
+            "Not allowed · ${source.lastError ?: "Folder unreadable, tap to re-grant"}"
+        BackupSourcePermissionStatus.UNKNOWN ->
+            "Not allowed · Tap to grant folder access"
     }
 
-    Card(
-        colors = CardDefaults.cardColors(
-            containerColor = if (isHealthy) {
-                MaterialTheme.colorScheme.surfaceContainer
-            } else {
-                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.65f)
-            }
-        ),
-        shape = MaterialTheme.shapes.medium,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = source.displayName,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.weight(1f)
-                )
-                StatusBadge(text = statusLabel, isPositive = isHealthy)
-            }
-            if (!isHealthy) {
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = source.lastError
-                        ?: "Cloudyte can no longer read this folder. Re-grant access via Android's folder picker.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedButton(
-                    onClick = onRegrant,
-                    modifier = Modifier
-                        .heightIn(min = 48.dp)
-                        .testTag("perm_regrant_${source.id}")
-                ) {
-                    Text(stringResource(R.string.settings_backup_regrant))
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun StatusBadge(text: String, isPositive: Boolean) {
-    Surface(
-        shape = MaterialTheme.shapes.small,
-        color = if (isPositive) {
-            MaterialTheme.colorScheme.primaryContainer
-        } else {
-            MaterialTheme.colorScheme.errorContainer
-        }
-    ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.SemiBold,
-            color = if (isPositive) {
-                MaterialTheme.colorScheme.onPrimaryContainer
-            } else {
-                MaterialTheme.colorScheme.onErrorContainer
-            },
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-        )
-    }
+    TeleWardenPermissionRow(
+        title = source.displayName,
+        subtitle = subtitle,
+        granted = isHealthy,
+        critical = !isHealthy,
+        onClick = onClick,
+        modifier = Modifier.testTag("perm_regrant_${source.id}")
+    )
 }

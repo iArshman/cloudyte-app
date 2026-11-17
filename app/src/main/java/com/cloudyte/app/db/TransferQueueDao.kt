@@ -10,6 +10,9 @@ abstract class TransferQueueDao {
     @Query("SELECT * FROM transfers WHERE state IN ('QUEUED','FAILED_RETRYABLE') AND (nextAttemptAt IS NULL OR nextAttemptAt <= :now) AND (leaseOwner IS NULL OR leaseExpiresAt IS NULL OR leaseExpiresAt <= :now) ORDER BY priority DESC, createdAt ASC LIMIT 1")
     protected abstract suspend fun nextCandidate(now: Long): LocalTransfer?
 
+    @Query("SELECT * FROM transfers WHERE state IN ('QUEUED','FAILED_RETRYABLE') AND NOT (direction='BACKUP' AND operationType='BACKUP') AND (nextAttemptAt IS NULL OR nextAttemptAt <= :now) AND (leaseOwner IS NULL OR leaseExpiresAt IS NULL OR leaseExpiresAt <= :now) ORDER BY priority DESC, createdAt ASC LIMIT 1")
+    protected abstract suspend fun nextNonBackupCandidate(now: Long): LocalTransfer?
+
     @Query("UPDATE transfers SET state='RUNNING', status='RUNNING', leaseOwner=:ownerId, leaseExpiresAt=:leaseUntil, lastAttemptAt=:now, errorMessage=NULL, lastErrorCode=NULL, lastErrorMessage=NULL, lastHttpStatus=NULL, updatedAt=:now WHERE id=:id AND state IN ('QUEUED','FAILED_RETRYABLE') AND (nextAttemptAt IS NULL OR nextAttemptAt <= :now) AND (leaseOwner IS NULL OR leaseExpiresAt IS NULL OR leaseExpiresAt <= :now)")
     protected abstract suspend fun claim(id: String, ownerId: String, now: Long, leaseUntil: Long): Int
 
@@ -19,9 +22,15 @@ abstract class TransferQueueDao {
     open suspend fun currentRow(id: String): LocalTransfer? = row(id)
 
     @Transaction
-    open suspend fun acquireNextRunnableLease(ownerId: String, now: Long, leaseUntil: Long): LocalTransfer? {
+    open suspend fun acquireNextRunnableLease(
+        ownerId: String,
+        now: Long,
+        leaseUntil: Long,
+        excludeAutoBackup: Boolean = false
+    ): LocalTransfer? {
         repeat(4) {
-            val candidate = nextCandidate(now) ?: return null
+            val candidate = if (excludeAutoBackup) nextNonBackupCandidate(now) else nextCandidate(now)
+            candidate ?: return null
             if (claim(candidate.id, ownerId, now, leaseUntil) == 1) return row(candidate.id)
         }
         return null
@@ -51,6 +60,9 @@ abstract class TransferQueueDao {
     @Query("SELECT EXISTS(SELECT 1 FROM transfers WHERE state IN ('QUEUED','FAILED_RETRYABLE') AND (nextAttemptAt IS NULL OR nextAttemptAt <= :now))")
     abstract suspend fun hasRunnableTransfers(now: Long): Boolean
 
+    @Query("SELECT EXISTS(SELECT 1 FROM transfers WHERE state IN ('QUEUED','FAILED_RETRYABLE') AND NOT (direction='BACKUP' AND operationType='BACKUP') AND (nextAttemptAt IS NULL OR nextAttemptAt <= :now))")
+    abstract suspend fun hasRunnableNonBackupTransfers(now: Long): Boolean
+
     @Query("SELECT EXISTS(SELECT 1 FROM transfers WHERE state IN ('QUEUED','RUNNING','PAUSING','CANCELLING'))")
     abstract suspend fun hasLiveTransfers(): Boolean
 
@@ -60,8 +72,14 @@ abstract class TransferQueueDao {
     @Query("UPDATE transfers SET state='QUEUED', status='PENDING', updatedAt=:now WHERE state='WAITING_FOR_NETWORK'")
     abstract suspend fun requeueNetworkWaiters(now: Long): Int
 
+    @Query("UPDATE transfers SET state='WAITING_FOR_NETWORK', status='PENDING', lastErrorCode='NETWORK_POLICY', lastErrorMessage=:reason, errorMessage=:reason, updatedAt=:now WHERE state IN ('QUEUED','FAILED_RETRYABLE') AND direction='BACKUP' AND operationType='BACKUP'")
+    abstract suspend fun parkQueuedAutoBackups(now: Long, reason: String): Int
+
     @Query("SELECT EXISTS(SELECT 1 FROM transfers WHERE state='WAITING_FOR_NETWORK')")
     abstract suspend fun hasNetworkWaiters(): Boolean
+
+    @Query("SELECT EXISTS(SELECT 1 FROM transfers WHERE state='WAITING_FOR_NETWORK' AND direction='BACKUP' AND operationType='BACKUP')")
+    abstract suspend fun hasAutoBackupNetworkWaiters(): Boolean
 
     @Query("SELECT MIN(nextAttemptAt) FROM transfers WHERE state='FAILED_RETRYABLE' AND nextAttemptAt > :now")
     abstract suspend fun nextRetryAt(now: Long): Long?

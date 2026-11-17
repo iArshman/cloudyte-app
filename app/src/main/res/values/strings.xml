@@ -151,29 +151,32 @@
     <string name="settings_logout_confirm_msg">Are you sure you want to log out of your account?</string>
 
     <!-- Backup Section -->
-    <string name="settings_auto_backup">Enable Auto Backup</string>
+    <string name="settings_auto_backup">Automatic backup</string>
     <string name="settings_auto_backup_sub">Automatically scans enabled folders on schedule and queues new or changed files</string>
-    <string name="settings_backup_folders">Backup Folders</string>
-    <string name="settings_backup_target_drive">Backup Target Drive</string>
-    <string name="settings_backup_quick_media">Back up new media quickly</string>
-    <string name="settings_backup_quick_media_sub">Watches MediaStore changes with periodic scan as fallback. Android and OEM battery optimizations may delay background execution.</string>
-    <string name="settings_backup_schedule">Backup Interval</string>
-    <string name="settings_backup_wifi_only">Wi-Fi Only</string>
-    <string name="settings_backup_wifi_only_sub">Pause automatic backups when only mobile/metered data is available</string>
-    <string name="settings_backup_charging_only">While Charging Only</string>
+    <string name="settings_backup_folders">Backup folders</string>
+    <string name="settings_backup_target_drive">Backup target drive</string>
+    <string name="settings_backup_quick_media">Back up new media instantly</string>
+    <string name="settings_backup_quick_media_sub">Uploads photos and videos soon after they appear</string>
+    <string name="settings_backup_schedule">Backup interval</string>
+    <string name="settings_backup_interval_with_sweep">%1$s (with instant media watch)</string>
+    <string name="settings_backup_wifi_only">Back up on Wi-Fi only</string>
+    <string name="settings_backup_wifi_only_sub">Automatic backups wait for an unmetered network</string>
+    <string name="settings_backup_charging_only">Only while charging</string>
     <string name="settings_backup_charging_only_sub">Require charger connected before starting scheduled backups</string>
-    <string name="settings_backup_now">Back Up Now</string>
-    <string name="settings_backup_add_custom">Add Custom Folder</string>
-    <string name="settings_backup_regrant">Re-grant Access</string>
-    <string name="settings_backup_remove_title">Remove Backup Folder</string>
+    <string name="settings_backup_no_folders_selected">No folders selected yet. Choose at least one folder below to turn on backups.</string>
+    <string name="settings_backup_now">Back up now</string>
+    <string name="settings_backup_add_custom">Add another folder</string>
+    <string name="settings_backup_choose_folder_device">Choose any folder on this device</string>
+    <string name="settings_backup_regrant">Re-grant access</string>
+    <string name="settings_backup_remove_title">Remove backup folder</string>
     <string name="settings_backup_remove_msg">Removing \'%1$s\' stops future automatic backups from this folder. Files already backed up to your Cloudyte drives will NOT be deleted.</string>
     <string name="settings_exclusions">Exclusions</string>
-    <string name="settings_exclusions_sub">Manage folder, file, hidden, extension, MIME, pattern &amp; size rules</string>
-    <string name="settings_max_file_size">Max File Size</string>
+    <string name="settings_exclusions_sub">Files and folders skipped during backup</string>
+    <string name="settings_max_file_size">Skip files larger than</string>
     <string name="settings_network_type">Network Type</string>
-    <string name="settings_delete_after_upload">Delete Local Copy After Upload</string>
-    <string name="settings_delete_after_upload_sub">Deletes local file ONLY after upload completion is verified; local deletion failures are reported separately</string>
-    <string name="settings_delete_after_upload_confirm_title">Delete Local Copies After Upload?</string>
+    <string name="settings_delete_after_upload">Delete local copy after upload</string>
+    <string name="settings_delete_after_upload_sub">Deletes local file only after cloud upload is verified complete</string>
+    <string name="settings_delete_after_upload_confirm_title">Delete local copies after upload?</string>
     <string name="settings_delete_after_upload_confirm_msg">Local files will be kept untouched during upload and deleted ONLY after the cloud upload is verified complete. Exclusions and failed uploads are never deleted.</string>
 
     <!-- Storage Section -->
@@ -191,8 +194,16 @@
     <string name="settings_all_cache_cleared">Cache cleared</string>
 
     <!-- Permissions Section -->
-    <string name="settings_perm_media">Media &amp; Storage Permission</string>
-    <string name="settings_perm_notifications">Notifications Permission</string>
+    <string name="settings_perm_media">Scoped folder access</string>
+    <string name="settings_perm_notifications">Notifications</string>
+    <string name="settings_perm_notifications_rationale">Shows transfer and backup progress</string>
+    <string name="settings_perm_battery">Unrestricted battery use</string>
+    <string name="settings_perm_battery_rationale">Keeps uploads, downloads and syncing going after you leave Cloudyte</string>
+    <string name="settings_perm_folders_rationale">Select backup folders using Android\'s folder picker without broad storage access</string>
+    <string name="settings_perm_allowed">Allowed</string>
+    <string name="settings_perm_not_allowed">Not allowed</string>
+    <string name="settings_perm_not_allowed_optional">Not allowed, optional</string>
+    <string name="settings_perm_not_allowed_rationale">Not allowed \u00b7 %1$s</string>
     <string name="settings_perm_granted">Granted</string>
     <string name="settings_perm_not_granted">Not Granted</string>
 

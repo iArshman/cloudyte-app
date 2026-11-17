@@ -291,16 +291,35 @@ class BackupWorkerIntegrationTest {
         val wm = WorkManager.getInstance(context)
         val periodic = wm.getWorkInfosForUniqueWork(AutoSyncManager.UNIQUE_PERIODIC_WORK).get()
         val quick = wm.getWorkInfosForUniqueWork(AutoSyncManager.UNIQUE_QUICK_MEDIA_WORK).get()
+        val sweep = wm.getWorkInfosForUniqueWork(AutoSyncManager.UNIQUE_MEDIA_SWEEP_WORK).get()
         assertEquals(1, periodic.size)
         assertEquals(1, quick.size)
+        assertEquals(1, sweep.size)
         assertEquals(WorkInfo.State.ENQUEUED, periodic.first().state)
         assertEquals(WorkInfo.State.ENQUEUED, quick.first().state)
+        assertEquals(WorkInfo.State.ENQUEUED, sweep.first().state)
 
         AutoSyncManager.setAutoBackupSuspend(context, false)
         val periodicAfter = wm.getWorkInfosForUniqueWork(AutoSyncManager.UNIQUE_PERIODIC_WORK).get()
         val quickAfter = wm.getWorkInfosForUniqueWork(AutoSyncManager.UNIQUE_QUICK_MEDIA_WORK).get()
+        val sweepAfter = wm.getWorkInfosForUniqueWork(AutoSyncManager.UNIQUE_MEDIA_SWEEP_WORK).get()
         assertTrue(periodicAfter.all { it.state == WorkInfo.State.CANCELLED })
         assertTrue(quickAfter.all { it.state == WorkInfo.State.CANCELLED })
+        assertTrue(sweepAfter.all { it.state == WorkInfo.State.CANCELLED })
+    }
+
+    @Test
+    fun mediaStoreWatcherDebouncesBurstsIntoSingleTrigger(): Unit = runBlocking {
+        val triggerCount = java.util.concurrent.atomic.AtomicInteger(0)
+        repeat(5) {
+            MediaStoreWatcher.notifyChanged(
+                context = context,
+                debounceMs = 80L,
+                onSettled = { triggerCount.incrementAndGet() }
+            )
+        }
+        kotlinx.coroutines.delay(250L)
+        assertEquals(1, triggerCount.get())
     }
 
     @Test

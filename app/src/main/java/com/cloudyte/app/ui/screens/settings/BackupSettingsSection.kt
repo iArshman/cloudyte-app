@@ -5,8 +5,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,20 +13,19 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AutoMode
 import androidx.compose.material.icons.outlined.BatteryChargingFull
 import androidx.compose.material.icons.outlined.CloudUpload
+import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.FilterAltOff
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.PhotoLibrary
-import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Scale
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.Wifi
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -38,7 +35,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -85,7 +81,6 @@ import com.cloudyte.app.ui.components.SettingsSwitchRow
 import kotlinx.coroutines.launch
 import java.util.Date
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun BackupSettingsSection(
     prefsState: UserPreferencesState,
@@ -154,7 +149,7 @@ fun BackupSettingsSection(
             result.onSuccess { added ->
                 snackbarHostState.showSnackbar("Added backup folder '${added.displayName}'.")
             }.onFailure { err ->
-                snackbarHostState.showSnackbar("Could not add folder: ${err.message ?: "Access denied"}")
+                snackbarHostState.showSnackbar("Could not read folder: ${err.message ?: "Access denied"}")
             }
         }
     }
@@ -175,8 +170,9 @@ fun BackupSettingsSection(
         }
     }
 
-    // Live Backup Status Card
-    SettingsSectionTitle("Backup Status")
+    Spacer(modifier = Modifier.height(8.dp))
+
+    // Live Backup Status & Quick Actions Card
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
         shape = MaterialTheme.shapes.large,
@@ -210,7 +206,7 @@ fun BackupSettingsSection(
             )
             if (prefsState.lastBackupSkippedSummary.isNotBlank()) {
                 Text(
-                    text = "Skipped summary: ${prefsState.lastBackupSkippedSummary}",
+                    text = "Skipped: ${prefsState.lastBackupSkippedSummary}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -220,7 +216,7 @@ fun BackupSettingsSection(
                 Button(
                     onClick = {
                         if (sources.none { it.enabled }) {
-                            scope.launch { snackbarHostState.showSnackbar("Add or enable at least one backup folder first.") }
+                            scope.launch { snackbarHostState.showSnackbar("Enable at least one backup folder below first.") }
                         } else {
                             AutoSyncManager.triggerImmediateSync(context, isManual = true)
                             scope.launch { snackbarHostState.showSnackbar("Backup scan started.") }
@@ -246,207 +242,302 @@ fun BackupSettingsSection(
         }
     }
 
-    // Schedule & Conditions
-    SettingsSectionTitle("Schedule & Conditions")
+    Spacer(modifier = Modifier.height(12.dp))
+
+    // TeleWarden-style Main Backup Controls Group
     val selectedDriveName = accounts.firstOrNull { it.effectiveId == prefsState.backupAccountId }?.effectiveName
         ?: accounts.firstOrNull { it.isDefault == true }?.let { "${it.effectiveName} (Default)" }
         ?: "Default connected drive"
     val intervalHours = prefsState.backupIntervalHours
-    val scheduleItems = listOf(
-        GroupedListItem(key = "target_drive") {
-            SettingsClickRow(
-                title = stringResource(R.string.settings_backup_target_drive),
-                subtitle = selectedDriveName,
-                icon = Icons.Outlined.CloudUpload,
-                onClick = { showTargetDriveDialog = true },
-                modifier = Modifier.testTag("backup_target_drive_row")
-            )
-        },
-        GroupedListItem(key = "auto_backup") {
-            SettingsSwitchRow(
-                title = stringResource(R.string.settings_auto_backup),
-                subtitle = stringResource(R.string.settings_auto_backup_sub),
-                icon = Icons.Outlined.AutoMode,
-                checked = prefsState.autoBackupEnabled,
-                onChange = { enabled ->
-                    scope.launch {
-                        AutoSyncManager.setAutoBackupSuspend(context, enabled)
-                    }
-                },
-                modifier = Modifier.testTag("backup_auto_switch")
-            )
-        },
-        GroupedListItem(key = "quick_media") {
-            SettingsSwitchRow(
-                title = stringResource(R.string.settings_backup_quick_media),
-                subtitle = stringResource(R.string.settings_backup_quick_media_sub),
-                icon = Icons.Outlined.PhotoLibrary,
-                checked = prefsState.quickMediaBackupEnabled,
-                enabled = prefsState.autoBackupEnabled,
-                onChange = { enabled ->
-                    scope.launch {
-                        UserPreferences.setQuickMediaBackupEnabled(context, enabled)
-                        AutoSyncManager.reschedule(context)
-                    }
-                },
-                modifier = Modifier.testTag("backup_quick_media_switch")
-            )
-        },
-        GroupedListItem(key = "schedule") {
-            SettingsClickRow(
-                title = stringResource(R.string.settings_backup_schedule),
-                subtitle = if (intervalHours == 1) "Every 1 hour" else "Every $intervalHours hours",
-                icon = Icons.Outlined.Schedule,
-                onClick = { showIntervalDialog = true },
-                modifier = Modifier.testTag("backup_interval_row")
-            )
-        },
-        GroupedListItem(key = "wifi_only") {
-            SettingsSwitchRow(
-                title = stringResource(R.string.settings_backup_wifi_only),
-                subtitle = stringResource(R.string.settings_backup_wifi_only_sub),
-                icon = Icons.Outlined.Wifi,
-                checked = prefsState.backupWifiOnly,
-                onChange = { wifiOnly ->
-                    scope.launch {
-                        UserPreferences.setBackupWifiOnly(context, wifiOnly)
-                        AutoSyncManager.reschedule(context)
-                    }
-                },
-                modifier = Modifier.testTag("backup_wifi_only_switch")
-            )
-        },
-        GroupedListItem(key = "charging_only") {
-            SettingsSwitchRow(
-                title = stringResource(R.string.settings_backup_charging_only),
-                subtitle = stringResource(R.string.settings_backup_charging_only_sub),
-                icon = Icons.Outlined.BatteryChargingFull,
-                checked = prefsState.backupChargingOnly,
-                onChange = { chargingOnly ->
-                    scope.launch {
-                        UserPreferences.setBackupChargingOnly(context, chargingOnly)
-                        AutoSyncManager.reschedule(context)
-                    }
-                },
-                modifier = Modifier.testTag("backup_charging_only_switch")
-            )
-        }
-    )
-    GroupedList(items = scheduleItems)
+    val intervalBaseLabel = if (intervalHours == 1) "Every 1 hour" else "Every $intervalHours hours"
+    val intervalSubtitle = if (prefsState.quickMediaBackupEnabled && prefsState.autoBackupEnabled) {
+        stringResource(R.string.settings_backup_interval_with_sweep, intervalBaseLabel)
+    } else {
+        intervalBaseLabel
+    }
+    val maxOption = BackupMaxFileSizeOption.fromMb(prefsState.backupMaxFileSizeMb)
 
-    // Backup Folders (Multi-Source)
-    SettingsSectionTitle(stringResource(R.string.settings_backup_folders))
-    Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-        Text(
-            text = "Quick-add standard folders or pick any folder via Android's folder picker:",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            listOf(
-                BackupPresetType.CAMERA,
-                BackupPresetType.PICTURES,
-                BackupPresetType.DOCUMENTS,
-                BackupPresetType.DOWNLOADS
-            ).forEach { preset ->
-                AssistChip(
-                    onClick = {
-                        pendingPreset = preset
-                        addFolderLauncher.launch(BackupSourceManager.suggestedInitialUri(preset))
+    val mainItems = buildList {
+        add(
+            GroupedListItem(key = "auto_backup") {
+                SettingsSwitchRow(
+                    title = stringResource(R.string.settings_auto_backup),
+                    icon = Icons.Outlined.AutoMode,
+                    checked = prefsState.autoBackupEnabled,
+                    onChange = { enabled ->
+                        scope.launch { AutoSyncManager.setAutoBackupSuspend(context, enabled) }
                     },
-                    label = { Text(preset.label) },
-                    leadingIcon = { Icon(Icons.Outlined.FolderOpen, contentDescription = null) },
-                    modifier = Modifier.testTag("backup_preset_${preset.name.lowercase()}")
+                    modifier = Modifier.testTag("backup_auto_switch")
                 )
             }
-            AssistChip(
-                onClick = {
-                    pendingPreset = BackupPresetType.CUSTOM
-                    addFolderLauncher.launch(null)
-                },
-                label = { Text(stringResource(R.string.settings_backup_add_custom)) },
-                leadingIcon = { Icon(Icons.Outlined.Add, contentDescription = null) },
-                modifier = Modifier.testTag("backup_add_custom_folder_chip")
-            )
-        }
-        Spacer(modifier = Modifier.height(8.dp))
-
-        if (sources.isEmpty()) {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-                shape = MaterialTheme.shapes.medium,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    text = "No backup folders configured yet. Select one or more folders above to start automatic backups.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(16.dp)
-                )
-            }
-        } else {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                sources.forEach { source ->
-                    BackupSourceCard(
-                        source = source,
-                        onToggleEnabled = { enabled ->
-                            scope.launch { BackupSourceManager.setSourceEnabled(context, source.id, enabled, db) }
+        )
+        if (prefsState.autoBackupEnabled) {
+            add(
+                GroupedListItem(key = "quick_media") {
+                    SettingsSwitchRow(
+                        title = stringResource(R.string.settings_backup_quick_media),
+                        subtitle = stringResource(R.string.settings_backup_quick_media_sub),
+                        icon = Icons.Outlined.PhotoLibrary,
+                        checked = prefsState.quickMediaBackupEnabled,
+                        onChange = { enabled ->
+                            scope.launch {
+                                UserPreferences.setQuickMediaBackupEnabled(context, enabled)
+                                AutoSyncManager.reschedule(context)
+                            }
                         },
-                        onRegrant = {
-                            pendingRegrantId = source.id
-                            regrantLauncher.launch(null)
-                        },
-                        onRemove = { sourcePendingDelete = source }
+                        modifier = Modifier.testTag("backup_quick_media_switch")
                     )
                 }
-            }
+            )
         }
+        add(
+            GroupedListItem(key = "target_drive") {
+                SettingsClickRow(
+                    title = stringResource(R.string.settings_backup_target_drive),
+                    subtitle = selectedDriveName,
+                    icon = Icons.Outlined.CloudUpload,
+                    onClick = { showTargetDriveDialog = true },
+                    modifier = Modifier.testTag("backup_target_drive_row")
+                )
+            }
+        )
+        add(
+            GroupedListItem(key = "schedule") {
+                SettingsClickRow(
+                    title = stringResource(R.string.settings_backup_schedule),
+                    subtitle = intervalSubtitle,
+                    icon = Icons.Outlined.Schedule,
+                    onClick = { showIntervalDialog = true },
+                    modifier = Modifier.testTag("backup_interval_row")
+                )
+            }
+        )
+        add(
+            GroupedListItem(key = "wifi_only") {
+                SettingsSwitchRow(
+                    title = stringResource(R.string.settings_backup_wifi_only),
+                    subtitle = stringResource(R.string.settings_backup_wifi_only_sub),
+                    icon = Icons.Outlined.Wifi,
+                    checked = prefsState.backupWifiOnly,
+                    onChange = { wifiOnly ->
+                        scope.launch {
+                            UserPreferences.setBackupWifiOnly(context, wifiOnly)
+                            AutoSyncManager.reschedule(context)
+                        }
+                    },
+                    modifier = Modifier.testTag("backup_wifi_only_switch")
+                )
+            }
+        )
+        add(
+            GroupedListItem(key = "charging_only") {
+                SettingsSwitchRow(
+                    title = stringResource(R.string.settings_backup_charging_only),
+                    icon = Icons.Outlined.BatteryChargingFull,
+                    checked = prefsState.backupChargingOnly,
+                    onChange = { chargingOnly ->
+                        scope.launch {
+                            UserPreferences.setBackupChargingOnly(context, chargingOnly)
+                            AutoSyncManager.reschedule(context)
+                        }
+                    },
+                    modifier = Modifier.testTag("backup_charging_only_switch")
+                )
+            }
+        )
+        add(
+            GroupedListItem(key = "max_size") {
+                SettingsClickRow(
+                    title = stringResource(R.string.settings_max_file_size),
+                    subtitle = maxOption.label,
+                    icon = Icons.Outlined.Scale,
+                    onClick = { showMaxSizeDialog = true },
+                    modifier = Modifier.testTag("backup_max_size_row")
+                )
+            }
+        )
+        add(
+            GroupedListItem(key = "exclusions") {
+                SettingsClickRow(
+                    title = stringResource(R.string.settings_exclusions),
+                    subtitle = stringResource(R.string.settings_exclusions_sub),
+                    icon = Icons.Outlined.FilterAltOff,
+                    onClick = onNavigateExclusions,
+                    modifier = Modifier.testTag("backup_exclusions_row")
+                )
+            }
+        )
+        add(
+            GroupedListItem(key = "delete_after_upload") {
+                SettingsSwitchRow(
+                    title = stringResource(R.string.settings_delete_after_upload),
+                    subtitle = stringResource(R.string.settings_delete_after_upload_sub),
+                    icon = Icons.Outlined.DeleteSweep,
+                    checked = prefsState.deleteAfterUpload,
+                    onChange = { wantEnable ->
+                        if (wantEnable) {
+                            showConfirmDeleteLocal = true
+                        } else {
+                            scope.launch { UserPreferences.setDeleteAfterUpload(context, false) }
+                        }
+                    },
+                    modifier = Modifier.testTag("backup_delete_after_upload_switch")
+                )
+            }
+        )
+    }
+    GroupedList(items = mainItems)
+
+    // TeleWarden-style Backup folders Section
+    Spacer(modifier = Modifier.height(8.dp))
+    SettingsSectionTitle(stringResource(R.string.settings_backup_folders))
+
+    val activeSourcesCount = sources.count { it.enabled }
+    if (prefsState.autoBackupEnabled && activeSourcesCount == 0) {
+        Surface(
+            shape = MaterialTheme.shapes.extraLarge,
+            color = MaterialTheme.colorScheme.errorContainer,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp)
+        ) {
+            Text(
+                text = stringResource(R.string.settings_backup_no_folders_selected),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier.padding(16.dp)
+            )
+        }
+        Spacer(modifier = Modifier.height(6.dp))
     }
 
-    // Limits & Exclusions
-    SettingsSectionTitle("Limits & Safety")
-    val maxOption = BackupMaxFileSizeOption.fromMb(prefsState.backupMaxFileSizeMb)
-    val limitItems = listOf(
-        GroupedListItem(key = "max_size") {
-            SettingsClickRow(
-                title = stringResource(R.string.settings_max_file_size),
-                subtitle = maxOption.label,
-                icon = Icons.Outlined.Scale,
-                onClick = { showMaxSizeDialog = true },
-                modifier = Modifier.testTag("backup_max_size_row")
-            )
-        },
-        GroupedListItem(key = "exclusions") {
-            SettingsClickRow(
-                title = stringResource(R.string.settings_exclusions),
-                subtitle = stringResource(R.string.settings_exclusions_sub),
-                icon = Icons.Outlined.FilterAltOff,
-                onClick = onNavigateExclusions,
-                modifier = Modifier.testTag("backup_exclusions_row")
-            )
-        },
-        GroupedListItem(key = "delete_after_upload") {
-            SettingsSwitchRow(
-                title = stringResource(R.string.settings_delete_after_upload),
-                subtitle = stringResource(R.string.settings_delete_after_upload_sub),
-                icon = Icons.Outlined.DeleteSweep,
-                checked = prefsState.deleteAfterUpload,
-                onChange = { wantEnable ->
-                    if (wantEnable) {
-                        showConfirmDeleteLocal = true
+    val standardPresets = BackupSourceManager.standardPresets
+    val matchedStandardSources = remember(sources) {
+        standardPresets.associateWith { preset -> BackupSourceManager.findSourceForPreset(preset, sources) }
+    }
+    val matchedIds = remember(matchedStandardSources) {
+        matchedStandardSources.values.mapNotNull { it?.id }.toSet()
+    }
+    val customSources = remember(sources, matchedIds) {
+        sources.filterNot { it.id in matchedIds }
+    }
+
+    val folderItems = buildList {
+        standardPresets.forEach { preset ->
+            val linkedSource = matchedStandardSources[preset]
+            val isHealthy = linkedSource?.permissionStatus == BackupSourcePermissionStatus.GRANTED.name
+            val isChecked = linkedSource != null && linkedSource.enabled && isHealthy
+
+            val sub = when {
+                linkedSource == null -> preset.relativePath
+                !isHealthy -> linkedSource.lastError ?: "${preset.relativePath} • Permission required (tap to grant)"
+                linkedSource.enabled -> {
+                    val lastScanStr = if (linkedSource.lastScanAt > 0L) {
+                        "Last scan ${DateFormat.format("MMM d, HH:mm", Date(linkedSource.lastScanAt))}"
                     } else {
-                        scope.launch { UserPreferences.setDeleteAfterUpload(context, false) }
+                        "Granted"
                     }
-                },
-                modifier = Modifier.testTag("backup_delete_after_upload_switch")
+                    "${preset.relativePath} • $lastScanStr"
+                }
+                else -> "${preset.relativePath} • Paused"
+            }
+
+            add(
+                GroupedListItem(key = "std_${preset.name}") {
+                    SettingsSwitchRow(
+                        title = preset.label,
+                        subtitle = sub,
+                        icon = Icons.Outlined.FolderOpen,
+                        checked = isChecked,
+                        onChange = { wantEnable ->
+                            when {
+                                linkedSource == null -> {
+                                    pendingPreset = preset
+                                    addFolderLauncher.launch(BackupSourceManager.suggestedInitialUri(preset))
+                                }
+                                wantEnable && !isHealthy -> {
+                                    pendingRegrantId = linkedSource.id
+                                    regrantLauncher.launch(BackupSourceManager.suggestedInitialUri(preset))
+                                }
+                                else -> {
+                                    scope.launch {
+                                        BackupSourceManager.setSourceEnabled(context, linkedSource.id, wantEnable, db)
+                                    }
+                                }
+                            }
+                        },
+                        modifier = Modifier.testTag("backup_preset_${preset.name.lowercase()}")
+                    )
+                }
             )
         }
-    )
-    GroupedList(items = limitItems)
+
+        customSources.forEach { source ->
+            val permStatus = runCatching { BackupSourcePermissionStatus.valueOf(source.permissionStatus) }
+                .getOrDefault(BackupSourcePermissionStatus.UNKNOWN)
+            val isHealthy = permStatus == BackupSourcePermissionStatus.GRANTED
+            val sub = when {
+                !isHealthy -> source.lastError ?: "Permission revoked · Tap to re-grant or remove"
+                source.lastScanAt > 0L ->
+                    "Granted • Last scan ${DateFormat.format("MMM d, HH:mm", Date(source.lastScanAt))}"
+                else -> "Granted • Custom folder"
+            }
+            add(
+                GroupedListItem(key = "custom_${source.id}") {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        SettingsClickRow(
+                            title = source.displayName,
+                            subtitle = sub,
+                            icon = Icons.Outlined.FolderOpen,
+                            titleColor = if (isHealthy) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error,
+                            trailing = {
+                                IconButton(
+                                    onClick = { sourcePendingDelete = source },
+                                    modifier = Modifier.testTag("backup_source_remove_${source.id}")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.DeleteOutline,
+                                        contentDescription = "Remove ${source.displayName}",
+                                        tint = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            },
+                            onClick = {
+                                if (!isHealthy) {
+                                    pendingRegrantId = source.id
+                                    regrantLauncher.launch(null)
+                                } else {
+                                    sourcePendingDelete = source
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            )
+        }
+
+        add(
+            GroupedListItem(key = "add_another_folder") {
+                SettingsClickRow(
+                    title = stringResource(R.string.settings_backup_add_custom),
+                    subtitle = stringResource(R.string.settings_backup_choose_folder_device),
+                    icon = Icons.Outlined.CreateNewFolder,
+                    onClick = {
+                        pendingPreset = BackupPresetType.CUSTOM
+                        addFolderLauncher.launch(null)
+                    },
+                    modifier = Modifier.testTag("backup_add_custom_folder_chip")
+                )
+            }
+        )
+    }
+    GroupedList(items = folderItems)
+
+    Spacer(modifier = Modifier.height(16.dp))
 
     // Dialogs
     if (showTargetDriveDialog) {
@@ -529,104 +620,5 @@ fun BackupSettingsSection(
             },
             onDismiss = { showConfirmDeleteLocal = false }
         )
-    }
-}
-
-@Composable
-private fun BackupSourceCard(
-    source: BackupSourceEntity,
-    onToggleEnabled: (Boolean) -> Unit,
-    onRegrant: () -> Unit,
-    onRemove: () -> Unit
-) {
-    val permStatus = runCatching { BackupSourcePermissionStatus.valueOf(source.permissionStatus) }
-        .getOrDefault(BackupSourcePermissionStatus.UNKNOWN)
-    val isHealthy = permStatus == BackupSourcePermissionStatus.GRANTED
-    val statusText = when (permStatus) {
-        BackupSourcePermissionStatus.GRANTED -> "Granted"
-        BackupSourcePermissionStatus.REVOKED -> "Permission Revoked"
-        BackupSourcePermissionStatus.MISSING -> "Folder Missing"
-        BackupSourcePermissionStatus.UNREADABLE -> "Unreadable"
-        BackupSourcePermissionStatus.UNKNOWN -> "Unknown"
-    }
-
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-        shape = MaterialTheme.shapes.medium,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = source.displayName,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    val lastScanStr = if (source.lastScanAt > 0L) {
-                        "Last scan ${DateFormat.format("MMM d, HH:mm", Date(source.lastScanAt))}"
-                    } else {
-                        "Not scanned yet"
-                    }
-                    Text(
-                        text = "$statusText • $lastScanStr",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (isHealthy) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error
-                    )
-                }
-                Switch(
-                    checked = source.enabled,
-                    onCheckedChange = onToggleEnabled,
-                    modifier = Modifier.testTag("backup_source_switch_${source.id}")
-                )
-                IconButton(
-                    onClick = onRemove,
-                    modifier = Modifier.testTag("backup_source_remove_${source.id}")
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.DeleteOutline,
-                        contentDescription = "Remove ${source.displayName}",
-                        tint = MaterialTheme.colorScheme.error
-                    )
-                }
-            }
-            if (!source.lastSummary.isNullOrBlank()) {
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = source.lastSummary,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            if (!isHealthy) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Surface(
-                    shape = MaterialTheme.shapes.small,
-                    color = MaterialTheme.colorScheme.errorContainer,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(10.dp)) {
-                        Text(
-                            text = source.lastError ?: "Folder permission was lost or folder cannot be read.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onErrorContainer
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        OutlinedButton(
-                            onClick = onRegrant,
-                            modifier = Modifier
-                                .heightIn(min = 48.dp)
-                                .testTag("backup_source_regrant_${source.id}")
-                        ) {
-                            Text(stringResource(R.string.settings_backup_regrant))
-                        }
-                    }
-                }
-            }
-        }
     }
 }

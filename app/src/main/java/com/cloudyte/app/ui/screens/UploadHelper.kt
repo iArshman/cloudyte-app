@@ -41,7 +41,8 @@ data class UploadResult(
     val isIoError: Boolean = false,
     val isPermanentFailure: Boolean = false,
     val errorCode: String? = null,
-    val serverRetryable: Boolean? = null
+    val serverRetryable: Boolean? = null,
+    val retryAfterSeconds: Long? = null
 ) {
     val isFatalClientError: Boolean
         get() {
@@ -239,6 +240,7 @@ object UploadHelper {
                 } else {
                     val rawErr = response.errorBody()?.string()
                     val envelope = ApiClient.parseErrorEnvelope(rawErr, response.code())
+                    val retryAfterSeconds = parseRetryAfterSeconds(response.headers())
                     Log.e("UploadHelper", "Upload failed: HTTP ${response.code()} (${envelope.code ?: "no_code"})")
                     UploadResult(
                         isSuccess = false,
@@ -247,7 +249,8 @@ object UploadHelper {
                         fileName = safeFileName,
                         isIoError = false,
                         errorCode = envelope.code,
-                        serverRetryable = envelope.retryable
+                        serverRetryable = envelope.retryable,
+                        retryAfterSeconds = retryAfterSeconds
                     )
                 }
             } catch (e: CancellationException) {
@@ -259,7 +262,8 @@ object UploadHelper {
                     statusCode = e.code(),
                     errorMessage = "HTTP ${e.code()}: ${e.message()}",
                     fileName = safeFileName,
-                    isIoError = false
+                    isIoError = false,
+                    retryAfterSeconds = parseRetryAfterSeconds(e.response()?.headers())
                 )
             } catch (e: IOException) {
                 Log.e("UploadHelper", "Network I/O failure during upload")
@@ -324,8 +328,34 @@ object UploadHelper {
             errorMessage = env.message,
             fileName = fileName,
             errorCode = overrideErrorCode ?: env.code,
-            serverRetryable = overrideRetryable ?: env.retryable
+            serverRetryable = overrideRetryable ?: env.retryable,
+            retryAfterSeconds = parseRetryAfterSeconds(response.headers())
         )
+    }
+
+    internal fun parseRetryAfterSeconds(headers: okhttp3.Headers?, nowMs: Long = System.currentTimeMillis()): Long? {
+        val raw = headers?.get("Retry-After")?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        raw.toLongOrNull()?.let { seconds ->
+            return seconds.coerceIn(1L, MAX_RETRY_AFTER_SECONDS)
+        }
+        val formats = arrayOf(
+            "EEE, dd MMM yyyy HH:mm:ss z",
+            "EEEE, dd-MMM-yy HH:mm:ss z",
+            "EEE MMM d HH:mm:ss yyyy"
+        )
+        for (pattern in formats) {
+            val parsedMs = runCatching {
+                val fmt = java.text.SimpleDateFormat(pattern, java.util.Locale.US).apply {
+                    timeZone = java.util.TimeZone.getTimeZone("GMT")
+                }
+                fmt.parse(raw)?.time
+            }.getOrNull()
+            if (parsedMs != null) {
+                val deltaSeconds = (parsedMs - nowMs + 999L) / 1000L
+                return deltaSeconds.coerceIn(1L, MAX_RETRY_AFTER_SECONDS)
+            }
+        }
+        return null
     }
 
     suspend fun uploadFileResumable(
@@ -508,7 +538,8 @@ object UploadHelper {
                                     errorMessage = env.message,
                                     fileName = explicitFileName,
                                     errorCode = env.code,
-                                    serverRetryable = env.retryable
+                                    serverRetryable = env.retryable,
+                                    retryAfterSeconds = parseRetryAfterSeconds(response.headers())
                                 )
                             }
                             val nextOffset = response.body()!!.nextOffset.coerceIn(0L, totalBytes)
@@ -652,7 +683,8 @@ object UploadHelper {
                                         errorMessage = env.message,
                                         fileName = explicitFileName,
                                         errorCode = env.code,
-                                        serverRetryable = env.retryable ?: isConflict
+                                        serverRetryable = env.retryable ?: isConflict,
+                                        retryAfterSeconds = parseRetryAfterSeconds(response.headers())
                                     )
                                 }
                                 val nextOffset = response.body()!!.nextOffset.coerceIn(0L, totalBytes)
@@ -695,7 +727,13 @@ object UploadHelper {
         } catch (e: CancellationException) {
             throw e
         } catch (e: HttpException) {
-            UploadResult(false, e.code(), "HTTP ${e.code()}: ${e.message()}", explicitFileName)
+            UploadResult(
+                isSuccess = false,
+                statusCode = e.code(),
+                errorMessage = "HTTP ${e.code()}: ${e.message()}",
+                fileName = explicitFileName,
+                retryAfterSeconds = parseRetryAfterSeconds(e.response()?.headers())
+            )
         } catch (e: IOException) {
             UploadResult(false, errorMessage = e.message ?: "Resumable upload I/O error", fileName = explicitFileName, isIoError = true)
         } catch (e: Exception) {
@@ -704,6 +742,7 @@ object UploadHelper {
     }
 
     private const val MAX_INLINE_UPLOAD_IO_RETRIES = 3
+    private const val MAX_RETRY_AFTER_SECONDS = 3_600L
 
     private fun skipInputBytes(input: java.io.InputStream, targetBytes: Long) {
         var skipped = 0L

@@ -93,9 +93,11 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import com.cloudyte.app.CloudyteApplication
 import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.api.CloudFile
 import com.cloudyte.app.core.cache.PreviewFetcher
+import com.cloudyte.app.core.network.isOnline
 import com.cloudyte.app.data.UserPreferences
 import com.cloudyte.app.data.UserPreferencesState
 import com.cloudyte.app.ui.theme.MetricLabelTextStyle
@@ -133,6 +135,7 @@ fun GDriveVideoContent(
     var isMuted by remember { mutableStateOf(false) }
     var showSpeedDialog by remember { mutableStateOf(false) }
     var attemptedFallback by remember(file.effectiveId) { mutableStateOf(false) }
+    var playingLocalFile by remember(file.effectiveId) { mutableStateOf(false) }
     var retryCounter by remember { mutableIntStateOf(0) }
     var autoPlayVideo by remember { mutableStateOf(true) }
     var isControlsLocked by remember { mutableStateOf(false) }
@@ -175,25 +178,42 @@ fun GDriveVideoContent(
         }
     }
 
+    val localMediaSourceFactory = remember(context) {
+        MediaStreamCache.createLocalFileMediaSourceFactory(context)
+    }
+
     LaunchedEffect(file.effectiveId, accountId, file.isEncrypted, isActive, retryCounter) {
         if (!isActive) return@LaunchedEffect
         playbackError = null
+        attemptedFallback = false
+        playingLocalFile = false
         isBuffering = true
         val prefs = runCatching { UserPreferences.observe(context).first() }.getOrDefault(UserPreferencesState())
         autoPlayVideo = prefs.autoPlayVideo
         val acc = PreviewFetcher.resolveAccountId(context, accountId, file)
-        if (acc.isBlank()) {
-            isBuffering = false
-            playbackError = "Drive account unavailable"
-            return@LaunchedEffect
-        }
+        val isOnline = (context.applicationContext as? CloudyteApplication)
+            ?.container?.networkMonitor?.refresh()?.isOnline() ?: true
 
         val cachedLocal = PreviewFetcher.resolveCachedOnly(context, acc, file)
         if (cachedLocal != null && cachedLocal.isFile && cachedLocal.length() > 0L) {
             statusNote = null
-            exoPlayer.setMediaItem(MediaItem.fromUri(Uri.fromFile(cachedLocal)))
+            playingLocalFile = true
+            val mediaSource = localMediaSourceFactory.createMediaSource(
+                MediaItem.fromUri(Uri.fromFile(cachedLocal))
+            )
+            exoPlayer.setMediaSource(mediaSource)
             exoPlayer.prepare()
             exoPlayer.playWhenReady = isActive && prefs.autoPlayVideo
+        } else if (acc.isBlank()) {
+            isBuffering = false
+            playbackError = if (!isOnline) {
+                "Offline — download this video to watch without internet"
+            } else {
+                "Drive account unavailable"
+            }
+        } else if (!isOnline) {
+            isBuffering = false
+            playbackError = "Offline — download this video to watch without internet"
         } else if (file.isEncrypted && prefs.streamBeforeDownload) {
             statusNote = null
             val cyteFactory = CyteStreamingDataSource.Factory(context, acc, file)
@@ -207,7 +227,11 @@ fun GDriveVideoContent(
             val ready = PreviewFetcher.resolvePreviewFile(context, acc, file).getOrNull()
             statusNote = null
             if (ready != null && ready.isFile && ready.length() > 0L) {
-                exoPlayer.setMediaItem(MediaItem.fromUri(Uri.fromFile(ready)))
+                playingLocalFile = true
+                val mediaSource = localMediaSourceFactory.createMediaSource(
+                    MediaItem.fromUri(Uri.fromFile(ready))
+                )
+                exoPlayer.setMediaSource(mediaSource)
                 exoPlayer.prepare()
                 exoPlayer.playWhenReady = isActive && prefs.autoPlayVideo
             } else if (file.isEncrypted) {
@@ -254,20 +278,37 @@ fun GDriveVideoContent(
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                if (!attemptedFallback) {
+                val isOnline = (context.applicationContext as? CloudyteApplication)
+                    ?.container?.networkMonitor?.current()?.isOnline() ?: true
+                if (!attemptedFallback && !playingLocalFile) {
                     attemptedFallback = true
                     scope.launch {
                         val acc = PreviewFetcher.resolveAccountId(context, accountId, file)
-                        if (acc.isBlank()) {
+                        val cachedOnly = PreviewFetcher.resolveCachedOnly(context, acc, file)
+                        if (cachedOnly != null && cachedOnly.isFile && cachedOnly.length() > 0L) {
+                            playingLocalFile = true
+                            val mediaSource = localMediaSourceFactory.createMediaSource(
+                                MediaItem.fromUri(Uri.fromFile(cachedOnly))
+                            )
+                            exoPlayer.setMediaSource(mediaSource)
+                            exoPlayer.prepare()
+                            exoPlayer.playWhenReady = isActive && autoPlayVideo
+                            return@launch
+                        }
+                        if (!isOnline || acc.isBlank()) {
                             isBuffering = false
-                            playbackError = error.localizedMessage ?: "Video playback failed"
+                            playbackError = "Offline — download this video to watch without internet"
                             return@launch
                         }
                         statusNote = if (file.isEncrypted) "Decrypting local preview…" else "Buffering local preview…"
                         val localFile = PreviewFetcher.resolvePreviewFile(context, acc, file).getOrNull()
                         statusNote = null
                         if (localFile != null && localFile.isFile && localFile.length() > 0L) {
-                            exoPlayer.setMediaItem(MediaItem.fromUri(Uri.fromFile(localFile)))
+                            playingLocalFile = true
+                            val mediaSource = localMediaSourceFactory.createMediaSource(
+                                MediaItem.fromUri(Uri.fromFile(localFile))
+                            )
+                            exoPlayer.setMediaSource(mediaSource)
                             exoPlayer.prepare()
                             exoPlayer.playWhenReady = isActive && autoPlayVideo
                         } else {
@@ -277,7 +318,11 @@ fun GDriveVideoContent(
                     }
                 } else {
                     isBuffering = false
-                    playbackError = error.localizedMessage ?: "Video playback failed"
+                    playbackError = when {
+                        playingLocalFile -> "Unable to play local video (${error.errorCodeName})"
+                        !isOnline -> "Offline — download this video to watch without internet"
+                        else -> error.localizedMessage ?: "Video playback failed"
+                    }
                 }
             }
         }

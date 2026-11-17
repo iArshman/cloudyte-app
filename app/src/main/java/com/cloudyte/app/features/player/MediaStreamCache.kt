@@ -58,6 +58,13 @@ object MediaStreamCache {
         }
     }
 
+    fun createLocalFileMediaSourceFactory(context: Context): MediaSource.Factory {
+        val localFactory = DefaultDataSource.Factory(context)
+        val extractorsFactory = androidx.media3.extractor.DefaultExtractorsFactory()
+            .setConstantBitrateSeekingEnabled(true)
+        return DefaultMediaSourceFactory(localFactory, extractorsFactory)
+    }
+
     fun createMediaSourceFactory(context: Context): MediaSource.Factory {
         val apiHost = ApiClient.API_BASE_URL.toHttpUrlOrNull()?.host.orEmpty()
         val httpFactory = DefaultHttpDataSource.Factory()
@@ -91,7 +98,51 @@ object MediaStreamCache {
             .setUpstreamDataSourceFactory(upstreamFactory)
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
 
-        return DefaultMediaSourceFactory(cacheDataSourceFactory)
+        val schemeRoutingFactory = DataSource.Factory {
+            val cachedDataSource = cacheDataSourceFactory.createDataSource()
+            val directLocalDataSource = upstreamFactory.createDataSource()
+            object : DataSource {
+                private var activeDataSource: DataSource? = null
+
+                override fun addTransferListener(transferListener: androidx.media3.datasource.TransferListener) {
+                    cachedDataSource.addTransferListener(transferListener)
+                    directLocalDataSource.addTransferListener(transferListener)
+                }
+
+                override fun open(dataSpec: DataSpec): Long {
+                    val scheme = dataSpec.uri.scheme?.lowercase().orEmpty()
+                    val selected = if (scheme == "http" || scheme == "https") {
+                        cachedDataSource
+                    } else {
+                        directLocalDataSource
+                    }
+                    activeDataSource = selected
+                    return selected.open(dataSpec)
+                }
+
+                override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                    return activeDataSource?.read(buffer, offset, length)
+                        ?: throw java.io.IOException("DataSource not opened")
+                }
+
+                override fun getUri(): Uri? = activeDataSource?.uri
+
+                override fun getResponseHeaders(): Map<String, List<String>> =
+                    activeDataSource?.responseHeaders ?: emptyMap()
+
+                override fun close() {
+                    try {
+                        activeDataSource?.close()
+                    } finally {
+                        activeDataSource = null
+                    }
+                }
+            }
+        }
+
+        val extractorsFactory = androidx.media3.extractor.DefaultExtractorsFactory()
+            .setConstantBitrateSeekingEnabled(true)
+        return DefaultMediaSourceFactory(schemeRoutingFactory, extractorsFactory)
     }
 
     fun createFastLoadControl(): LoadControl {

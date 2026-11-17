@@ -94,17 +94,43 @@ object OfflineFileManager {
     }
 
     fun findOfflineFile(context: Context, accountId: String, fileId: String): File? {
-        val safeAcc = sanitizeFileName(accountId)
         val safeFid = sanitizeFileName(fileId)
-        val prefix = "${safeAcc}_${safeFid}_"
-        for (dir in getAllVaultDirs(context)) {
+        if (safeFid.isBlank()) return null
+
+        val dirs = getAllVaultDirs(context)
+        val safeAcc = sanitizeFileName(accountId)
+        if (accountId.isNotBlank() && accountId != "all" && accountId != "root" && safeAcc.isNotBlank()) {
+            val prefix = "${safeAcc}_${safeFid}_"
+            for (dir in dirs) {
+                val matches = dir.listFiles { _, name ->
+                    name.startsWith(prefix) && !name.endsWith(".tmp") && !name.endsWith(".part")
+                }
+                val found = matches?.firstOrNull { it.exists() && it.length() > 0 }
+                if (found != null) return found
+            }
+        }
+
+        // Fallback: if downloadedFiles was populated using DB account tuples or another account
+        // prefix (for example when opening from All Drives / Recent / mismatched accountId),
+        // locate the matching offline_vault file by bounded _<safeFid>_ token.
+        val fidToken = "_${safeFid}_"
+        for (dir in dirs) {
             val matches = dir.listFiles { _, name ->
-                name.startsWith(prefix) && !name.endsWith(".tmp") && !name.endsWith(".part")
+                !name.endsWith(".tmp") &&
+                    !name.endsWith(".part") &&
+                    name.contains(fidToken)
             }
             val found = matches?.firstOrNull { it.exists() && it.length() > 0 }
             if (found != null) return found
         }
         return null
+    }
+
+    fun markDownloaded(fileId: String) {
+        if (fileId.isBlank()) return
+        _downloadedFiles.value = _downloadedFiles.value + fileId
+        _activeDownloads.value = _activeDownloads.value - fileId
+        downloadingSet.remove(fileId)
     }
 
     fun isDownloaded(context: Context, accountId: String, fileId: String): Boolean {
@@ -221,16 +247,19 @@ object OfflineFileManager {
 
         _activeDownloads.value = _activeDownloads.value + (fid to 0f)
 
-        val tempFile = File(vaultDir, "${targetFile.name}.tmp")
+        val legacyTempFile = File(vaultDir, "${targetFile.name}.tmp")
         try {
-            if (tempFile.exists()) tempFile.delete()
+            if (legacyTempFile.exists()) legacyTempFile.delete()
             val app = context.applicationContext as? com.cloudyte.app.CloudyteApplication
                 ?: throw IllegalStateException("Application transfer queue is unavailable")
+            // CloudTransferOperationExecutor already downloads into a .part staging file and
+            // atomically commits to destinationPath upon verification, so targeting targetFile
+            // directly ensures background-completed offline transfers are immediately playable.
             val transferId = app.container.transferRepository.enqueueOrGetOfflineDownload(
                 accountId = accountId,
                 fileId = fid,
                 fileName = fileName,
-                destinationPath = tempFile.absolutePath,
+                destinationPath = targetFile.absolutePath,
                 totalBytes = (if (file.isEncrypted) file.encryptedSizeBytes ?: file.sizeBytes else file.sizeBytes).coerceAtLeast(0L),
                 isEncrypted = file.isEncrypted,
                 encryptionFormatVersion = file.encryptionFormatVersion,
@@ -263,22 +292,27 @@ object OfflineFileManager {
                 }
                 finished
             } ?: throw IOException("Download is still queued; try again shortly")
-            if (completed && tempFile.exists()) {
-                if (targetFile.exists()) targetFile.delete()
-                if (!tempFile.renameTo(targetFile)) {
-                    tempFile.copyTo(targetFile, overwrite = true)
-                    tempFile.delete()
+            val finalFile = when {
+                targetFile.exists() && targetFile.length() > 0L -> targetFile
+                legacyTempFile.exists() && legacyTempFile.length() > 0L -> {
+                    if (legacyTempFile.renameTo(targetFile)) targetFile
+                    else {
+                        legacyTempFile.copyTo(targetFile, overwrite = true)
+                        legacyTempFile.delete()
+                        targetFile
+                    }
                 }
-                _downloadedFiles.value = _downloadedFiles.value + fid
-                _activeDownloads.value = _activeDownloads.value - fid
-                downloadingSet.remove(fid)
+                else -> findOfflineFile(context, accountId, fid)
+            }
+            if (completed && finalFile != null && finalFile.exists() && finalFile.length() > 0L) {
+                markDownloaded(fid)
                 onProgress?.invoke(1f)
-                return@withContext Result.success(targetFile)
+                return@withContext Result.success(finalFile)
             }
             throw IOException("Queued download completed without a local file")
         } catch (e: Exception) {
             Log.e(TAG, "Download failed: ${e::class.simpleName}")
-            if (tempFile.exists()) tempFile.delete()
+            if (legacyTempFile.exists()) legacyTempFile.delete()
             _activeDownloads.value = _activeDownloads.value - fid
             downloadingSet.remove(fid)
             return@withContext Result.failure(e)

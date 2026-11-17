@@ -65,13 +65,13 @@ object PreviewFetcher {
         val fid = file.effectiveId
         if (fid.isBlank()) return@withContext null
         val acc = resolveAccountId(context, accountId, file)
-        if (acc.isBlank()) return@withContext null
 
         val offline = OfflineFileManager.findOfflineFile(context, acc, fid)
             ?.takeIf { it.isFile && it.length() > 0L }
         if (offline != null) {
-            return@withContext maybeDecryptForViewer(context, acc, file, offline)
+            return@withContext maybeDecryptForViewer(context, acc.ifBlank { "default" }, file, offline)
         }
+        if (acc.isBlank()) return@withContext null
 
         val app = context.applicationContext as? CloudyteApplication
         val providerType = app?.container?.database?.accountDao()?.getAccountById(acc)?.accountType ?: "unknown"
@@ -95,17 +95,17 @@ object PreviewFetcher {
                 return@withContext Result.failure(IllegalArgumentException("File ID is empty"))
             }
             val acc = resolveAccountId(context, accountId, file)
-            if (acc.isBlank()) {
-                return@withContext Result.failure(IllegalStateException("Account unavailable for preview"))
-            }
 
             // 1. Reuse explicit offline download if already present on device.
             val offline = OfflineFileManager.findOfflineFile(context, acc, fid)
                 ?.takeIf { it.isFile && it.length() > 0L }
             if (offline != null) {
-                val ready = maybeDecryptForViewer(context, acc, file, offline)
+                val ready = maybeDecryptForViewer(context, acc.ifBlank { "default" }, file, offline)
                 onProgress?.invoke(1f)
                 return@withContext Result.success(ready)
+            }
+            if (acc.isBlank()) {
+                return@withContext Result.failure(IllegalStateException("Account unavailable for preview"))
             }
 
             // 2. Reuse cached preview entry if present.

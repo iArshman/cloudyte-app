@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -23,6 +24,7 @@ data class AppPermissionSummary(
     val notificationsState: PermissionState,
     val runtimePostNotificationsGranted: Boolean,
     val osNotificationsEnabled: Boolean,
+    val ignoringBatteryOptimizations: Boolean = false,
     val folderSources: List<BackupSourceEntity>,
     val healthyFolderCount: Int,
     val brokenFolderCount: Int
@@ -48,6 +50,12 @@ object PermissionsHelper {
         return runtimeOk && managerOk
     }
 
+    fun isIgnoringBatteryOptimizations(context: Context): Boolean {
+        val powerManager = context.getSystemService(PowerManager::class.java) ?: return false
+        return runCatching { powerManager.isIgnoringBatteryOptimizations(context.packageName) }
+            .getOrDefault(false)
+    }
+
     suspend fun inspectAppPermissions(
         context: Context,
         db: AppDatabase = AppDatabase.getDatabase(context)
@@ -56,6 +64,7 @@ object PermissionsHelper {
         val osEnabled = runCatching { NotificationManagerCompat.from(context).areNotificationsEnabled() }
             .getOrDefault(true)
         val notifState = if (runtimeOk && osEnabled) PermissionState.GRANTED else PermissionState.DENIED
+        val batteryUnrestricted = isIgnoringBatteryOptimizations(context)
 
         val sources = BackupSourceManager.refreshAllSourceHealth(context, db)
         val healthy = sources.count { it.permissionStatus == BackupSourcePermissionStatus.GRANTED.name }
@@ -65,6 +74,7 @@ object PermissionsHelper {
             notificationsState = notifState,
             runtimePostNotificationsGranted = runtimeOk,
             osNotificationsEnabled = osEnabled,
+            ignoringBatteryOptimizations = batteryUnrestricted,
             folderSources = sources,
             healthyFolderCount = healthy,
             brokenFolderCount = broken
@@ -80,5 +90,16 @@ object PermissionsHelper {
 
     fun buildNotificationSettingsIntent(context: Context): Intent {
         return NotificationHelper.buildAppNotificationSettingsIntent(context)
+    }
+
+    fun buildBatteryOptimizationSettingsIntent(context: Context): Intent {
+        val batteryIntent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        return if (batteryIntent.resolveActivity(context.packageManager) != null) {
+            batteryIntent
+        } else {
+            buildAppDetailsSettingsIntent(context)
+        }
     }
 }

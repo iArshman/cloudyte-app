@@ -266,6 +266,13 @@ class AppContainer(context: Context) {
                         runCatching {
                             queueDao.nextRetryAt(followNow)?.let { transferScheduler.scheduleRetryAt(it) }
                             queueDao.nextLeaseExpiry(followNow)?.let { transferScheduler.scheduleLeaseRecoveryAt(it) }
+                            if (queueDao.hasAutoBackupNetworkWaiters()) {
+                                val prefs = runCatching { com.cloudyte.app.data.UserPreferences.observe(appContext).first() }.getOrNull()
+                                transferScheduler.scheduleBackupResume(
+                                    chargingOnly = prefs?.backupChargingOnly == true,
+                                    wifiOnly = prefs?.backupWifiOnly ?: true
+                                )
+                            }
                             if (queueDao.hasNetworkWaiters()) transferScheduler.scheduleNetworkRecovery()
                         }
                     }
@@ -317,6 +324,7 @@ class AppContainer(context: Context) {
                 }
             ),
             ownerId = "${Process.myPid()}-${UUID.randomUUID()}",
+            maxTransfersPerDrain = 6,
             networkGate = transferNetworkGate,
             diagnostics = transferDiagnostics,
             maxRetryCount = {
@@ -363,6 +371,17 @@ class AppContainer(context: Context) {
                     }
                     else -> Unit
                 }
+            },
+            maxConcurrency = { RoomTransferQueueDrainer.DEFAULT_MAX_CONCURRENCY },
+            stallTimeoutMs = RoomTransferQueueDrainer.DEFAULT_STALL_TIMEOUT_MS,
+            onBackupPolicyHold = { requireCharging, requireWifi ->
+                val prefs = runCatching {
+                    com.cloudyte.app.data.UserPreferences.observe(appContext).first()
+                }.getOrNull()
+                transferScheduler.scheduleBackupResume(
+                    chargingOnly = requireCharging || (prefs?.backupChargingOnly == true),
+                    wifiOnly = requireWifi || (prefs?.backupWifiOnly ?: true)
+                )
             }
         )
     }

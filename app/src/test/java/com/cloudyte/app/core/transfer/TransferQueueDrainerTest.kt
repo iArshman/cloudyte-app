@@ -246,31 +246,49 @@ class TransferQueueDrainerTest {
     }
 
     @Test
-    fun transferSchedulerKickUsesKeepPolicyAndSeparatesUnmeteredQueue() {
+    fun transferSchedulerKickReplacesEnqueuedKeepsRunningAndSchedulesBackupResume(): Unit = runBlocking {
         val context = RuntimeEnvironment.getApplication()
         androidx.work.testing.WorkManagerTestInitHelper.initializeTestWorkManager(context)
         val wm = androidx.work.WorkManager.getInstance(context)
         val scheduler = TransferScheduler(context)
+
+        // State-aware policy helper deterministically keeps RUNNING and replaces ENQUEUED/stale
+        assertEquals(
+            androidx.work.ExistingWorkPolicy.KEEP,
+            scheduler.resolveWorkPolicyForStates(listOf(androidx.work.WorkInfo.State.RUNNING))
+        )
+        assertEquals(
+            androidx.work.ExistingWorkPolicy.REPLACE,
+            scheduler.resolveWorkPolicyForStates(listOf(androidx.work.WorkInfo.State.ENQUEUED))
+        )
+        assertEquals(
+            androidx.work.ExistingWorkPolicy.REPLACE,
+            scheduler.resolveWorkPolicyForStates(listOf(androidx.work.WorkInfo.State.BLOCKED))
+        )
 
         scheduler.kick(ScheduleReason.USER_ENQUEUE, allowMetered = true)
         val firstInfos = wm.getWorkInfosForUniqueWork(TransferScheduler.UNIQUE_QUEUE_NAME).get()
         assertEquals(1, firstInfos.size)
         val originalWorkId = firstInfos.single().id
 
-        // Subsequent kicks for USER_ENQUEUE, USER_RETRY, APP_START, and NETWORK_RESTORED must KEEP the active work
-        scheduler.kick(ScheduleReason.USER_ENQUEUE, allowMetered = true)
-        scheduler.kick(ScheduleReason.USER_RETRY, allowMetered = true)
-        scheduler.kick(ScheduleReason.APP_START, allowMetered = true)
+        // While ENQUEUED, re-kicking replaces stale constraints/backoff cleanly
         scheduler.kick(ScheduleReason.NETWORK_RESTORED, allowMetered = true)
+        val replacedInfos = wm.getWorkInfosForUniqueWork(TransferScheduler.UNIQUE_QUEUE_NAME).get()
+        assertEquals(1, replacedInfos.size)
+        val replacedId = replacedInfos.single().id
+        assertTrue("ENQUEUED work should be replaced on constraint/network kick", replacedId != originalWorkId)
 
-        val afterKicksInfos = wm.getWorkInfosForUniqueWork(TransferScheduler.UNIQUE_QUEUE_NAME).get()
-        assertEquals(1, afterKicksInfos.size)
-        assertEquals(originalWorkId, afterKicksInfos.single().id)
-
-        // Unmetered background kick uses a separate unique work name so it never blocks metered user work
+        // Unmetered background kick uses a separate unique work name
         scheduler.kick(ScheduleReason.USER_ENQUEUE, allowMetered = false)
         val unmeteredInfos = wm.getWorkInfosForUniqueWork(TransferScheduler.UNIQUE_UNMETERED_QUEUE_NAME).get()
         assertEquals(1, unmeteredInfos.size)
+
+        // BackupResumeWorker is scheduled under BACKUP_RESUME_WORK_NAME with constraint requirements
+        scheduler.scheduleBackupResume(chargingOnly = true, wifiOnly = true)
+        val backupResumeInfos = wm.getWorkInfosForUniqueWork(TransferScheduler.BACKUP_RESUME_WORK_NAME).get()
+        assertEquals(1, backupResumeInfos.size)
+        assertTrue(backupResumeInfos.single().constraints.requiresCharging())
+        assertEquals(androidx.work.NetworkType.UNMETERED, backupResumeInfos.single().constraints.requiredNetworkType)
     }
 
     @Test
@@ -403,5 +421,186 @@ class TransferQueueDrainerTest {
         val finalRow = dao.getById("rapid-pause-resume")!!
         assertEquals(TransferState.COMPLETED.name, finalRow.state)
         assertNull(finalRow.leaseOwner)
+    }
+
+    @Test
+    fun boundedParallelDrainerExecutesMultipleTransfersConcurrently(): Unit = runBlocking {
+        val dao = database.transferDao()
+        dao.insert(LocalTransfer(id = "par-1", accountId = "a1", fileName = "p1.bin", direction = TransferDirection.UPLOAD.name, totalBytes = 100L))
+        dao.insert(LocalTransfer(id = "par-2", accountId = "a1", fileName = "p2.bin", direction = TransferDirection.UPLOAD.name, totalBytes = 100L))
+        dao.insert(LocalTransfer(id = "par-3", accountId = "a1", fileName = "p3.bin", direction = TransferDirection.DOWNLOAD.name, totalBytes = 100L))
+
+        val activeCount = java.util.concurrent.atomic.AtomicInteger(0)
+        val maxConcurrentObserved = java.util.concurrent.atomic.AtomicInteger(0)
+        val claimedLeases = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+
+        val executor = object : TransferOperationExecutor {
+            override suspend fun execute(
+                transfer: LocalTransfer,
+                leaseOwner: String,
+                onProgress: suspend (Long, Long, Long, Long?) -> Unit
+            ): TransferOutcome {
+                claimedLeases += leaseOwner
+                val nowActive = activeCount.incrementAndGet()
+                maxConcurrentObserved.updateAndGet { maxOf(it, nowActive) }
+                kotlinx.coroutines.delay(120L)
+                onProgress(100L, 100L, 1000L, 0L)
+                activeCount.decrementAndGet()
+                return TransferOutcome.Completed
+            }
+        }
+
+        val drainer = RoomTransferQueueDrainer(
+            queueDao = database.transferQueueDao(),
+            executor = executor,
+            ownerId = "parallel-proc",
+            maxTransfersPerDrain = 3,
+            maxConcurrency = { 3 }
+        )
+
+        val result = drainer.drain(DrainTrigger.USER_ENQUEUE, { false }) {}
+        assertTrue(result is DrainResult.Drained)
+        assertEquals(3, (result as DrainResult.Drained).processed)
+        assertTrue("Expected concurrent transfer execution >= 2, saw ${maxConcurrentObserved.get()}", maxConcurrentObserved.get() >= 2)
+        assertEquals(3, claimedLeases.size)
+    }
+
+    @Test
+    fun stallWatchdogAbortsHungTransferAsRetryableAndPreservesSession(): Unit = runBlocking {
+        val dao = database.transferDao()
+        dao.insert(
+            LocalTransfer(
+                id = "stalled-1",
+                accountId = "a1",
+                fileName = "hung.bin",
+                direction = TransferDirection.UPLOAD.name,
+                providerSessionId = "sess-keep-99",
+                totalBytes = 10_000L
+            )
+        )
+
+        val hungExecutor = object : TransferOperationExecutor {
+            override suspend fun execute(
+                transfer: LocalTransfer,
+                leaseOwner: String,
+                onProgress: suspend (Long, Long, Long, Long?) -> Unit
+            ): TransferOutcome {
+                kotlinx.coroutines.delay(5_000L)
+                return TransferOutcome.Completed
+            }
+        }
+
+        val drainer = RoomTransferQueueDrainer(
+            queueDao = database.transferQueueDao(),
+            executor = hungExecutor,
+            ownerId = "stall-proc",
+            maxTransfersPerDrain = 1,
+            maxRetryCount = { 3 },
+            stallTimeoutMs = 150L
+        )
+
+        val result = drainer.drain(DrainTrigger.USER_ENQUEUE, { false }) {}
+        assertTrue(result is DrainResult.Drained)
+        val row = dao.getById("stalled-1")!!
+        assertEquals(TransferState.FAILED_RETRYABLE.name, row.state)
+        assertEquals("STALL_TIMEOUT", row.lastErrorCode)
+        assertEquals("sess-keep-99", row.providerSessionId)
+        assertNull(row.leaseOwner)
+    }
+
+    @Test
+    fun backupPolicyHoldParksAutoBackupsAndInvokesResumeWhileDownloadRuns(): Unit = runBlocking {
+        val dao = database.transferDao()
+        dao.insert(
+            LocalTransfer(
+                id = "auto-bkp-1",
+                accountId = "a1",
+                fileName = "cam1.jpg",
+                direction = TransferDirection.BACKUP.name,
+                operationType = "BACKUP",
+                priority = 10,
+                totalBytes = 100L
+            )
+        )
+        dao.insert(
+            LocalTransfer(
+                id = "auto-bkp-2",
+                accountId = "a1",
+                fileName = "cam2.jpg",
+                direction = TransferDirection.BACKUP.name,
+                operationType = "BACKUP",
+                priority = 10,
+                totalBytes = 100L
+            )
+        )
+        dao.insert(
+            LocalTransfer(
+                id = "user-dl-1",
+                accountId = "a1",
+                fileName = "manual_doc.pdf",
+                direction = TransferDirection.DOWNLOAD.name,
+                operationType = "DOWNLOAD",
+                priority = 1,
+                totalBytes = 100L
+            )
+        )
+
+        val monitor = object : com.cloudyte.app.core.network.NetworkMonitor {
+            override val status = kotlinx.coroutines.flow.MutableStateFlow(com.cloudyte.app.core.network.NetworkStatus.VALIDATED_METERED)
+            override fun current() = com.cloudyte.app.core.network.NetworkStatus.VALIDATED_METERED
+            override fun snapshot(preferences: com.cloudyte.app.data.UserPreferencesState) =
+                com.cloudyte.app.core.network.NetworkPolicySnapshot(
+                    status = com.cloudyte.app.core.network.NetworkStatus.VALIDATED_METERED,
+                    allowMeteredTransfers = true,
+                    allowRoaming = false,
+                    requireChargingForBackup = true,
+                    batterySaverActive = false,
+                    isCharging = false,
+                    batteryNotLow = true,
+                    requireWifiForBackup = true
+                )
+        }
+        val gate = com.cloudyte.app.core.network.TransferNetworkGate(
+            monitor = monitor,
+            policy = com.cloudyte.app.core.network.DefaultNetworkPolicy(),
+            preferences = { com.cloudyte.app.data.UserPreferencesState(allowMeteredTransfers = true, backupWifiOnly = true, backupChargingOnly = true) }
+        )
+
+        var holdCallbackCharging = false
+        var holdCallbackWifi = false
+        var holdCallbacks = 0
+
+        val executor = object : TransferOperationExecutor {
+            override suspend fun execute(
+                transfer: LocalTransfer,
+                leaseOwner: String,
+                onProgress: suspend (Long, Long, Long, Long?) -> Unit
+            ): TransferOutcome {
+                onProgress(100L, 100L, 100L, 0L)
+                return TransferOutcome.Completed
+            }
+        }
+
+        val drainer = RoomTransferQueueDrainer(
+            queueDao = database.transferQueueDao(),
+            executor = executor,
+            ownerId = "hold-proc",
+            maxTransfersPerDrain = 6,
+            networkGate = gate,
+            maxConcurrency = { 2 },
+            onBackupPolicyHold = { reqCharging, reqWifi ->
+                holdCallbacks++
+                holdCallbackCharging = reqCharging
+                holdCallbackWifi = reqWifi
+            }
+        )
+
+        val result = drainer.drain(DrainTrigger.USER_ENQUEUE, { false }) {}
+        assertTrue(result is DrainResult.Drained)
+        assertEquals(1, holdCallbacks)
+        assertTrue(holdCallbackCharging || holdCallbackWifi)
+        assertEquals(TransferState.WAITING_FOR_NETWORK.name, dao.getById("auto-bkp-1")?.state)
+        assertEquals(TransferState.WAITING_FOR_NETWORK.name, dao.getById("auto-bkp-2")?.state)
+        assertEquals(TransferState.COMPLETED.name, dao.getById("user-dl-1")?.state)
     }
 }
