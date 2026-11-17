@@ -38,6 +38,32 @@ class CloudyteApplication : Application(), ImageLoaderFactory {
             Log.w("CloudyteApplication", "WorkManager is not initialized; startup queue work will be scheduled on the next trigger", error)
         }
         container.kickImmediateDrain(DrainTrigger.APP_START, "app_start")
+        registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
+            private var startedActivities = 0
+            private var wentBackground = false
+
+            override fun onActivityCreated(activity: android.app.Activity, savedInstanceState: android.os.Bundle?) = Unit
+            override fun onActivityStarted(activity: android.app.Activity) {
+                val wasZero = startedActivities == 0
+                startedActivities++
+                if (wasZero && wentBackground) {
+                    wentBackground = false
+                    container.onAppForegrounded()
+                } else if (wasZero) {
+                    container.networkMonitor.refresh()
+                }
+            }
+            override fun onActivityResumed(activity: android.app.Activity) = Unit
+            override fun onActivityPaused(activity: android.app.Activity) = Unit
+            override fun onActivityStopped(activity: android.app.Activity) {
+                startedActivities = (startedActivities - 1).coerceAtLeast(0)
+                if (startedActivities == 0 && !activity.isChangingConfigurations) {
+                    wentBackground = true
+                }
+            }
+            override fun onActivitySaveInstanceState(activity: android.app.Activity, outState: android.os.Bundle) = Unit
+            override fun onActivityDestroyed(activity: android.app.Activity) = Unit
+        })
         container.applicationScope.launch(container.dispatchers.io) {
             runCatching {
                 val prefs = com.cloudyte.app.data.UserPreferences.observe(this@CloudyteApplication).first()

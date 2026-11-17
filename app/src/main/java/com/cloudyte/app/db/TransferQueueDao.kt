@@ -51,6 +51,12 @@ abstract class TransferQueueDao {
     @Query("SELECT EXISTS(SELECT 1 FROM transfers WHERE state IN ('QUEUED','FAILED_RETRYABLE') AND (nextAttemptAt IS NULL OR nextAttemptAt <= :now))")
     abstract suspend fun hasRunnableTransfers(now: Long): Boolean
 
+    @Query("SELECT EXISTS(SELECT 1 FROM transfers WHERE state IN ('QUEUED','RUNNING','PAUSING','CANCELLING'))")
+    abstract suspend fun hasLiveTransfers(): Boolean
+
+    @Query("SELECT fileName FROM transfers WHERE state = 'RUNNING' ORDER BY lastAttemptAt DESC, updatedAt DESC LIMIT 1")
+    abstract suspend fun currentActiveFileName(): String?
+
     @Query("UPDATE transfers SET state='QUEUED', status='PENDING', updatedAt=:now WHERE state='WAITING_FOR_NETWORK'")
     abstract suspend fun requeueNetworkWaiters(now: Long): Int
 

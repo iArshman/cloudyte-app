@@ -17,6 +17,9 @@ enum class NetworkStatus {
     CAPTIVE_PORTAL
 }
 
+fun NetworkStatus.isOnline(): Boolean =
+    this == NetworkStatus.VALIDATED_METERED || this == NetworkStatus.VALIDATED_UNMETERED
+
 data class NetworkPolicySnapshot(
     val status: NetworkStatus,
     val allowMeteredTransfers: Boolean,
@@ -32,6 +35,7 @@ data class NetworkPolicySnapshot(
 interface NetworkMonitor {
     val status: Flow<NetworkStatus>
     fun current(): NetworkStatus
+    fun refresh(): NetworkStatus = current()
     fun snapshot(preferences: UserPreferencesState): NetworkPolicySnapshot
 }
 
@@ -82,25 +86,84 @@ class DefaultNetworkPolicy : NetworkPolicy {
     }
 }
 
-class ConnectivityNetworkMonitor(private val context: Context) : NetworkMonitor {
+class ConnectivityNetworkMonitor @JvmOverloads constructor(
+    private val context: Context,
+    private val onRouteChanged: () -> Unit = {}
+) : NetworkMonitor {
     private val connectivity = context.applicationContext.getSystemService(ConnectivityManager::class.java)
+    private val started = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val lastNetworkHandle = java.util.concurrent.atomic.AtomicLong(-1L)
     private val _status = kotlinx.coroutines.flow.MutableStateFlow(readStatus())
     override val status: Flow<NetworkStatus> = _status
 
     private val callback = object : ConnectivityManager.NetworkCallback() {
-        override fun onAvailable(network: android.net.Network) = publish()
-        override fun onCapabilitiesChanged(network: android.net.Network, capabilities: NetworkCapabilities) = publish()
-        override fun onLost(network: android.net.Network) = publish()
+        override fun onAvailable(network: android.net.Network) {
+            val handle = runCatching { network.networkHandle }.getOrDefault(-1L)
+            val prev = lastNetworkHandle.getAndSet(handle)
+            if (prev != -1L && handle != -1L && prev != handle) {
+                runCatching { onRouteChanged() }
+            }
+            publishForNetwork(network)
+        }
+
+        override fun onCapabilitiesChanged(network: android.net.Network, capabilities: NetworkCapabilities) {
+            val handle = runCatching { network.networkHandle }.getOrDefault(-1L)
+            if (handle != -1L) {
+                lastNetworkHandle.compareAndSet(-1L, handle)
+            }
+            val next = classifyCapabilities(capabilities)
+            val prev = swapStatus(next)
+            if (!prev.isOnline() && next.isOnline()) {
+                runCatching { onRouteChanged() }
+            }
+        }
+
+        override fun onLost(network: android.net.Network) {
+            val handle = runCatching { network.networkHandle }.getOrDefault(-1L)
+            if (handle != -1L) {
+                lastNetworkHandle.compareAndSet(handle, -1L)
+            }
+            refresh()
+        }
+
+        override fun onBlockedStatusChanged(network: android.net.Network, blocked: Boolean) {
+            if (blocked) {
+                _status.value = NetworkStatus.UNAVAILABLE
+            } else {
+                publishForNetwork(network)
+            }
+        }
     }
 
     fun start() {
-        runCatching { connectivity.registerDefaultNetworkCallback(callback) }
-        publish()
+        if (started.compareAndSet(false, true)) {
+            runCatching { connectivity?.registerDefaultNetworkCallback(callback) }
+        }
+        refresh()
     }
 
-    fun stop() = runCatching { connectivity.unregisterNetworkCallback(callback) }
+    fun stop() {
+        if (started.compareAndSet(true, false)) {
+            runCatching { connectivity?.unregisterNetworkCallback(callback) }
+        }
+    }
 
     override fun current(): NetworkStatus = readStatus()
+
+    override fun refresh(): NetworkStatus {
+        val activeNetwork = runCatching { connectivity?.activeNetwork }.getOrNull()
+        val handle = activeNetwork?.let { runCatching { it.networkHandle }.getOrDefault(-1L) } ?: -1L
+        val prevHandle = lastNetworkHandle.getAndSet(handle)
+        val caps = activeNetwork?.let { runCatching { connectivity?.getNetworkCapabilities(it) }.getOrNull() }
+        val next = classifyCapabilities(caps)
+        val prevStatus = swapStatus(next)
+        if ((!prevStatus.isOnline() && next.isOnline()) ||
+            (prevHandle != -1L && handle != -1L && prevHandle != handle)
+        ) {
+            runCatching { onRouteChanged() }
+        }
+        return next
+    }
 
     override fun snapshot(preferences: UserPreferencesState): NetworkPolicySnapshot {
         val capabilities = runCatching {
@@ -110,7 +173,7 @@ class ConnectivityNetworkMonitor(private val context: Context) : NetworkMonitor 
         val battery = context.getSystemService(BatteryManager::class.java)
         val batteryLevel = battery?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: 100
         return NetworkPolicySnapshot(
-            status = readStatus(capabilities),
+            status = classifyCapabilities(capabilities),
             allowMeteredTransfers = preferences.allowMeteredTransfers,
             allowRoaming = preferences.allowRoaming,
             requireChargingForBackup = preferences.backupChargingOnly,
@@ -122,20 +185,38 @@ class ConnectivityNetworkMonitor(private val context: Context) : NetworkMonitor 
         )
     }
 
-    private fun publish() { _status.value = readStatus() }
+    private fun swapStatus(next: NetworkStatus): NetworkStatus {
+        while (true) {
+            val prev = _status.value
+            if (_status.compareAndSet(prev, next)) return prev
+        }
+    }
 
-    private fun readStatus(): NetworkStatus = readStatus(
+    private fun publishForNetwork(network: android.net.Network) {
+        val active = runCatching { connectivity?.activeNetwork }.getOrNull() ?: network
+        val caps = runCatching { connectivity?.getNetworkCapabilities(active) }.getOrNull()
+        val next = classifyCapabilities(caps)
+        val prev = swapStatus(next)
+        if (!prev.isOnline() && next.isOnline()) {
+            runCatching { onRouteChanged() }
+        }
+    }
+
+    private fun readStatus(): NetworkStatus = classifyCapabilities(
         runCatching {
             connectivity?.activeNetwork?.let { connectivity.getNetworkCapabilities(it) }
         }.getOrNull()
     )
 
-    private fun readStatus(capabilities: NetworkCapabilities?): NetworkStatus {
+    internal fun classifyCapabilities(capabilities: NetworkCapabilities?): NetworkStatus {
         if (capabilities == null || !capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
             return NetworkStatus.UNAVAILABLE
         }
         if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL)) {
             return NetworkStatus.CAPTIVE_PORTAL
+        }
+        if (!capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+            return NetworkStatus.UNAVAILABLE
         }
         return if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)) {
             NetworkStatus.VALIDATED_UNMETERED

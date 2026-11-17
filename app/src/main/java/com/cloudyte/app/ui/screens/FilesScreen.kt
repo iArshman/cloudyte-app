@@ -153,6 +153,8 @@ import com.cloudyte.app.api.ApiClient
 import com.cloudyte.app.api.CloudFile
 import com.cloudyte.app.api.CloudyteApi
 import com.cloudyte.app.CloudyteApplication
+import com.cloudyte.app.core.network.NetworkStatus
+import com.cloudyte.app.core.network.isOnline
 import com.cloudyte.app.core.transfer.TransferCommand
 import com.cloudyte.app.data.CloudFileRepository
 import com.cloudyte.app.data.FileCryptoActions
@@ -1262,17 +1264,33 @@ fun FilesScreen(
         }
     }
 
-    val networkStatus by remember(context) {
-        (context.applicationContext as? CloudyteApplication)?.container?.networkMonitor?.status
-            ?: kotlinx.coroutines.flow.flowOf(com.cloudyte.app.core.network.NetworkStatus.VALIDATED_UNMETERED)
-    }.collectAsStateWithLifecycle(initialValue = com.cloudyte.app.core.network.NetworkStatus.VALIDATED_UNMETERED)
+    val appContainer = remember(context) {
+        (context.applicationContext as? CloudyteApplication)?.container
+    }
+    val networkStatus by remember(appContainer) {
+        appContainer?.networkMonitor?.status
+            ?: kotlinx.coroutines.flow.flowOf(NetworkStatus.VALIDATED_UNMETERED)
+    }.collectAsStateWithLifecycle(
+        initialValue = appContainer?.networkMonitor?.current() ?: NetworkStatus.VALIDATED_UNMETERED
+    )
+    val foregroundEpoch by remember(appContainer) {
+        appContainer?.foregroundEpoch ?: kotlinx.coroutines.flow.flowOf(0L)
+    }.collectAsStateWithLifecycle(initialValue = 0L)
+
+    val effectiveOffline = isOffline || !networkStatus.isOnline()
+    var previouslyOnline by remember { mutableStateOf(networkStatus.isOnline()) }
 
     LaunchedEffect(networkStatus) {
-        if (isOffline &&
-            networkStatus != com.cloudyte.app.core.network.NetworkStatus.UNAVAILABLE &&
-            networkStatus != com.cloudyte.app.core.network.NetworkStatus.CAPTIVE_PORTAL
-        ) {
+        val onlineNow = networkStatus.isOnline()
+        if (onlineNow && (isOffline || !previouslyOnline)) {
             viewModel.refresh(force = true)
+        }
+        previouslyOnline = onlineNow
+    }
+
+    LaunchedEffect(foregroundEpoch) {
+        if (foregroundEpoch > 0L && networkStatus.isOnline()) {
+            viewModel.refresh(force = false)
         }
     }
 
@@ -1334,7 +1352,7 @@ fun FilesScreen(
                             val newName = renameInput.trim()
                             fileForRename = null
                             viewModel.renameFile(target.effectiveId, newName) {
-                                snackbarMessage = if (isOffline) {
+                                snackbarMessage = if (effectiveOffline) {
                                     "Rename saved locally; syncing when online"
                                 } else {
                                     "Renamed to $newName"
@@ -1419,7 +1437,7 @@ fun FilesScreen(
                             showCreateFolderDialog = false
                             newFolderName = ""
                             viewModel.createFolder(nameToCreate) {
-                                snackbarMessage = if (isOffline) {
+                                snackbarMessage = if (effectiveOffline) {
                                     "Folder saved locally; syncing when online"
                                 } else {
                                     "Folder '$nameToCreate' created"
@@ -2095,7 +2113,7 @@ fun FilesScreen(
                         }
 
                         // Offline Indicator Banner
-                        if (isOffline && pane.hasFiles) {
+                        if (effectiveOffline && pane.hasFiles) {
                             item(span = { GridItemSpan(maxLineSpan) }, key = "offline_banner") {
                                 OfflineBanner()
                             }
@@ -2193,7 +2211,7 @@ fun FilesScreen(
 
                         if (pane.folders.isEmpty() && pane.regularFiles.isEmpty() && !pane.busy) {
                             item(span = { GridItemSpan(maxLineSpan) }, key = "empty_state") {
-                                if (isOffline && !pane.hasFiles) {
+                                if (effectiveOffline && !pane.hasFiles) {
                                     FilesOfflineEmptyState(
                                         onRetry = { viewModel.refresh(force = true) }
                                     )
@@ -2233,7 +2251,7 @@ fun FilesScreen(
                             )
                         }
 
-                        if (isOffline && pane.hasFiles) {
+                        if (effectiveOffline && pane.hasFiles) {
                             item(key = "offline_banner") {
                                 OfflineBanner()
                             }
@@ -2347,7 +2365,7 @@ fun FilesScreen(
 
                         if (pane.folders.isEmpty() && pane.regularFiles.isEmpty() && !pane.busy) {
                             item(key = "empty_state") {
-                                if (isOffline && !pane.hasFiles) {
+                                if (effectiveOffline && !pane.hasFiles) {
                                     FilesOfflineEmptyState(
                                         onRetry = { viewModel.refresh(force = true) }
                                     )

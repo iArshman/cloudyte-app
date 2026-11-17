@@ -13,12 +13,14 @@ import com.cloudyte.app.core.network.DefaultNetworkPolicy
 import com.cloudyte.app.core.network.NetworkPolicySnapshot
 import com.cloudyte.app.core.network.NetworkStatus
 import com.cloudyte.app.core.network.PolicyDecision
+import com.cloudyte.app.core.network.isOnline
 import com.cloudyte.app.core.security.ContentKeyMaterial
 import com.cloudyte.app.core.security.CryptoConstants
 import com.cloudyte.app.core.security.KeyBackupCodec
 import com.cloudyte.app.core.security.KeyBackupException
 import com.cloudyte.app.core.security.PassphraseKdf
 import com.cloudyte.app.data.AccountSessionHelper
+import com.cloudyte.app.data.TransferRepository
 import com.cloudyte.app.data.UserPreferences
 import com.cloudyte.app.db.AppDatabase
 import com.cloudyte.app.db.BackupSourceEntity
@@ -33,18 +35,20 @@ import com.cloudyte.app.db.TransferDirection
 import com.cloudyte.app.db.TransferStatus
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import okhttp3.ResponseBody.Companion.toResponseBody
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
+import okio.buffer
 import org.json.JSONObject
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -634,5 +638,468 @@ class SecurityAndPerformanceFixesTest {
             tempFile.delete()
         }
     }
+
+    @Test
+    fun backgroundConnectionAbortRecovery_downloadResumesMidStreamViaRangeWithoutFailing(): Unit = runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+        val db = AppDatabase.getDatabase(context)
+        db.transferDao().clearAll()
+        db.accountDao().insertAccounts(
+            listOf(
+                LocalAccount(
+                    id = "acc-bg-dl",
+                    name = "Cloudyte",
+                    driveName = "Main",
+                    email = "u@cloudyte.io",
+                    accountType = "cloudyte",
+                    usageBytes = 0L,
+                    totalBytes = 10_000L,
+                    percentage = 0f,
+                    fileCount = 0,
+                    isDefault = true,
+                    channelId = null
+                )
+            )
+        )
+
+        val fullPayload = ByteArray(100_000) { (it % 199).toByte() }
+        val splitPoint = 40_000
+        val destFile = File(context.cacheDir, "bg_abort_recover.bin").apply { delete() }
+        File(destFile.parentFile, "${destFile.name}.part").delete()
+
+        var requestCount = 0
+        val observedRanges = mutableListOf<String?>()
+
+        val fakeApi = object : com.cloudyte.app.api.CloudyteApi by createNoopApiProxy() {
+            override suspend fun downloadFile(
+                accountId: String,
+                fileId: String,
+                preview: Int?,
+                range: String?
+            ): retrofit2.Response<okhttp3.ResponseBody> {
+                requestCount++
+                observedRanges += range
+                if (requestCount == 1) {
+                    // Stream first 40,000 bytes, then abort with ECONNABORTED mid-body
+                    val partialStream = object : java.io.InputStream() {
+                        private var idx = 0
+                        override fun read(): Int {
+                            if (idx >= splitPoint) throw java.net.SocketException("Software caused connection abort")
+                            return fullPayload[idx++].toInt() and 0xFF
+                        }
+
+                        override fun read(b: ByteArray, off: Int, len: Int): Int {
+                            if (idx >= splitPoint) throw java.net.SocketException("Software caused connection abort")
+                            val toCopy = minOf(len, splitPoint - idx)
+                            System.arraycopy(fullPayload, idx, b, off, toCopy)
+                            idx += toCopy
+                            return toCopy
+                        }
+                    }
+                    val body = object : okhttp3.ResponseBody() {
+                        override fun contentType() = "application/octet-stream".toMediaTypeOrNull()
+                        override fun contentLength() = fullPayload.size.toLong()
+                        override fun source(): okio.BufferedSource = okioStreamSource(partialStream).buffer()
+                    }
+                    return retrofit2.Response.success(body)
+                }
+
+                // Attempt 2: server honors Range header from splitPoint onward
+                assertEquals("bytes=$splitPoint-", range)
+                val remaining = fullPayload.copyOfRange(splitPoint, fullPayload.size)
+                val rawResp = Response.Builder()
+                    .request(Request.Builder().url("https://cloudyte.local/download").build())
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(206)
+                    .message("Partial Content")
+                    .headers(
+                        okhttp3.Headers.headersOf(
+                            "Content-Range", "bytes $splitPoint-${fullPayload.size - 1}/${fullPayload.size}",
+                            "Content-Length", remaining.size.toString()
+                        )
+                    )
+                    .build()
+                return retrofit2.Response.success(
+                    remaining.toResponseBody("application/octet-stream".toMediaTypeOrNull()),
+                    rawResp
+                )
+            }
+        }
+        val registry = com.cloudyte.app.data.providers.ProviderRegistry(fakeApi)
+        val executor = com.cloudyte.app.core.transfer.CloudTransferOperationExecutor(
+            context = context,
+            database = db,
+            transfers = TransferRepository(db.transferDao(), registry),
+            providers = registry,
+            inlineIoRetryDelayMs = { 0L }
+        )
+
+        val row = LocalTransfer(
+            id = "dl-bg-abort-1",
+            accountId = "acc-bg-dl",
+            fileId = "remote-bg-1",
+            remoteId = "remote-bg-1",
+            fileName = destFile.name,
+            localPath = destFile.absolutePath,
+            direction = TransferDirection.DOWNLOAD.name,
+            operationType = "DOWNLOAD",
+            providerType = "cloudyte",
+            status = "RUNNING",
+            state = com.cloudyte.app.core.transfer.TransferState.RUNNING.name,
+            totalBytes = fullPayload.size.toLong(),
+            leaseOwner = "owner-bg",
+            leaseExpiresAt = System.currentTimeMillis() + 60_000L
+        )
+        db.transferDao().insert(row)
+
+        try {
+            val outcome = executor.execute(row, "owner-bg") { _, _, _, _ -> }
+            assertEquals(com.cloudyte.app.core.transfer.TransferOutcome.Completed, outcome)
+            assertEquals(listOf(null, "bytes=$splitPoint-"), observedRanges)
+            assertTrue(destFile.exists())
+            assertArrayEquals(fullPayload, destFile.readBytes())
+        } finally {
+            destFile.delete()
+            File(destFile.parentFile, "${destFile.name}.part").delete()
+            db.transferDao().clearAll()
+        }
+    }
+
+    @Test
+    fun backgroundConnectionAbortRecovery_uploadChunksReconcileAndResumeOnSocketException(): Unit = runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+        val tempFile = File(context.cacheDir, "bg_abort_upload.bin")
+        val payload = ByteArray(140 * 1024) { (it % 233).toByte() }
+        tempFile.writeBytes(payload)
+
+        var serverOffset = 0L
+        var injectedAbort = false
+        var chunkAttempts = 0
+
+        val fakeProvider = object : com.cloudyte.app.data.providers.CloudProvider {
+            override val type: String = "cloudyte"
+            override val capabilities = com.cloudyte.app.data.providers.ProviderCapabilities(
+                supportsResumableUpload = true,
+                supportsProviderNativeResumability = true,
+                supportsProviderSessionCancellation = true,
+                supportsResumableDownload = true
+            )
+
+            override suspend fun createUploadSession(
+                accountId: String,
+                request: com.cloudyte.app.api.UploadSessionRequest
+            ): retrofit2.Response<com.cloudyte.app.api.UploadSessionResponse> =
+                retrofit2.Response.success(
+                    com.cloudyte.app.api.UploadSessionResponse(
+                        sessionId = "sess-abort-1",
+                        status = "active",
+                        receivedBytes = 0L,
+                        totalBytes = payload.size.toLong(),
+                        chunkSize = 64L * 1024L
+                    )
+                )
+
+            override suspend fun queryUploadSession(
+                sessionId: String
+            ): retrofit2.Response<com.cloudyte.app.api.UploadSessionResponse> =
+                retrofit2.Response.success(
+                    com.cloudyte.app.api.UploadSessionResponse(
+                        sessionId = sessionId,
+                        status = "active",
+                        receivedBytes = serverOffset,
+                        totalBytes = payload.size.toLong(),
+                        chunkSize = 64L * 1024L
+                    )
+                )
+
+            override suspend fun uploadChunk(
+                sessionId: String,
+                contentRange: String,
+                chunk: okhttp3.MultipartBody.Part
+            ): retrofit2.Response<com.cloudyte.app.api.UploadChunkResponse> =
+                error("Unexpected multipart uploadChunk in stream test")
+
+            override suspend fun uploadChunkStream(
+                sessionId: String,
+                contentRange: String,
+                chunkOffset: Long,
+                chunk: okhttp3.RequestBody
+            ): retrofit2.Response<com.cloudyte.app.api.UploadChunkResponse> {
+                chunkAttempts++
+                if (!injectedAbort && chunkOffset == 64L * 1024L) {
+                    injectedAbort = true
+                    throw java.net.SocketException("Software caused connection abort")
+                }
+                val sink = okio.Buffer()
+                chunk.writeTo(sink)
+                serverOffset = chunkOffset + sink.size
+                return retrofit2.Response.success(
+                    com.cloudyte.app.api.UploadChunkResponse(
+                        sessionId = sessionId,
+                        receivedBytes = serverOffset,
+                        totalBytes = payload.size.toLong(),
+                        nextOffset = serverOffset,
+                        complete = serverOffset >= payload.size.toLong()
+                    )
+                )
+            }
+
+            override suspend fun completeUploadSession(
+                sessionId: String
+            ): retrofit2.Response<com.cloudyte.app.api.UploadCompleteResponse> =
+                retrofit2.Response.success(
+                    com.cloudyte.app.api.UploadCompleteResponse(
+                        success = serverOffset == payload.size.toLong(),
+                        sessionId = sessionId
+                    )
+                )
+        }
+
+        try {
+            val result = com.cloudyte.app.ui.screens.UploadHelper.uploadFileResumable(
+                context = context,
+                accountId = "acc-ul",
+                folderId = "root",
+                uri = android.net.Uri.fromFile(tempFile),
+                explicitFileName = tempFile.name,
+                explicitMimeType = "application/octet-stream",
+                explicitFileSize = payload.size.toLong(),
+                idempotencyKey = "idem-abort-1",
+                provider = fakeProvider
+            )
+            assertTrue("Upload should recover inline from SocketException", result.isSuccess)
+            assertTrue(injectedAbort)
+            assertEquals(4, chunkAttempts) // chunk 1 + failed chunk 2 + retried chunk 2 + chunk 3
+            assertEquals(payload.size.toLong(), serverOffset)
+        } finally {
+            tempFile.delete()
+        }
+    }
+
+    @Test
+    fun transferForegroundService_startsForInteractiveTriggersAndBuildsNotification() {
+        val started = com.cloudyte.app.core.transfer.TransferForegroundService.startIfAllowed(
+            context,
+            com.cloudyte.app.core.transfer.DrainTrigger.USER_ENQUEUE
+        )
+        assertTrue(started)
+        val nextIntent = org.robolectric.Shadows.shadowOf(
+            androidx.test.core.app.ApplicationProvider.getApplicationContext<android.app.Application>()
+        ).nextStartedService
+        assertNotNull(nextIntent)
+        assertEquals(
+            com.cloudyte.app.core.transfer.TransferForegroundService::class.java.name,
+            nextIntent.component?.className
+        )
+
+        val notification = com.cloudyte.app.core.transfer.notification.TransferNotification.buildNotification(
+            context = context,
+            transferred = 512L * 1024L,
+            total = 2L * 1024L * 1024L,
+            currentFile = "archive.zip",
+            showDetailedProgress = true
+        )
+        assertEquals("Transferring archive.zip", notification.extras.getString(android.app.Notification.EXTRA_TITLE))
+    }
+
+    @Test
+    fun connectivityNetworkMonitor_requiresValidatedCapability_andHandlesCaptiveAndMetered() {
+        var routeChanges = 0
+        val monitor = com.cloudyte.app.core.network.ConnectivityNetworkMonitor(context) {
+            routeChanges++
+        }
+
+        // 1. Null capabilities -> UNAVAILABLE
+        assertEquals(NetworkStatus.UNAVAILABLE, monitor.classifyCapabilities(null))
+        assertFalse(NetworkStatus.UNAVAILABLE.isOnline())
+
+        // 2. INTERNET without VALIDATED (e.g. flaky/connecting Wi-Fi) -> UNAVAILABLE
+        val unvalidatedCaps = org.robolectric.shadows.ShadowNetworkCapabilities.newInstance()
+        org.robolectric.Shadows.shadowOf(unvalidatedCaps).apply {
+            addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+        }
+        assertEquals(NetworkStatus.UNAVAILABLE, monitor.classifyCapabilities(unvalidatedCaps))
+
+        // 3. Captive portal -> CAPTIVE_PORTAL
+        val captiveCaps = org.robolectric.shadows.ShadowNetworkCapabilities.newInstance()
+        org.robolectric.Shadows.shadowOf(captiveCaps).apply {
+            addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL)
+            addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        }
+        assertEquals(NetworkStatus.CAPTIVE_PORTAL, monitor.classifyCapabilities(captiveCaps))
+
+        // 4. Validated metered -> VALIDATED_METERED (online)
+        val meteredCaps = org.robolectric.shadows.ShadowNetworkCapabilities.newInstance()
+        org.robolectric.Shadows.shadowOf(meteredCaps).apply {
+            addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        }
+        assertEquals(NetworkStatus.VALIDATED_METERED, monitor.classifyCapabilities(meteredCaps))
+
+        // 5. Validated unmetered -> VALIDATED_UNMETERED (online)
+        val unmeteredCaps = org.robolectric.shadows.ShadowNetworkCapabilities.newInstance()
+        org.robolectric.Shadows.shadowOf(unmeteredCaps).apply {
+            addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+        }
+        assertEquals(NetworkStatus.VALIDATED_UNMETERED, monitor.classifyCapabilities(unmeteredCaps))
+        assertTrue(NetworkStatus.VALIDATED_UNMETERED.isOnline())
+        assertTrue(NetworkStatus.VALIDATED_METERED.isOnline())
+        assertFalse(NetworkStatus.CAPTIVE_PORTAL.isOnline())
+        assertFalse(NetworkStatus.UNAVAILABLE.isOnline())
+
+        // 6. Synchronous refresh detects offline -> online transition and invokes onRouteChanged
+        val cm = context.getSystemService(android.net.ConnectivityManager::class.java)
+        val shadowCm = org.robolectric.Shadows.shadowOf(cm)
+        val activeNet = cm.activeNetwork
+        if (activeNet != null) {
+            shadowCm.setNetworkCapabilities(activeNet, unvalidatedCaps)
+            assertEquals(NetworkStatus.UNAVAILABLE, monitor.refresh())
+            val beforeChanges = routeChanges
+            shadowCm.setNetworkCapabilities(activeNet, unmeteredCaps)
+            assertEquals(NetworkStatus.VALIDATED_UNMETERED, monitor.refresh())
+            assertTrue("Expected route change callback when offline -> online", routeChanges > beforeChanges)
+        }
+    }
+
+    @Test
+    fun appContainer_onAppForegrounded_refreshesAndDebouncesForegroundEpoch() {
+        val container = com.cloudyte.app.AppContainer(context)
+        val baseEpoch = container.foregroundEpoch.value
+
+        container.onAppForegrounded(nowMs = 10_000L)
+        assertEquals(baseEpoch + 1L, container.foregroundEpoch.value)
+
+        // Within 3s cooldown window -> should not re-emit foregroundEpoch
+        container.onAppForegrounded(nowMs = 11_500L)
+        assertEquals(baseEpoch + 1L, container.foregroundEpoch.value)
+
+        // Past 3s cooldown window -> emits next foregroundEpoch
+        container.onAppForegrounded(nowMs = 14_000L)
+        assertEquals(baseEpoch + 2L, container.foregroundEpoch.value)
+    }
+
+    @Test
+    fun homeViewModel_refreshIfNeeded_respectsOfflineStalenessAndRecovery() = runBlocking {
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        var accountsCalls = 0
+        val fakeApi = object : com.cloudyte.app.api.CloudyteApi by createNoopApiProxy() {
+            override suspend fun getProfile(): com.cloudyte.app.api.UserProfile =
+                com.cloudyte.app.api.UserProfile(username = "tester")
+
+            override suspend fun getAccounts(): List<com.cloudyte.app.api.Account> {
+                accountsCalls++
+                return listOf(
+                    com.cloudyte.app.api.Account(
+                        id = "acc-home-1",
+                        name = "Main Drive",
+                        driveName = "Main Drive",
+                        type = "cloudyte",
+                        usage = 100L,
+                        total = 1000L,
+                        isDefault = true
+                    )
+                )
+            }
+
+            override suspend fun getStorageSummary(accountId: String?): com.cloudyte.app.api.StorageSummary =
+                com.cloudyte.app.api.StorageSummary(
+                    accountId = accountId ?: "acc-home-1",
+                    accountType = "cloudyte",
+                    usedBytes = 100L,
+                    totalBytes = 1000L,
+                    fileCount = 0
+                )
+
+            override suspend fun getFiles(
+                accountId: String?,
+                folderId: String?,
+                search: String?,
+                cursor: String?,
+                limit: Int?,
+                ifNoneMatch: String?
+            ): retrofit2.Response<List<com.cloudyte.app.api.CloudFile>> =
+                retrofit2.Response.success(emptyList())
+        }
+        val repo = com.cloudyte.app.data.CloudFileRepository(db, fakeApi)
+        val vm = com.cloudyte.app.ui.screens.HomeViewModel(
+            application = context as android.app.Application,
+            db = db,
+            api = fakeApi,
+            repository = repo
+        )
+
+        try {
+            // 1. Offline -> skipped
+            vm.refreshIfNeeded(isOnline = false, wasOffline = false, nowMs = 50_000L)
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            kotlinx.coroutines.delay(50)
+            assertEquals(0, accountsCalls)
+
+            // 2. First online refresh when never loaded -> runs
+            vm.refreshIfNeeded(isOnline = true, wasOffline = false, nowMs = 50_000L)
+            for (i in 0..10) {
+                org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+                kotlinx.coroutines.delay(30)
+                if (accountsCalls >= 1 && !vm.isLoading.value) break
+            }
+            assertEquals(1, accountsCalls)
+
+            // Simulate a known recent load timestamp for deterministic staleness checks
+            vm.resetLoadTimestampForTest(100_000L)
+
+            // 3. Fresh (< 30s) and wasn't offline -> skipped
+            vm.refreshIfNeeded(isOnline = true, wasOffline = false, nowMs = 110_000L)
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            kotlinx.coroutines.delay(50)
+            assertEquals(1, accountsCalls)
+
+            // 4. Stale (>= 30s) -> refreshes automatically
+            vm.refreshIfNeeded(isOnline = true, wasOffline = false, nowMs = 131_000L)
+            for (i in 0..10) {
+                org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+                kotlinx.coroutines.delay(30)
+                if (accountsCalls >= 2 && !vm.isLoading.value) break
+            }
+            assertEquals(2, accountsCalls)
+
+            // 5. Even if freshly loaded, coming back from offline (wasOffline = true) forces refresh
+            vm.resetLoadTimestampForTest(200_000L)
+            vm.refreshIfNeeded(isOnline = true, wasOffline = true, nowMs = 201_000L)
+            for (i in 0..10) {
+                org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+                kotlinx.coroutines.delay(30)
+                if (accountsCalls >= 3 && !vm.isLoading.value) break
+            }
+            assertEquals(3, accountsCalls)
+        } finally {
+            db.close()
+        }
+    }
+
+    private fun okioStreamSource(stream: java.io.InputStream): okio.Source = object : okio.Source {
+        override fun read(sink: okio.Buffer, byteCount: Long): Long {
+            val buf = ByteArray(minOf(byteCount, 8192L).toInt())
+            val n = stream.read(buf, 0, buf.size)
+            if (n < 0) return -1L
+            sink.write(buf, 0, n)
+            return n.toLong()
+        }
+        override fun timeout(): okio.Timeout = okio.Timeout.NONE
+        override fun close() = stream.close()
+    }
+
+    private fun createNoopApiProxy(): com.cloudyte.app.api.CloudyteApi {
+        return java.lang.reflect.Proxy.newProxyInstance(
+            com.cloudyte.app.api.CloudyteApi::class.java.classLoader,
+            arrayOf(com.cloudyte.app.api.CloudyteApi::class.java)
+        ) { _, method, _ ->
+            error("Unexpected call to ${method.name}")
+        } as com.cloudyte.app.api.CloudyteApi
+    }
 }
+
 
