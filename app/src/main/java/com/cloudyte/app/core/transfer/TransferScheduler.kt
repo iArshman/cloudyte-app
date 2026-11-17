@@ -94,7 +94,6 @@ class TransferScheduler @JvmOverloads constructor(
             builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
         }
         val wm = workManager()
-        val policy = ExistingWorkPolicy.KEEP
         val queueWorkName = if (allowMetered) UNIQUE_QUEUE_NAME else UNIQUE_UNMETERED_QUEUE_NAME
         if (wm == null) {
             diagnostics?.recordEvent(
@@ -105,15 +104,61 @@ class TransferScheduler @JvmOverloads constructor(
             )
             return
         }
+        val policy = resolveWorkPolicy(wm, queueWorkName)
+        if (allowMetered && !isWorkRunning(wm, UNIQUE_UNMETERED_QUEUE_NAME)) {
+            runCatching { wm.cancelUniqueWork(UNIQUE_UNMETERED_QUEUE_NAME) }
+        }
         wm.enqueueUniqueWork(queueWorkName, policy, builder.build())
         diagnostics?.recordEvent(
             operationType = "queue_kick",
             state = reason.name,
-            networkState = networkType.name
+            networkState = "${networkType.name}:${policy.name}"
         )
     }
 
+    private fun isWorkRunning(wm: WorkManager, uniqueName: String): Boolean {
+        val infos = runCatching {
+            wm.getWorkInfosForUniqueWork(uniqueName).get(WORK_QUERY_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        }.getOrNull().orEmpty()
+        return infos.any { it.state == androidx.work.WorkInfo.State.RUNNING }
+    }
+
+    private fun resolveWorkPolicy(wm: WorkManager, uniqueName: String): ExistingWorkPolicy {
+        val infos = runCatching {
+            wm.getWorkInfosForUniqueWork(uniqueName).get(WORK_QUERY_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        }.getOrNull().orEmpty()
+        return resolveWorkPolicyForStates(infos.map { it.state })
+    }
+
+    internal fun resolveWorkPolicyForStates(states: List<androidx.work.WorkInfo.State>): ExistingWorkPolicy {
+        return if (states.any { it == androidx.work.WorkInfo.State.RUNNING }) {
+            ExistingWorkPolicy.KEEP
+        } else {
+            ExistingWorkPolicy.REPLACE
+        }
+    }
+
     override fun retrySoon(reason: ScheduleReason) = kick(reason, allowMetered = true)
+
+    fun scheduleBackupResume(chargingOnly: Boolean, wifiOnly: Boolean) {
+        val wm = workManager() ?: return
+        val networkType = if (wifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(networkType)
+            .setRequiresCharging(chargingOnly)
+            .build()
+        val request = OneTimeWorkRequestBuilder<BackupResumeWorker>()
+            .setConstraints(constraints)
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+            .build()
+        val policy = resolveWorkPolicy(wm, BACKUP_RESUME_WORK_NAME)
+        wm.enqueueUniqueWork(BACKUP_RESUME_WORK_NAME, policy, request)
+        diagnostics?.recordEvent(
+            operationType = "backup_resume_schedule",
+            state = if (chargingOnly) "CHARGING" else "ANY_POWER",
+            networkState = networkType.name
+        )
+    }
 
     fun scheduleRetryAt(timestampMillis: Long) {
         val delayMillis = (timestampMillis - System.currentTimeMillis()).coerceAtLeast(0L)
@@ -167,12 +212,14 @@ class TransferScheduler @JvmOverloads constructor(
     }
 
     companion object {
+        private const val WORK_QUERY_TIMEOUT_MS = 500L
         const val UNIQUE_QUEUE_NAME = "cloudyte_transfer_queue"
         const val UNIQUE_UNMETERED_QUEUE_NAME = "cloudyte_transfer_queue_unmetered"
         const val MAINTENANCE_WORK_NAME = "cloudyte_transfer_queue_maintenance"
         const val RETRY_DUE_WORK_NAME = "cloudyte_transfer_queue_retry_due"
         const val NETWORK_RECOVERY_WORK_NAME = "cloudyte_transfer_queue_network_recovery"
         const val LEASE_RECOVERY_WORK_NAME = "cloudyte_transfer_queue_lease_recovery"
+        const val BACKUP_RESUME_WORK_NAME = "cloudyte_backup_resume_work"
         const val UNIQUE_TRANSFER_COMMAND_PREFIX = "cloudyte_transfer_cmd_"
 
         fun transferWorkTag(transferId: String): String = "cloudyte_transfer_id:$transferId"

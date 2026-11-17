@@ -95,6 +95,7 @@ import com.cloudyte.app.api.CloudFile
 import com.cloudyte.app.api.FileRepository
 import com.cloudyte.app.api.OfflineFileManager
 import com.cloudyte.app.core.cache.PreviewFetcher
+import com.cloudyte.app.core.network.isOnline
 import com.cloudyte.app.data.FileCryptoActions
 import com.cloudyte.app.data.UserPreferences
 import com.cloudyte.app.data.UserPreferencesState
@@ -270,15 +271,20 @@ fun AudioPlayerScreen(
             .setArtist("Cloudyte")
             .build()
 
+        val isOnline = (context.applicationContext as? CloudyteApplication)
+            ?.container?.networkMonitor?.refresh()?.isOnline() ?: true
+
         val mediaUri: Uri? = if (file?.isEncrypted == true || !streamBeforeDownload) {
             isBuffering = true
             statusNote = if (file?.isEncrypted == true) "Decrypting audio…" else "Preparing audio preview…"
-            val ready = file?.let {
-                PreviewFetcher.resolvePreviewFile(context, acc, it).getOrNull()
-            }
+            val cachedOnly = file?.let { PreviewFetcher.resolveCachedOnly(context, acc, it) }
+            val ready = cachedOnly ?: if (isOnline) {
+                file?.let { PreviewFetcher.resolvePreviewFile(context, acc, it).getOrNull() }
+            } else null
             statusNote = null
             when {
                 ready != null && ready.isFile && ready.length() > 0L -> Uri.fromFile(ready)
+                !isOnline -> null
                 file?.isEncrypted == true -> null
                 else -> {
                     val signedUrl = ApiClient.resolveSignedMediaUrl(
@@ -294,6 +300,8 @@ fun AudioPlayerScreen(
             if (cached != null) {
                 statusNote = null
                 Uri.fromFile(cached)
+            } else if (!isOnline) {
+                null
             } else {
                 statusNote = null
                 val signedUrl = ApiClient.resolveSignedMediaUrl(
@@ -316,7 +324,11 @@ fun AudioPlayerScreen(
             player.playWhenReady = true
         } else {
             isBuffering = false
-            statusNote = "Unable to prepare audio file"
+            statusNote = if (!isOnline) {
+                "Offline — download this audio to listen without internet"
+            } else {
+                "Unable to prepare audio file"
+            }
         }
     }
 
@@ -347,10 +359,25 @@ fun AudioPlayerScreen(
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                val isOnline = (context.applicationContext as? CloudyteApplication)
+                    ?.container?.networkMonitor?.current()?.isOnline() ?: true
                 if (!attemptedPreviewFallback && file != null && !file.isEncrypted) {
                     attemptedPreviewFallback = true
                     scope.launch {
                         val acc = PreviewFetcher.resolveAccountId(context, effectiveAccId.ifBlank { accountId }, file)
+                        val cachedOnly = PreviewFetcher.resolveCachedOnly(context, acc, file)
+                        if (cachedOnly != null && cachedOnly.isFile && cachedOnly.length() > 0L) {
+                            statusNote = null
+                            player.setMediaItem(MediaItem.fromUri(Uri.fromFile(cachedOnly)))
+                            player.prepare()
+                            player.playWhenReady = true
+                            return@launch
+                        }
+                        if (!isOnline) {
+                            isBuffering = false
+                            statusNote = "Offline — download this audio to listen without internet"
+                            return@launch
+                        }
                         statusNote = "Buffering audio preview…"
                         val ready = PreviewFetcher.resolvePreviewFile(context, acc, file).getOrNull()
                         if (ready != null && ready.isFile && ready.length() > 0L) {
@@ -365,7 +392,11 @@ fun AudioPlayerScreen(
                     }
                 } else {
                     isBuffering = false
-                    statusNote = error.localizedMessage ?: "Audio playback failed"
+                    statusNote = if (!isOnline) {
+                        "Offline — download this audio to listen without internet"
+                    } else {
+                        error.localizedMessage ?: "Audio playback failed"
+                    }
                 }
             }
         }

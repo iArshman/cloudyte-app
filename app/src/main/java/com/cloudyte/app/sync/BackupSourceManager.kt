@@ -23,15 +23,41 @@ data class BackupSourceHealth(
 
 object BackupSourceManager {
 
+    val standardPresets: List<BackupPresetType> = listOf(
+        BackupPresetType.CAMERA,
+        BackupPresetType.PICTURES,
+        BackupPresetType.SCREENSHOTS,
+        BackupPresetType.MOVIES,
+        BackupPresetType.DOCUMENTS,
+        BackupPresetType.DOWNLOADS
+    )
+
     fun suggestedInitialUri(preset: BackupPresetType): Uri? {
         val docId = when (preset) {
-            BackupPresetType.CAMERA -> "primary:DCIM"
+            BackupPresetType.CAMERA -> "primary:DCIM/Camera"
             BackupPresetType.PICTURES -> "primary:Pictures"
+            BackupPresetType.SCREENSHOTS -> "primary:Pictures/Screenshots"
+            BackupPresetType.MOVIES -> "primary:Movies"
             BackupPresetType.DOCUMENTS -> "primary:Documents"
             BackupPresetType.DOWNLOADS -> "primary:Download"
             BackupPresetType.CUSTOM -> return null
         }
         return DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", docId)
+    }
+
+    fun findSourceForPreset(
+        preset: BackupPresetType,
+        sources: List<BackupSourceEntity>
+    ): BackupSourceEntity? {
+        if (preset == BackupPresetType.CUSTOM) return null
+        return sources.firstOrNull { it.presetType == preset.name }
+            ?: preset.relativePath.takeIf { it.isNotBlank() }?.let { rel ->
+                sources.firstOrNull { source ->
+                    source.treeUri.endsWith(":$rel", ignoreCase = true) ||
+                        source.treeUri.endsWith("%3A$rel", ignoreCase = true) ||
+                        source.treeUri.endsWith("/$rel", ignoreCase = true)
+                }
+            }
     }
 
     fun resolveTreeDocument(context: Context, uriString: String): DocumentFile? {

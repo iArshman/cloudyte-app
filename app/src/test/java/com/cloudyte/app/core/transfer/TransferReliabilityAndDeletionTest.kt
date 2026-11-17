@@ -373,6 +373,127 @@ class TransferReliabilityAndDeletionTest {
         assertEquals(1, db.uploadRecordDao().countSuccessfulUploads())
     }
 
+    @Test
+    fun postBackupDeleteAbortsOnSha256MismatchAndProtectsOfflineVault(): Unit = runBlocking {
+        val originalBytes = "original-photo-content-12345".toByteArray()
+        val originalSha256 = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(originalBytes)
+            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+
+        val modifiedFile = File(tempFolder.root, "modified_after_upload.jpg").apply {
+            // Same length, different content -> size check alone would pass, SHA-256 MUST catch it!
+            writeBytes("mutated!-photo-content-12345".toByteArray())
+        }
+        val vaultFile = com.cloudyte.app.api.OfflineFileManager.getLocalFile(
+            context = context,
+            accountId = "a1",
+            fileId = "f9",
+            fileName = "vault_video.mp4"
+        ).apply {
+            writeBytes(originalBytes)
+        }
+
+        val failures = mutableListOf<String>()
+        val registry = ProviderRegistry(createStubCloudyteApi())
+        val executor = CloudTransferOperationExecutor(
+            context = context,
+            database = db,
+            transfers = TransferRepository(db.transferDao(), registry),
+            providers = registry,
+            shouldDeleteAfterBackupUpload = { true },
+            onLocalDeletionFailed = { _, reason -> failures += reason }
+        )
+
+        val mismatchTransfer = LocalTransfer(
+            id = "del-sha-mismatch",
+            accountId = "a1",
+            fileName = modifiedFile.name,
+            localPath = Uri.fromFile(modifiedFile).toString(),
+            localUri = Uri.fromFile(modifiedFile).toString(),
+            parentFolderId = "root",
+            direction = TransferDirection.BACKUP.name,
+            operationType = "BACKUP",
+            totalBytes = originalBytes.size.toLong(),
+            checksum = originalSha256
+        )
+        db.transferDao().insert(mismatchTransfer)
+        executor.onCompleted(mismatchTransfer)
+
+        assertTrue("Modified local file must NEVER be deleted on SHA-256 mismatch", modifiedFile.exists())
+        assertTrue(failures.any { it.contains("SHA-256 mismatch") })
+
+        val vaultTransfer = LocalTransfer(
+            id = "del-vault-protect",
+            accountId = "a1",
+            fileName = vaultFile.name,
+            localPath = Uri.fromFile(vaultFile).toString(),
+            localUri = Uri.fromFile(vaultFile).toString(),
+            parentFolderId = "root",
+            direction = TransferDirection.BACKUP.name,
+            operationType = "BACKUP",
+            totalBytes = originalBytes.size.toLong(),
+            checksum = originalSha256
+        )
+        db.transferDao().insert(vaultTransfer)
+        executor.onCompleted(vaultTransfer)
+        assertTrue("Offline vault file must NEVER be deleted", vaultFile.exists())
+        vaultFile.delete()
+        Unit
+    }
+
+    @Test
+    fun retryAfterHeaderIsParsedAndPropagatedToRetryAtSchedule(): Unit = runBlocking {
+        val headers = okhttp3.Headers.headersOf("Retry-After", "45")
+        val parsedNumeric = com.cloudyte.app.ui.screens.UploadHelper.parseRetryAfterSeconds(headers)
+        assertEquals(45L, parsedNumeric)
+
+        val apiWith429 = createStubCloudyteApi(
+            onCreateUploadSession = { _, _ ->
+                val rawOkHttpResponse = okhttp3.Response.Builder()
+                    .code(429)
+                    .message("Too Many Requests")
+                    .protocol(okhttp3.Protocol.HTTP_1_1)
+                    .request(okhttp3.Request.Builder().url("https://example.invalid/upload").build())
+                    .header("Retry-After", "90")
+                    .build()
+                Response.error(
+                    """{"code":"RATE_LIMITED","message":"Too many requests","retryable":true}"""
+                        .toResponseBody("application/json".toMediaType()),
+                    rawOkHttpResponse
+                )
+            }
+        )
+        val sourceFile = File(tempFolder.root, "rate_limited.jpg").apply {
+            writeBytes("sample-bytes".toByteArray())
+        }
+        val registry = ProviderRegistry(apiWith429)
+        val executor = CloudTransferOperationExecutor(
+            context = context,
+            database = db,
+            transfers = TransferRepository(db.transferDao(), registry),
+            providers = registry,
+            shouldEncryptNewUploads = { false }
+        )
+        val transfer = LocalTransfer(
+            id = "rl-429-1",
+            accountId = "a1",
+            fileName = sourceFile.name,
+            localPath = Uri.fromFile(sourceFile).toString(),
+            localUri = Uri.fromFile(sourceFile).toString(),
+            direction = TransferDirection.UPLOAD.name,
+            operationType = "UPLOAD",
+            totalBytes = sourceFile.length()
+        )
+        db.transferDao().insert(transfer)
+
+        val beforeMs = System.currentTimeMillis()
+        val outcome = executor.execute(transfer, "owner-429") { _, _, _, _ -> }
+        assertTrue(outcome is TransferOutcome.Retryable)
+        val retryable = outcome as TransferOutcome.Retryable
+        assertNotNull(retryable.retryAt)
+        assertTrue("retryAt should honor 90s Retry-After header", retryable.retryAt!! >= beforeMs + 85_000L)
+    }
+
     class ReadOnlyDocProvider : ContentProvider() {
         override fun onCreate(): Boolean = true
         override fun query(

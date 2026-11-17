@@ -11,6 +11,7 @@ import android.webkit.MimeTypeMap
 import androidx.annotation.VisibleForTesting
 import androidx.core.app.NotificationCompat
 import androidx.documentfile.provider.DocumentFile
+import androidx.room.withTransaction
 import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
@@ -78,6 +79,7 @@ class BackupWorker(
         private const val TAG = "BackupWorker"
         private const val TRANSFER_CHANNEL_ID = "cloudyte_transfers"
         private const val TRANSFER_NOTIFICATION_ID = 2401
+        private const val ENQUEUE_BATCH_SIZE = 500
     }
 
     private var totalFilesToProcess = 0
@@ -557,6 +559,9 @@ class BackupWorker(
             return
         }
 
+        val cachedAccountType = db.accountDao().getAccountById(accountId)?.accountType
+        val pendingBatch = ArrayList<PendingBackupEnqueue>(minOf(folderNode.files.size, ENQUEUE_BATCH_SIZE))
+
         for (file in folderNode.files) {
             val fileName = file.name ?: continue
             processedFilesCount++
@@ -573,7 +578,6 @@ class BackupWorker(
                 val lastModified = file.lastModified()
                 val fileUriStr = file.uri.toString()
                 val mimeType = resolveMimeType(context, file, fileName)
-                val sizeFormatted = formatFileSize(fileSize)
 
                 val eval = EvaluateExclusions.evaluate(
                     candidate = ExclusionCandidate(
@@ -689,72 +693,40 @@ class BackupWorker(
                     continue
                 }
 
-                val accountType = db.accountDao().getAccountById(accountId)?.accountType
-                if (existingTransfer == null) {
-                    db.transferDao().insertIfAbsent(
-                        LocalTransfer(
-                            id = transferId,
-                            accountId = accountId,
-                            fileName = fileName,
-                            localPath = fileUriStr,
-                            localUri = fileUriStr,
-                            remotePath = currentCloudFolderId,
-                            parentFolderId = currentCloudFolderId,
-                            providerType = accountType,
-                            direction = TransferDirection.BACKUP.name,
-                            operationType = operationType,
-                            totalBytes = fileSize,
-                            checksum = computedHash,
-                            isEncrypted = encryptUploads,
-                            encryptionFormatVersion = if (encryptUploads) 1 else null,
-                            plaintextSizeBytes = if (encryptUploads) fileSize else null
-                        )
-                    )
-                }
                 val idempotencyKey = ResumableTransfer.newIdempotencyKey("$transferId:$lastModified:$fileSize")
-                if (existingTransfer?.idempotencyKey != idempotencyKey || existingTransfer?.checksum != computedHash) {
-                    transferRepository.saveResumeMetadata(
+                pendingBatch += PendingBackupEnqueue(
+                    transfer = LocalTransfer(
                         id = transferId,
-                        sessionId = existingTransfer?.providerSessionId,
-                        chunkSize = existingTransfer?.chunkSize?.takeIf { it > 0L } ?: ResumableTransfer.DEFAULT_CHUNK_SIZE,
-                        nextChunkIndex = existingTransfer?.nextChunkIndex ?: 0,
-                        checksum = computedHash,
-                        idempotencyKey = idempotencyKey
-                    )
-                }
-                val queued = when (existingTransfer?.state) {
-                    TransferState.FAILED_RETRYABLE.name,
-                    TransferState.WAITING_FOR_NETWORK.name,
-                    TransferState.WAITING_FOR_AUTH.name -> {
-                        db.transferDao().resetRetryNow(transferId, operationType = operationType)
-                        true
-                    }
-                    else -> transferRepository.queueTransfer(
-                        id = transferId,
-                        direction = TransferDirection.BACKUP,
+                        accountId = accountId,
+                        fileName = fileName,
+                        localPath = fileUriStr,
                         localUri = fileUriStr,
+                        remotePath = currentCloudFolderId,
                         parentFolderId = currentCloudFolderId,
-                        providerType = accountType,
+                        providerType = cachedAccountType,
+                        direction = TransferDirection.BACKUP.name,
+                        operationType = operationType,
                         totalBytes = fileSize,
-                        operationTypeOverride = operationType
-                    )
-                }
-                activeTransferId = null
-                if (queued) {
-                    queuedFilesCount++
-                    SyncLogger.log("↗ [$processedFilesCount/$totalFilesToProcess] Queued '$relativeFilePath' ($sizeFormatted).", SyncLogLevel.INFO)
-                    trySetForeground(createForegroundInfo(context, "Queued $fileName", processedFilesCount, totalFilesToProcess))
-                } else {
-                    failedFilesCount++
-                    SyncLogger.log("✗ Could not enqueue '$relativeFilePath' because its transfer is terminal.", SyncLogLevel.ERROR)
-                }
-                SyncLogger.updateStatus(
-                    SyncState.SYNCING,
-                    action = "Queueing files…",
-                    file = fileName,
-                    uploadedCount = queuedFilesCount,
-                    totalCount = totalFilesToProcess
+                        checksum = computedHash,
+                        isEncrypted = encryptUploads,
+                        encryptionFormatVersion = if (encryptUploads) 1 else null,
+                        plaintextSizeBytes = if (encryptUploads) fileSize else null
+                    ),
+                    existingState = existingTransfer?.state,
+                    existingSessionId = existingTransfer?.providerSessionId,
+                    existingChunkSize = existingTransfer?.chunkSize,
+                    existingNextChunkIndex = existingTransfer?.nextChunkIndex ?: 0,
+                    needsResumeMetadataUpdate = existingTransfer?.idempotencyKey != idempotencyKey || existingTransfer?.checksum != computedHash,
+                    idempotencyKey = idempotencyKey,
+                    computedHash = computedHash,
+                    relativeFilePath = relativeFilePath,
+                    processedIndex = processedFilesCount,
+                    fileSizeFormatted = formatFileSize(fileSize)
                 )
+                activeTransferId = null
+                if (pendingBatch.size >= ENQUEUE_BATCH_SIZE) {
+                    flushEnqueueBatch(context, db, operationType, cachedAccountType, pendingBatch)
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: IOException) {
@@ -777,6 +749,10 @@ class BackupWorker(
                 if (e.cause is IOException) sawRetryableError = true
                 SyncLogger.log("✗ Error processing '$relativeFilePath': ${e.message}", SyncLogLevel.ERROR)
             }
+        }
+
+        if (pendingBatch.isNotEmpty()) {
+            flushEnqueueBatch(context, db, operationType, cachedAccountType, pendingBatch)
         }
 
         for (excluded in folderNode.excludedSubdirs) {
@@ -811,6 +787,91 @@ class BackupWorker(
                 )
             }
         }
+    }
+
+    private data class PendingBackupEnqueue(
+        val transfer: LocalTransfer,
+        val existingState: String?,
+        val existingSessionId: String?,
+        val existingChunkSize: Long?,
+        val existingNextChunkIndex: Int,
+        val needsResumeMetadataUpdate: Boolean,
+        val idempotencyKey: String,
+        val computedHash: String?,
+        val relativeFilePath: String,
+        val processedIndex: Int,
+        val fileSizeFormatted: String
+    )
+
+    private suspend fun flushEnqueueBatch(
+        context: Context,
+        db: AppDatabase,
+        operationType: String,
+        accountType: String?,
+        batch: MutableList<PendingBackupEnqueue>
+    ) {
+        if (batch.isEmpty()) return
+        val transferDao = db.transferDao()
+        val nowMs = System.currentTimeMillis()
+        val outcomes = db.withTransaction {
+            batch.map { item ->
+                if (item.existingState == null) {
+                    transferDao.insertIfAbsent(item.transfer)
+                }
+                if (item.needsResumeMetadataUpdate) {
+                    transferDao.updateResumeMetadata(
+                        id = item.transfer.id,
+                        sessionId = item.existingSessionId,
+                        chunkSize = item.existingChunkSize?.takeIf { it > 0L } ?: ResumableTransfer.DEFAULT_CHUNK_SIZE,
+                        nextChunkIndex = item.existingNextChunkIndex,
+                        checksum = item.computedHash,
+                        idempotencyKey = item.idempotencyKey,
+                        updatedAt = nowMs
+                    )
+                }
+                val queued = when (item.existingState) {
+                    TransferState.FAILED_RETRYABLE.name,
+                    TransferState.WAITING_FOR_NETWORK.name,
+                    TransferState.WAITING_FOR_AUTH.name -> {
+                        transferDao.resetRetryNow(item.transfer.id, operationType = operationType, now = nowMs)
+                        true
+                    }
+                    else -> transferDao.queueTransfer(
+                        id = item.transfer.id,
+                        direction = TransferDirection.BACKUP.name,
+                        operationType = operationType,
+                        localUri = item.transfer.localUri.orEmpty(),
+                        parentFolderId = item.transfer.parentFolderId,
+                        providerType = accountType,
+                        totalBytes = item.transfer.totalBytes,
+                        now = nowMs
+                    ) == 1
+                }
+                item to queued
+            }
+        }
+        var lastQueuedItem: PendingBackupEnqueue? = null
+        for ((item, queued) in outcomes) {
+            if (queued) {
+                queuedFilesCount++
+                lastQueuedItem = item
+                SyncLogger.log("↗ [${item.processedIndex}/$totalFilesToProcess] Queued '${item.relativeFilePath}' (${item.fileSizeFormatted}).", SyncLogLevel.INFO)
+            } else {
+                failedFilesCount++
+                SyncLogger.log("✗ Could not enqueue '${item.relativeFilePath}' because its transfer is terminal.", SyncLogLevel.ERROR)
+            }
+        }
+        lastQueuedItem?.let { last ->
+            trySetForeground(createForegroundInfo(context, "Queued ${last.transfer.fileName}", last.processedIndex, totalFilesToProcess))
+            SyncLogger.updateStatus(
+                SyncState.SYNCING,
+                action = "Queueing files…",
+                file = last.transfer.fileName,
+                uploadedCount = queuedFilesCount,
+                totalCount = totalFilesToProcess
+            )
+        }
+        batch.clear()
     }
 
     private suspend fun fetchRemoteFiles(

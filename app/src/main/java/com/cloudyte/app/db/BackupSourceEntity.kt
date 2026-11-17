@@ -5,12 +5,14 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 import java.util.UUID
 
-enum class BackupPresetType(val label: String) {
-    CAMERA("Camera (DCIM)"),
-    PICTURES("Pictures"),
-    DOCUMENTS("Documents"),
-    DOWNLOADS("Downloads"),
-    CUSTOM("Custom Folder")
+enum class BackupPresetType(val label: String, val relativePath: String = "") {
+    CAMERA("Camera", "DCIM/Camera"),
+    PICTURES("Pictures", "Pictures"),
+    SCREENSHOTS("Screenshots", "Pictures/Screenshots"),
+    MOVIES("Movies", "Movies"),
+    DOCUMENTS("Documents", "Documents"),
+    DOWNLOADS("Downloads", "Download"),
+    CUSTOM("Custom Folder", "")
 }
 
 enum class BackupSourcePermissionStatus {

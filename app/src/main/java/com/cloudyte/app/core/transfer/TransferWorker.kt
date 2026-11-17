@@ -101,6 +101,7 @@ class TransferWorker(
                 showDetailedProgress = showDetailedProgress
             )
         )
+        val uiNotifyMutex = kotlinx.coroutines.sync.Mutex()
         var lastUiNotifyAt = 0L
         var lastTransferId: String? = null
         var totalProcessed = 0
@@ -108,12 +109,22 @@ class TransferWorker(
         var batches = 0
         while (!isStopped && batches < MAX_WORKER_DRAIN_BATCHES) {
             val drained = container.transferQueueDrainer.drain(trigger, { isStopped }) { snapshot ->
-                val currentMs = System.currentTimeMillis()
-                val isTerminalSnapshot = snapshot.totalBytes > 0L && snapshot.bytesTransferred >= snapshot.totalBytes
-                val transferChanged = snapshot.transferId != lastTransferId
-                if (lastUiNotifyAt == 0L || transferChanged || isTerminalSnapshot || currentMs < lastUiNotifyAt || (currentMs - lastUiNotifyAt) >= 500L) {
-                    lastUiNotifyAt = currentMs
-                    lastTransferId = snapshot.transferId
+                uiNotifyMutex.lock()
+                val shouldNotify = try {
+                    val currentMs = System.currentTimeMillis()
+                    val isTerminalSnapshot = snapshot.totalBytes > 0L && snapshot.bytesTransferred >= snapshot.totalBytes
+                    val transferChanged = snapshot.transferId != lastTransferId
+                    if (lastUiNotifyAt == 0L || transferChanged || isTerminalSnapshot || currentMs < lastUiNotifyAt || (currentMs - lastUiNotifyAt) >= 500L) {
+                        lastUiNotifyAt = currentMs
+                        lastTransferId = snapshot.transferId
+                        true
+                    } else {
+                        false
+                    }
+                } finally {
+                    uiNotifyMutex.unlock()
+                }
+                if (shouldNotify) {
                     setProgress(
                         Data.Builder()
                             .putString("transfer_id", snapshot.transferId)
@@ -143,7 +154,7 @@ class TransferWorker(
             if (drained is DrainResult.Drained) {
                 totalProcessed += drained.processed
                 if (!drained.hasMore || drained.processed == 0) {
-                    if (!queueDao.hasRunnableTransfers(System.currentTimeMillis())) break
+                    break
                 }
             } else {
                 break
@@ -169,6 +180,13 @@ class TransferWorker(
         if (retryAt != null) container.transferScheduler.scheduleRetryAt(retryAt)
         val leaseExpiry = queueDao.nextLeaseExpiry(currentNow)
         if (leaseExpiry != null) container.transferScheduler.scheduleLeaseRecoveryAt(leaseExpiry)
+        if (queueDao.hasAutoBackupNetworkWaiters()) {
+            val prefs = runCatching { com.cloudyte.app.data.UserPreferences.observe(applicationContext).first() }.getOrNull()
+            container.transferScheduler.scheduleBackupResume(
+                chargingOnly = prefs?.backupChargingOnly == true,
+                wifiOnly = prefs?.backupWifiOnly ?: true
+            )
+        }
         if (queueDao.hasNetworkWaiters()) container.transferScheduler.scheduleNetworkRecovery()
     }
 

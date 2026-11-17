@@ -3,7 +3,9 @@ package com.cloudyte.app.sync
 import android.Manifest
 import android.content.Context
 import android.net.Uri
+import android.os.PowerManager
 import android.provider.DocumentsContract
+import android.provider.Settings
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteOpenHelper
 import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
@@ -11,8 +13,10 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.testing.WorkManagerTestInitHelper
+import com.cloudyte.app.api.CloudFile
 import com.cloudyte.app.api.OfflineFileManager
 import com.cloudyte.app.core.cache.CacheCleanupWorker
+import com.cloudyte.app.core.cache.PreviewFetcher
 import com.cloudyte.app.core.cache.StorageManager
 import com.cloudyte.app.core.transfer.notification.NotificationEventType
 import com.cloudyte.app.core.transfer.notification.NotificationHelper
@@ -225,5 +229,102 @@ class SettingsBehaviorTests {
         val onlineLogout = AccountSessionHelper.performLogout(context) { true }
         assertTrue(onlineLogout.remoteRevoked)
         assertNull(onlineLogout.warningMessage)
+    }
+
+    @Test
+    fun offlineFileManagerAndPreviewFetcherResolveCrossAccountOfflineVideo(): Unit = runBlocking {
+        OfflineFileManager.clearAllOfflineCache(context)
+        val vaultFile = OfflineFileManager.getLocalFile(
+            context = context,
+            accountId = "acc-primary",
+            fileId = "vid-294mb",
+            fileName = "Bollysick.org-sample.mkv"
+        ).apply {
+            parentFile?.mkdirs()
+            writeBytes(ByteArray(1024) { 7 })
+        }
+        OfflineFileManager.markDownloaded("vid-294mb")
+
+        // Opening from "all" drives, "root", blank, or another accountId still resolves the local offline file
+        assertEquals(vaultFile.absolutePath, OfflineFileManager.findOfflineFile(context, "all", "vid-294mb")?.absolutePath)
+        assertEquals(vaultFile.absolutePath, OfflineFileManager.findOfflineFile(context, "root", "vid-294mb")?.absolutePath)
+        assertEquals(vaultFile.absolutePath, OfflineFileManager.findOfflineFile(context, "", "vid-294mb")?.absolutePath)
+        assertEquals(vaultFile.absolutePath, OfflineFileManager.findOfflineFile(context, "acc-other", "vid-294mb")?.absolutePath)
+
+        // Ignored incomplete .tmp / .part files
+        val partOnly = File(OfflineFileManager.getInternalVaultDir(context), "acc-primary_partonly_video.mkv.part").apply {
+            writeBytes(ByteArray(512))
+        }
+        assertNull(OfflineFileManager.findOfflineFile(context, "acc-primary", "partonly"))
+        partOnly.delete()
+
+        val cloudFile = CloudFile(
+            id = "vid-294mb",
+            name = "Bollysick.org-sample.mkv",
+            mimeType = "video/x-matroska",
+            accountId = null
+        )
+        val resolved = PreviewFetcher.resolveCachedOnly(context, "all", cloudFile)
+        assertNotNull(resolved)
+        assertEquals(vaultFile.absolutePath, resolved?.absolutePath)
+
+        OfflineFileManager.clearAllOfflineCache(context)
+    }
+
+    @Test
+    fun permissionsHelperReportsBatteryOptimizationAndBackupPresetsMatchStandardFolders(): Unit = runBlocking {
+        val powerManager = context.getSystemService(PowerManager::class.java)
+        val shadowPower = shadowOf(powerManager)
+        shadowPower.setIgnoringBatteryOptimizations(context.packageName, false)
+        assertFalse(PermissionsHelper.isIgnoringBatteryOptimizations(context))
+
+        val beforeSummary = PermissionsHelper.inspectAppPermissions(context)
+        assertFalse(beforeSummary.ignoringBatteryOptimizations)
+
+        shadowPower.setIgnoringBatteryOptimizations(context.packageName, true)
+        assertTrue(PermissionsHelper.isIgnoringBatteryOptimizations(context))
+
+        val afterSummary = PermissionsHelper.inspectAppPermissions(context)
+        assertTrue(afterSummary.ignoringBatteryOptimizations)
+
+        val batteryIntent = PermissionsHelper.buildBatteryOptimizationSettingsIntent(context)
+        assertTrue(
+            batteryIntent.action == Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS ||
+                batteryIntent.action == Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+        )
+
+        // Standard folders align with TeleWarden's 6 standard backup folders
+        assertEquals(
+            listOf(
+                BackupPresetType.CAMERA,
+                BackupPresetType.PICTURES,
+                BackupPresetType.SCREENSHOTS,
+                BackupPresetType.MOVIES,
+                BackupPresetType.DOCUMENTS,
+                BackupPresetType.DOWNLOADS
+            ),
+            BackupSourceManager.standardPresets
+        )
+        BackupSourceManager.standardPresets.forEach { preset ->
+            assertNotNull(BackupSourceManager.suggestedInitialUri(preset))
+        }
+
+        val sources = listOf(
+            BackupSourceEntity(
+                id = "s-screens",
+                treeUri = "content://com.android.externalstorage.documents/tree/primary%3APictures%2FScreenshots",
+                displayName = "Screenshots",
+                presetType = BackupPresetType.SCREENSHOTS.name
+            ),
+            BackupSourceEntity(
+                id = "s-movies",
+                treeUri = "content://com.android.externalstorage.documents/tree/primary%3AMovies",
+                displayName = "Movies",
+                presetType = BackupPresetType.CUSTOM.name
+            )
+        )
+        assertEquals("s-screens", BackupSourceManager.findSourceForPreset(BackupPresetType.SCREENSHOTS, sources)?.id)
+        assertEquals("s-movies", BackupSourceManager.findSourceForPreset(BackupPresetType.MOVIES, sources)?.id)
+        assertNull(BackupSourceManager.findSourceForPreset(BackupPresetType.CAMERA, sources))
     }
 }

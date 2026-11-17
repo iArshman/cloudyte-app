@@ -101,39 +101,47 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
             }
         }
 
-        if (latest.direction != TransferDirection.DOWNLOAD.name) {
-            val plaintextSize = latest.plaintextSizeBytes ?: latest.totalBytes
-            val lastModified = resolveSourceLastModified(uri, latest.createdAt)
-            val contentHash = cachedPlaintextHash
-                ?: if (!latest.isEncrypted && !latest.checksum.isNullOrBlank()) {
-                    latest.checksum
-                } else {
-                    computeSha256Safely(uri)
-                }
-            runCatching {
-                database.uploadRecordDao().insertRecord(
-                    com.cloudyte.app.db.LocalUploadRecord(
-                        localUri = rawUri,
-                        fileName = latest.fileName,
-                        fileSize = plaintextSize,
-                        lastModified = lastModified,
-                        targetAccountId = latest.accountId,
-                        targetFolderId = latest.parentFolderId ?: latest.remotePath ?: "root",
-                        cloudFileId = latest.remoteId ?: latest.fileId,
-                        uploadedAt = System.currentTimeMillis(),
-                        status = "SUCCESS",
-                        contentHash = contentHash
+            if (latest.direction != TransferDirection.DOWNLOAD.name) {
+                val plaintextSize = latest.plaintextSizeBytes ?: latest.totalBytes
+                val lastModified = resolveSourceLastModified(uri, latest.createdAt)
+                val contentHash = cachedPlaintextHash
+                    ?: if (!latest.isEncrypted && !latest.checksum.isNullOrBlank()) {
+                        latest.checksum
+                    } else {
+                        computeSha256Safely(uri)
+                    }
+                runCatching {
+                    database.uploadRecordDao().insertRecord(
+                        com.cloudyte.app.db.LocalUploadRecord(
+                            localUri = rawUri,
+                            fileName = latest.fileName,
+                            fileSize = plaintextSize,
+                            lastModified = lastModified,
+                            targetAccountId = latest.accountId,
+                            targetFolderId = latest.parentFolderId ?: latest.remotePath ?: "root",
+                            cloudFileId = latest.remoteId ?: latest.fileId,
+                            uploadedAt = System.currentTimeMillis(),
+                            status = "SUCCESS",
+                            contentHash = contentHash
+                        )
                     )
-                )
+                }
+
+                if (latest.direction == TransferDirection.BACKUP.name && runCatching { shouldDeleteAfterBackupUpload() }.getOrDefault(false)) {
+                    deleteEligibleLocalBackupSource(latest, uri, expectedSha256 = contentHash)
+                }
             }
         }
 
-        if (latest.direction == TransferDirection.BACKUP.name && runCatching { shouldDeleteAfterBackupUpload() }.getOrDefault(false)) {
-            deleteEligibleLocalBackupSource(latest, uri)
-        }
-    }
+    private suspend fun deleteEligibleLocalBackupSource(
+        transfer: LocalTransfer,
+        uri: Uri,
+        expectedSha256: String? = null
+    ) {
+        val expectedSize = (transfer.plaintextSizeBytes ?: transfer.totalBytes).takeIf { it > 0L }
+        val normalizedExpectedHash = expectedSha256?.trim()?.takeIf { it.isNotEmpty() }
+            ?: transfer.checksum?.trim()?.takeIf { it.isNotEmpty() }
 
-    private suspend fun deleteEligibleLocalBackupSource(transfer: LocalTransfer, uri: Uri) {
         val scheme = uri.scheme
         if (scheme == "file" || scheme.isNullOrBlank()) {
             val path = if (scheme == "file") uri.path.orEmpty() else uri.toString()
@@ -142,12 +150,35 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
             val canonical = runCatching { file.canonicalFile }.getOrDefault(file)
             val appFiles = runCatching { context.filesDir.canonicalFile }.getOrNull()
             val appCache = runCatching { context.cacheDir.canonicalFile }.getOrNull()
+            val vaultDirs = runCatching {
+                com.cloudyte.app.api.OfflineFileManager.getAllVaultDirs(context).map { it.canonicalFile }
+            }.getOrDefault(emptyList())
             if ((appFiles != null && canonical.path.startsWith(appFiles.path)) ||
-                (appCache != null && canonical.path.startsWith(appCache.path))
+                (appCache != null && canonical.path.startsWith(appCache.path)) ||
+                vaultDirs.any { canonical.path.startsWith(it.path) }
             ) {
                 return
             }
             if (!file.exists() || !file.isFile) return
+
+            val actualSize = file.length()
+            if (expectedSize != null && actualSize != expectedSize) {
+                val reason = "Skipped deleting local copy '${transfer.fileName}': file size changed after upload."
+                com.cloudyte.app.sync.SyncLogger.log(reason, com.cloudyte.app.sync.SyncLogLevel.WARNING)
+                runCatching { onLocalDeletionFailed?.invoke(transfer, reason) }
+                return
+            }
+
+            if (normalizedExpectedHash != null && actualSize <= MAX_DELETE_VERIFY_HASH_BYTES) {
+                val actualHash = computeSha256Safely(uri)
+                if (actualHash != null && !actualHash.equals(normalizedExpectedHash, ignoreCase = true)) {
+                    val reason = "Skipped deleting local copy '${transfer.fileName}': file content changed after upload (SHA-256 mismatch)."
+                    com.cloudyte.app.sync.SyncLogger.log(reason, com.cloudyte.app.sync.SyncLogLevel.WARNING)
+                    runCatching { onLocalDeletionFailed?.invoke(transfer, reason) }
+                    return
+                }
+            }
+
             val deleted = runCatching { file.delete() }.getOrDefault(false)
             if (!deleted) {
                 val reason = "Could not delete local file '${transfer.fileName}' after verified upload."
@@ -160,10 +191,24 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
         }
 
         if (scheme == "content") {
+            if (uri.authority?.startsWith(context.packageName) == true) {
+                return
+            }
             val result = runCatching {
                 val doc = androidx.documentfile.provider.DocumentFile.fromSingleUri(context, uri)
                     ?: throw IOException("Local document URI is unavailable")
                 if (!doc.exists()) return
+                val resolvedActualSize = queryContentUriSizeOnly(uri)
+                if (expectedSize != null && resolvedActualSize != null && resolvedActualSize >= 0L && resolvedActualSize != expectedSize) {
+                    throw IOException("Local file size changed after upload")
+                }
+                val hashCheckCapOk = (resolvedActualSize ?: expectedSize ?: 0L) <= MAX_DELETE_VERIFY_HASH_BYTES
+                if (normalizedExpectedHash != null && hashCheckCapOk) {
+                    val actualHash = computeSha256Safely(uri)
+                    if (actualHash != null && !actualHash.equals(normalizedExpectedHash, ignoreCase = true)) {
+                        throw IOException("Local file content changed after upload (SHA-256 mismatch)")
+                    }
+                }
                 if (!doc.delete()) throw IOException("Provider refused local file deletion")
                 true
             }
@@ -175,6 +220,21 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
                 runCatching { onLocalDeletionFailed?.invoke(transfer, reason) }
             }
         }
+    }
+
+    private fun queryContentUriSizeOnly(uri: Uri): Long? {
+        return runCatching {
+            context.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val index = cursor.getColumnIndex(OpenableColumns.SIZE)
+                    if (index >= 0 && !cursor.isNull(index)) {
+                        val value = cursor.getLong(index)
+                        if (value >= 0L) return@use value
+                    }
+                }
+                null
+            }
+        }.getOrNull()
     }
 
     private fun computeSha256Safely(uri: Uri): String? {
@@ -260,7 +320,8 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
     } catch (error: CryptoException) {
         mapCryptoOutcome(transfer, error)
     } catch (error: HttpException) {
-        mapHttpOutcome(error.code(), error.message())
+        val retryAfterSec = UploadHelper.parseRetryAfterSeconds(error.response()?.headers())
+        mapHttpOutcome(error.code(), error.message(), retryAfterSeconds = retryAfterSec)
     } catch (error: FileNotFoundException) {
         TransferOutcome.Permanent("SOURCE_MISSING", error.message ?: "Local source file is missing")
     } catch (error: SecurityException) {
@@ -825,6 +886,7 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
         }
 
         if (!response.isSuccessful) {
+            val retryAfterSec = UploadHelper.parseRetryAfterSeconds(response.headers())
             val rawError = response.errorBody()?.string()
             val code = response.code()
             val message = ApiClient.parseError(rawError, code)
@@ -832,7 +894,7 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
                 if (partFile.exists()) partFile.delete()
                 return TransferOutcome.Retryable("HTTP_416", message, httpStatus = 416)
             }
-            return mapHttpOutcome(code, message)
+            return mapHttpOutcome(code, message, retryAfterSeconds = retryAfterSec)
         }
 
         var body = response.body()
@@ -855,9 +917,10 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
                 range = null
             )
             if (!response.isSuccessful) {
+                val retryAfterSec = UploadHelper.parseRetryAfterSeconds(response.headers())
                 val rawError = response.errorBody()?.string()
                 val code = response.code()
-                return mapHttpOutcome(code, ApiClient.parseError(rawError, code))
+                return mapHttpOutcome(code, ApiClient.parseError(rawError, code), retryAfterSeconds = retryAfterSec)
             }
             body = response.body()
                 ?: return TransferOutcome.Retryable("EMPTY_DOWNLOAD_BODY", "Server returned empty download stream")
@@ -942,6 +1005,9 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
             isKnownEncrypted = isKnownEncrypted,
             expectedKeyId = expectedKeyId
         )
+        if (transfer.id.startsWith("offline:")) {
+            com.cloudyte.app.api.OfflineFileManager.markDownloaded(remoteId)
+        }
         return TransferOutcome.Completed
     }
 
@@ -1108,6 +1174,9 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
     private class PlaintextChecksumMismatchException(message: String) : IOException(message)
 
     private fun mapUploadResultOutcome(result: UploadResult): TransferOutcome {
+        val retryAtFromHeader = result.retryAfterSeconds?.takeIf { it > 0L }?.let {
+            System.currentTimeMillis() + it * 1000L
+        }
         return when {
             result.isSuccess -> TransferOutcome.Completed
             result.isIoError -> {
@@ -1115,7 +1184,7 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
                 if (!isNetworkConnected()) {
                     TransferOutcome.WaitingForNetwork("NETWORK_IO", msg)
                 } else {
-                    TransferOutcome.Retryable("NETWORK_IO", msg)
+                    TransferOutcome.Retryable("NETWORK_IO", msg, retryAt = retryAtFromHeader)
                 }
             }
             result.statusCode == 401 -> TransferOutcome.WaitingForAuth("AUTH_REQUIRED", result.errorMessage ?: "Authentication required")
@@ -1123,6 +1192,7 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
                 TransferOutcome.Retryable(
                     result.errorCode ?: "UPLOAD_RETRYABLE",
                     result.errorMessage ?: "Upload failed",
+                    retryAt = retryAtFromHeader,
                     httpStatus = result.statusCode.takeIf { it > 0 }
                 )
             result.serverRetryable == false ->
@@ -1131,10 +1201,15 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
                     result.errorMessage ?: "Upload permanently failed",
                     httpStatus = result.statusCode.takeIf { it > 0 }
                 )
-            result.statusCode > 0 -> mapHttpOutcome(result.statusCode, result.errorMessage ?: "Upload failed", result.errorCode)
+            result.statusCode > 0 -> mapHttpOutcome(
+                statusCode = result.statusCode,
+                message = result.errorMessage ?: "Upload failed",
+                serverCode = result.errorCode,
+                retryAfterSeconds = result.retryAfterSeconds
+            )
             isExplicitlyUnrecoverableMessage(result.errorMessage) ->
                 TransferOutcome.Permanent(result.errorCode ?: "UPLOAD_FAILED", result.errorMessage ?: "Upload permanently failed")
-            else -> TransferOutcome.Retryable(result.errorCode ?: "UPLOAD_RETRYABLE", result.errorMessage ?: "Upload failed")
+            else -> TransferOutcome.Retryable(result.errorCode ?: "UPLOAD_RETRYABLE", result.errorMessage ?: "Upload failed", retryAt = retryAtFromHeader)
         }
     }
 
@@ -1221,12 +1296,20 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
         }
     }
 
-    private fun mapHttpOutcome(statusCode: Int, message: String, serverCode: String? = null): TransferOutcome {
+    private fun mapHttpOutcome(
+        statusCode: Int,
+        message: String,
+        serverCode: String? = null,
+        retryAfterSeconds: Long? = null
+    ): TransferOutcome {
+        val retryAtFromHeader = retryAfterSeconds?.takeIf { it > 0L }?.let {
+            System.currentTimeMillis() + it * 1000L
+        }
         if (statusCode == 507 || serverCode == "INSUFFICIENT_STORAGE" || message.contains("quota", ignoreCase = true)) {
             return TransferOutcome.Permanent(serverCode ?: "QUOTA_EXCEEDED", message, httpStatus = statusCode)
         }
         if (serverCode != null && serverCode in UploadResult.RETRYABLE_ERROR_CODES) {
-            return TransferOutcome.Retryable(serverCode, message, httpStatus = statusCode)
+            return TransferOutcome.Retryable(serverCode, message, retryAt = retryAtFromHeader, httpStatus = statusCode)
         }
         return when (val mapped = TransferErrorMapper.fromHttp(statusCode)) {
             is TransferError.Authentication -> TransferOutcome.WaitingForAuth(serverCode ?: mapped.code, message)
@@ -1236,7 +1319,7 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
             else -> if (statusCode in UploadResult.PERMANENT_HTTP_CODES) {
                 TransferOutcome.Permanent(serverCode ?: mapped.code, message, httpStatus = statusCode)
             } else {
-                TransferOutcome.Retryable(serverCode ?: mapped.code, message, httpStatus = statusCode)
+                TransferOutcome.Retryable(serverCode ?: mapped.code, message, retryAt = retryAtFromHeader, httpStatus = statusCode)
             }
         }
     }
@@ -1335,5 +1418,6 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
 
     companion object {
         private const val MAX_INLINE_DOWNLOAD_IO_RETRIES = 3
+        private const val MAX_DELETE_VERIFY_HASH_BYTES = 512L * 1024L * 1024L
     }
 }

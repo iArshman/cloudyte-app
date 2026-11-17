@@ -25,6 +25,7 @@ object AutoSyncManager {
     private const val TAG = "AutoSyncManager"
     const val UNIQUE_PERIODIC_WORK = "AutoBackup"
     const val UNIQUE_QUICK_MEDIA_WORK = "QuickMediaBackup"
+    const val UNIQUE_MEDIA_SWEEP_WORK = "MediaTriggerSweep"
     const val UNIQUE_IMMEDIATE_WORK = "ImmediateAutoBackup"
     const val UNIQUE_MANUAL_WORK = "ManualSyncNow"
 
@@ -42,6 +43,11 @@ object AutoSyncManager {
                 BackupSourceManager.migrateLegacyBackupSourceIfNeeded(context)
                 val prefs = UserPreferences.observe(context).first()
                 if (prefs.autoBackupEnabled) {
+                    if (prefs.quickMediaBackupEnabled) {
+                        MediaStoreWatcher.start(context)
+                    } else {
+                        MediaStoreWatcher.stop(context)
+                    }
                     reschedule(
                         context = context,
                         periodicPolicy = ExistingPeriodicWorkPolicy.KEEP,
@@ -133,6 +139,9 @@ object AutoSyncManager {
             armQuickMediaTrigger(appContext, prefs)
         } else {
             wm.cancelUniqueWork(UNIQUE_QUICK_MEDIA_WORK)
+            wm.cancelUniqueWork(UNIQUE_MEDIA_SWEEP_WORK)
+            MediaTriggerScheduler.cancel(appContext)
+            MediaStoreWatcher.stop(appContext)
         }
 
         if (triggerImmediateIfEnabled) {
@@ -149,8 +158,28 @@ object AutoSyncManager {
         val wm = WorkManager.getInstance(appContext)
         if (!prefs.autoBackupEnabled || !prefs.quickMediaBackupEnabled) {
             wm.cancelUniqueWork(UNIQUE_QUICK_MEDIA_WORK)
+            wm.cancelUniqueWork(UNIQUE_MEDIA_SWEEP_WORK)
+            MediaTriggerScheduler.cancel(appContext)
+            MediaStoreWatcher.stop(appContext)
             return
         }
+        MediaStoreWatcher.start(appContext)
+        MediaTriggerScheduler.schedule(
+            context = appContext,
+            wifiOnly = prefs.backupWifiOnly,
+            chargingOnly = prefs.backupChargingOnly
+        )
+        val sweepConstraints = buildConstraintsFromPreferences(prefs)
+        val sweepRequest = PeriodicWorkRequestBuilder<MediaSweepWorker>(1, TimeUnit.HOURS)
+            .setConstraints(sweepConstraints)
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+            .build()
+        wm.enqueueUniquePeriodicWork(
+            UNIQUE_MEDIA_SWEEP_WORK,
+            ExistingPeriodicWorkPolicy.KEEP,
+            sweepRequest
+        )
+
         val baseNetworkType = if (prefs.backupWifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED
         val mediaConstraints = Constraints.Builder()
             .setRequiredNetworkType(baseNetworkType)
@@ -253,9 +282,13 @@ object AutoSyncManager {
     }
 
     fun cancelScheduledWork(context: Context) {
-        val wm = WorkManager.getInstance(context.applicationContext)
+        val appContext = context.applicationContext
+        val wm = WorkManager.getInstance(appContext)
         wm.cancelUniqueWork(UNIQUE_PERIODIC_WORK)
         wm.cancelUniqueWork(UNIQUE_QUICK_MEDIA_WORK)
+        wm.cancelUniqueWork(UNIQUE_MEDIA_SWEEP_WORK)
         wm.cancelUniqueWork(UNIQUE_IMMEDIATE_WORK)
+        MediaTriggerScheduler.cancel(appContext)
+        MediaStoreWatcher.stop(appContext)
     }
 }
