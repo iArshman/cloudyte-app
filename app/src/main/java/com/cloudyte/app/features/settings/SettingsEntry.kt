@@ -9,6 +9,14 @@ typealias SettingsViewModel = com.cloudyte.app.ui.screens.SettingsViewModel
 typealias SettingsSectionType = com.cloudyte.app.ui.screens.SettingsSectionType
 
 @Composable
-fun SettingsScreen(navController: NavController, rootNavController: NavController) {
-    LegacySettingsScreen(navController, rootNavController)
+fun SettingsScreen(
+    navController: NavController,
+    rootNavController: NavController,
+    onSubScreenChanged: (Boolean) -> Unit = {}
+) {
+    LegacySettingsScreen(
+        bottomNavController = navController,
+        rootNavController = rootNavController,
+        onSubScreenChanged = onSubScreenChanged
+    )
 }

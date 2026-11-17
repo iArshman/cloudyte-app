@@ -168,7 +168,13 @@ class HomeViewModel(
             ?: CloudFileRepository(AppDatabase.getDatabase(application), ApiClient.apiService)
     )
 
-    private val _profile = MutableStateFlow<UserProfile?>(null)
+    private val drivePrefs = application.getSharedPreferences("cloudyte_drive_state", android.content.Context.MODE_PRIVATE)
+
+    private val _profile = MutableStateFlow<UserProfile?>(
+        drivePrefs.getString("cached_username", null)?.takeIf { it.isNotBlank() }?.let {
+            UserProfile(username = it)
+        }
+    )
     val profile: StateFlow<UserProfile?> = _profile.asStateFlow()
 
     private val _accounts = MutableStateFlow<List<Account>>(emptyList())
@@ -188,6 +194,8 @@ class HomeViewModel(
 
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+
+    private val _immediateStorageSummary = MutableStateFlow<StorageSummary?>(null)
 
     private val preferredStorageAccountFlow = UserPreferences.observe(application)
         .map { it.homeStorageAccountId }
@@ -215,7 +223,18 @@ class HomeViewModel(
     }
         .distinctUntilChanged()
         .flatMapLatest { accountId ->
-            if (accountId == null) flowOf(null) else repository.observeStorage(accountId)
+            if (accountId == null) {
+                flowOf(null)
+            } else {
+                combine(
+                    repository.observeStorage(accountId),
+                    _immediateStorageSummary
+                ) { observed, immediate ->
+                    observed ?: immediate?.takeIf {
+                        it.accountId == accountId || (accountId == ALL_ACCOUNTS_STORAGE_ID && it.accountId == "all")
+                    }
+                }
+            }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
@@ -280,6 +299,7 @@ class HomeViewModel(
                         if (cachedTargetId == ALL_ACCOUNTS_STORAGE_ID) "all" else cachedTargetId
                     )
                     if (cachedSummary != null) {
+                        _immediateStorageSummary.value = cachedSummary.toStorageSummary()
                         _hasInitialContent.value = true
                     }
                 }
@@ -355,9 +375,20 @@ class HomeViewModel(
                         async { repository.refresh(accId, "root", force = forceStorageRefresh) }
                     }
 
-                    profileDeferred.await()?.let { _profile.value = it }
+                    profileDeferred.await()?.let { fetchedProfile ->
+                        _profile.value = fetchedProfile
+                        fetchedProfile.username?.takeIf { it.isNotBlank() }?.let { uname ->
+                            drivePrefs.edit().putString("cached_username", uname).apply()
+                        }
+                    }
                     storageJob.await()
                     filesJob.await()
+                    val persistedSummary = db.storageSummaryDao().getByAccountId(
+                        if (targetStorageId == ALL_ACCOUNTS_STORAGE_ID) "all" else targetStorageId
+                    )
+                    if (persistedSummary != null) {
+                        _immediateStorageSummary.value = persistedSummary.toStorageSummary()
+                    }
                 }
 
                 val updatedFiles = db.cloudFileDao().getRecentFiles(8).map { it.toCloudFile() }
@@ -585,10 +616,9 @@ fun HomeScreen(
         storageSummary,
         accounts,
         selectedStorageAccountId,
-        isStorageRefreshing,
         recentFiles
     ) {
-        val base = storageSummary ?: if (!isStorageRefreshing && accounts.isNotEmpty()) {
+        val base = storageSummary ?: if (accounts.isNotEmpty()) {
             deriveSummaryFromAccounts(accounts, selectedStorageAccountId, recentFiles)
         } else {
             null
@@ -652,7 +682,7 @@ fun HomeScreen(
                 .padding(innerPadding)
         ) {
             AnimatedVisibility(
-                visible = isLoading,
+                visible = isManualRefreshing && isLoading,
                 enter = expandVertically(),
                 exit = shrinkVertically()
             ) {
@@ -1064,7 +1094,7 @@ private fun CompactCategoryTile(
         modifier = modifier
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 14.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 12.dp),
             horizontalAlignment = Alignment.Start
         ) {
             Box(
@@ -1087,6 +1117,7 @@ private fun CompactCategoryTile(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
+                softWrap = false,
                 overflow = TextOverflow.Ellipsis
             )
             Spacer(modifier = Modifier.height(2.dp))
@@ -1094,10 +1125,12 @@ private fun CompactCategoryTile(
                 text = bytesText,
                 fontFamily = RobotoFlexFontFamily,
                 fontWeight = FontWeight.Bold,
-                fontSize = 13.sp,
-                lineHeight = 16.sp,
+                fontSize = if (bytesText.length >= 8) 11.sp else 12.sp,
+                lineHeight = 15.sp,
+                letterSpacing = (-0.3).sp,
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
+                softWrap = false,
                 overflow = TextOverflow.Ellipsis
             )
         }
@@ -1373,8 +1406,13 @@ fun StorageOverviewCard(
                 // Bottom: Expressive Wavy Progress Bar + Availability Footer
                 val totalCap = activeSummary.totalBytes ?: 0L
                 val isFiniteQuota = totalCap > 0L
-                val targetProgress = if (isFiniteQuota) {
+                val rawRatio = if (isFiniteQuota) {
                     (activeSummary.usedBytes.toFloat() / totalCap.toFloat()).coerceIn(0f, 1f)
+                } else {
+                    0f
+                }
+                val targetProgress = if (isFiniteQuota) {
+                    if (activeSummary.usedBytes > 0L) rawRatio.coerceIn(0.12f, 1f) else 0f
                 } else {
                     if (activeSummary.usedBytes > 0L) 0.35f else 0.08f
                 }
@@ -1410,12 +1448,14 @@ fun StorageOverviewCard(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    val percentageLabel = when {
+                        !isFiniteQuota -> stringResource(R.string.home_unlimited_symbol)
+                        activeSummary.usedBytes <= 0L -> "0%"
+                        rawRatio * 100f < 1f -> "< 1%"
+                        else -> "${(rawRatio * 100f).roundToInt()}%"
+                    }
                     Text(
-                        text = if (isFiniteQuota) {
-                            "${(targetProgress * 100f).roundToInt()}%"
-                        } else {
-                            stringResource(R.string.home_unlimited_symbol)
-                        },
+                        text = percentageLabel,
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.ExtraBold,
                         color = ext.mintSuccess
@@ -1602,7 +1642,7 @@ fun QuickActionsRow(
     val ext = MaterialTheme.cloudyteColors
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         QuickActionButton(
             icon = Icons.Default.Upload,
@@ -1661,7 +1701,7 @@ fun QuickActionButton(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 6.dp, vertical = 10.dp),
+                .padding(horizontal = 4.dp, vertical = 10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
@@ -1676,8 +1716,11 @@ fun QuickActionButton(
                 text = label,
                 color = textColor,
                 style = MaterialTheme.typography.labelSmall,
+                fontSize = 11.sp,
+                letterSpacing = (-0.2).sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
+                softWrap = false,
                 overflow = TextOverflow.Ellipsis
             )
         }

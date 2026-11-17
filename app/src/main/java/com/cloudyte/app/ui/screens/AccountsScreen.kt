@@ -158,6 +158,7 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
                 for (staleId in staleIds) {
                     com.cloudyte.app.data.AccountSessionHelper.purgeDisconnectedAccount(getApplication(), staleId)
                 }
+                com.cloudyte.app.provider.CloudyteDocumentsProvider.notifyRootsChanged(getApplication())
             } catch (e: Exception) {
                 Log.e("AccountsViewModel", "Failed to load accounts", e)
                 if (_accounts.value.isEmpty()) {

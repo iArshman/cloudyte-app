@@ -31,6 +31,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -82,8 +85,18 @@ private val tabOrder = listOf("home", "files", "transfers", "settings", "account
 fun MainScreen(rootNavController: NavController) {
     val context = LocalContext.current
     val bottomNavController = rememberNavController()
+    val homeViewModel: HomeViewModel = viewModel()
     val filesViewModel: FilesViewModel = viewModel()
     val prefsState by UserPreferences.observe(context).collectAsState(initial = UserPreferencesState())
+    val hasInitialContent by homeViewModel.hasInitialContent.collectAsStateWithLifecycle()
+    val navBackStackEntry by bottomNavController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route ?: "home"
+    var isSettingsInSubScreen by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+
+    val isHomeLoading = currentRoute == "home" && !hasInitialContent
+    val hideBottomBar = isHomeLoading ||
+        (currentRoute == "settings" && isSettingsInSubScreen) ||
+        currentRoute == "accounts"
 
     BoxWithConstraints(
         modifier = Modifier
@@ -91,12 +104,10 @@ fun MainScreen(rootNavController: NavController) {
             .safeDrawingPadding()
     ) {
         val useNavigationRail = maxWidth >= 600.dp
-        val bottomInset = if (useNavigationRail) 0.dp else 90.dp
+        val bottomInset = if (useNavigationRail || hideBottomBar) 0.dp else 90.dp
 
         CompositionLocalProvider(LocalBottomBarInset provides bottomInset) {
             if (useNavigationRail) {
-                val navBackStackEntry by bottomNavController.currentBackStackEntryAsState()
-                val currentRoute = navBackStackEntry?.destination?.route ?: "home"
                 val railItems = listOf(
                     FloatingNavItem("home", stringResource(R.string.nav_home), Icons.Default.Home),
                     FloatingNavItem("files", stringResource(R.string.nav_files), Icons.Default.Folder),
@@ -105,22 +116,24 @@ fun MainScreen(rootNavController: NavController) {
                 )
 
                 Row(modifier = Modifier.fillMaxSize()) {
-                    NavigationRail(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-                    ) {
-                        Spacer(modifier = Modifier.weight(0.2f))
-                        railItems.forEach { item ->
-                            NavigationRailItem(
-                                selected = currentRoute == item.route,
-                                onClick = { bottomNavController.navigateSingleTopRestore(item.route) },
-                                icon = { Icon(item.icon, contentDescription = item.label) },
-                                label = if (prefsState.showNavText) {
-                                    { Text(item.label, style = MaterialTheme.typography.labelMedium) }
-                                } else null,
-                                modifier = Modifier.testTag("nav_item_${item.route}")
-                            )
+                    if (!hideBottomBar) {
+                        NavigationRail(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                        ) {
+                            Spacer(modifier = Modifier.weight(0.2f))
+                            railItems.forEach { item ->
+                                NavigationRailItem(
+                                    selected = currentRoute == item.route,
+                                    onClick = { bottomNavController.navigateSingleTopRestore(item.route) },
+                                    icon = { Icon(item.icon, contentDescription = item.label) },
+                                    label = if (prefsState.showNavText) {
+                                        { Text(item.label, style = MaterialTheme.typography.labelMedium) }
+                                    } else null,
+                                    modifier = Modifier.testTag("nav_item_${item.route}")
+                                )
+                            }
+                            Spacer(modifier = Modifier.weight(1f))
                         }
-                        Spacer(modifier = Modifier.weight(1f))
                     }
 
                     Box(
@@ -132,7 +145,9 @@ fun MainScreen(rootNavController: NavController) {
                         MainNavHost(
                             bottomNavController = bottomNavController,
                             rootNavController = rootNavController,
+                            homeViewModel = homeViewModel,
                             filesViewModel = filesViewModel,
+                            onSettingsSubScreenChanged = { isSettingsInSubScreen = it },
                             modifier = Modifier
                                 .fillMaxHeight()
                                 .widthIn(max = 720.dp)
@@ -141,38 +156,35 @@ fun MainScreen(rootNavController: NavController) {
                     }
                 }
             } else {
-                val homeViewModel: HomeViewModel = viewModel()
-                val hasInitialContent by homeViewModel.hasInitialContent.collectAsStateWithLifecycle(initialValue = true)
-                val navBackStackEntry by bottomNavController.currentBackStackEntryAsState()
-                val currentRoute = navBackStackEntry?.destination?.route ?: "home"
-                val isHomeLoading = currentRoute == "home" && !hasInitialContent
-
                 Box(modifier = Modifier.fillMaxSize()) {
                     MainNavHost(
                         bottomNavController = bottomNavController,
                         rootNavController = rootNavController,
+                        homeViewModel = homeViewModel,
                         filesViewModel = filesViewModel,
+                        onSettingsSubScreenChanged = { isSettingsInSubScreen = it },
                         modifier = Modifier.fillMaxSize()
                     )
 
-                    if (!isHomeLoading) {
-                        androidx.compose.foundation.layout.Column(
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .fillMaxWidth()
-                                .padding(bottom = 2.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
+                    androidx.compose.foundation.layout.Column(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .padding(bottom = 2.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        if (!hideBottomBar) {
                             ActiveTransferPill(navController = bottomNavController)
-                            FloatingNavigationBar(
-                                navController = bottomNavController,
-                                showNavText = prefsState.showNavText,
-                                modifier = Modifier.fillMaxWidth(),
-                                onNavigate = { route ->
-                                    bottomNavController.navigateSingleTopRestore(route)
-                                }
-                            )
                         }
+                        FloatingNavigationBar(
+                            navController = bottomNavController,
+                            visible = !hideBottomBar,
+                            showNavText = prefsState.showNavText,
+                            modifier = Modifier.fillMaxWidth(),
+                            onNavigate = { route ->
+                                bottomNavController.navigateSingleTopRestore(route)
+                            }
+                        )
                     }
                 }
             }
@@ -184,7 +196,9 @@ fun MainScreen(rootNavController: NavController) {
 private fun MainNavHost(
     bottomNavController: androidx.navigation.NavHostController,
     rootNavController: NavController,
+    homeViewModel: HomeViewModel,
     filesViewModel: FilesViewModel,
+    onSettingsSubScreenChanged: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     NavHost(
@@ -210,6 +224,7 @@ private fun MainNavHost(
             FeatureHomeScreen(
                 navController = bottomNavController,
                 rootNavController = rootNavController,
+                viewModel = homeViewModel,
                 onSearchClick = {
                     filesViewModel.requestSearchFocus()
                     bottomNavController.navigateSingleTopRestore("files")
@@ -230,7 +245,13 @@ private fun MainNavHost(
                 onBack = { bottomNavController.navigateSingleTopRestore("home") }
             )
         }
-        composable("settings") { FeatureSettingsScreen(bottomNavController, rootNavController) }
+        composable("settings") {
+            FeatureSettingsScreen(
+                navController = bottomNavController,
+                rootNavController = rootNavController,
+                onSubScreenChanged = onSettingsSubScreenChanged
+            )
+        }
     }
 }
 

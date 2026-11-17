@@ -90,6 +90,7 @@ object AccountSessionHelper {
             appContext.getSharedPreferences("cloudyte_audio_playback", Context.MODE_PRIVATE).edit().clear().apply()
         }
         runCatching { SyncLogger.clearLogs() }
+        runCatching { com.cloudyte.app.provider.CloudyteDocumentsProvider.notifyRootsChanged(appContext) }
 
         val warning = if (remoteOk) {
             null
@@ -181,5 +182,6 @@ object AccountSessionHelper {
                 drivePrefs.edit().remove("last_active_account_id").apply()
             }
         }
+        runCatching { com.cloudyte.app.provider.CloudyteDocumentsProvider.notifyRootsChanged(appContext) }
     }
 }
