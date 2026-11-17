@@ -33,6 +33,8 @@ import com.cloudyte.app.db.TransferDirection
 import com.cloudyte.app.db.TransferStatus
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.ResponseBody.Companion.toResponseBody
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Protocol
@@ -473,6 +475,164 @@ class SecurityAndPerformanceFixesTest {
             context.getSharedPreferences("cloudyte_drive_state", Context.MODE_PRIVATE)
                 .getString("last_active_account_id", null)
         )
+    }
+
+    @Test
+    fun backendContractUpgrades_errorEnvelope_directStream_resume_and_409Reconciliation() = runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+        // 1. Standard error envelope parsing (Section 3.0)
+        val conflictEnvelope = ApiClient.parseErrorEnvelope(
+            """{"error":"Chunk offset mismatch","code":"UPLOAD_SESSION_OFFSET_CONFLICT","requestId":"req-99","retryable":true}""",
+            409
+        )
+        assertEquals("Chunk offset mismatch", conflictEnvelope.message)
+        assertEquals("UPLOAD_SESSION_OFFSET_CONFLICT", conflictEnvelope.code)
+        assertEquals("req-99", conflictEnvelope.requestId)
+        assertEquals(true, conflictEnvelope.retryable)
+
+        val retryableConflictResult = com.cloudyte.app.ui.screens.UploadResult(
+            isSuccess = false,
+            statusCode = 409,
+            errorMessage = conflictEnvelope.message,
+            errorCode = conflictEnvelope.code,
+            serverRetryable = conflictEnvelope.retryable
+        )
+        assertFalse(retryableConflictResult.isFatalClientError)
+        assertTrue(retryableConflictResult.isRetryable)
+
+        // 2. Direct stream chunk upload + auto-resume paused session + 409 offset conflict reconciliation
+        val tempFile = java.io.File(context.cacheDir, "contract_test_payload.bin")
+        val payload = ByteArray(160 * 1024) { (it % 251).toByte() }
+        tempFile.writeBytes(payload)
+
+        var resumeCalls = 0
+        var directStreamCalls = 0
+        var simulatedConflictTriggered = false
+        var serverReceivedBytes = 0L
+
+        val fakeProvider = object : com.cloudyte.app.data.providers.CloudProvider {
+            override val type: String = "cloudyte"
+            override val capabilities = com.cloudyte.app.data.providers.ProviderCapabilities(
+                supportsResumableUpload = true,
+                supportsProviderNativeResumability = true,
+                supportsProviderSessionCancellation = true,
+                supportsResumableDownload = true
+            )
+
+            override suspend fun createUploadSession(
+                accountId: String,
+                request: com.cloudyte.app.api.UploadSessionRequest
+            ): retrofit2.Response<com.cloudyte.app.api.UploadSessionResponse> {
+                return retrofit2.Response.success(
+                    com.cloudyte.app.api.UploadSessionResponse(
+                        sessionId = "sess-upgrade-1",
+                        status = "paused",
+                        receivedBytes = 0L,
+                        totalBytes = payload.size.toLong(),
+                        chunkSize = 64L * 1024L
+                    )
+                )
+            }
+
+            override suspend fun queryUploadSession(
+                sessionId: String
+            ): retrofit2.Response<com.cloudyte.app.api.UploadSessionResponse> {
+                return retrofit2.Response.success(
+                    com.cloudyte.app.api.UploadSessionResponse(
+                        sessionId = sessionId,
+                        status = if (resumeCalls == 0) "paused" else "active",
+                        receivedBytes = serverReceivedBytes,
+                        totalBytes = payload.size.toLong(),
+                        chunkSize = 64L * 1024L
+                    )
+                )
+            }
+
+            override suspend fun resumeUploadSession(
+                sessionId: String
+            ): retrofit2.Response<com.cloudyte.app.api.UploadSessionResponse> {
+                resumeCalls++
+                return retrofit2.Response.success(
+                    com.cloudyte.app.api.UploadSessionResponse(
+                        sessionId = sessionId,
+                        status = "active",
+                        receivedBytes = serverReceivedBytes,
+                        totalBytes = payload.size.toLong(),
+                        chunkSize = 64L * 1024L
+                    )
+                )
+            }
+
+            override suspend fun uploadChunk(
+                sessionId: String,
+                contentRange: String,
+                chunk: okhttp3.MultipartBody.Part
+            ): retrofit2.Response<com.cloudyte.app.api.UploadChunkResponse> {
+                throw AssertionError("uploadFileResumable should invoke uploadChunkStream instead of multipart uploadChunk")
+            }
+
+            override suspend fun uploadChunkStream(
+                sessionId: String,
+                contentRange: String,
+                chunkOffset: Long,
+                chunk: okhttp3.RequestBody
+            ): retrofit2.Response<com.cloudyte.app.api.UploadChunkResponse> {
+                directStreamCalls++
+                assertEquals("application/octet-stream", chunk.contentType().toString())
+                if (!simulatedConflictTriggered && chunkOffset == 64L * 1024L) {
+                    simulatedConflictTriggered = true
+                    // Simulate that the server had already committed this chunk on an earlier attempt
+                    serverReceivedBytes = 128L * 1024L
+                    val errBody = """{"error":"Offset conflict","code":"UPLOAD_SESSION_OFFSET_CONFLICT","retryable":true}"""
+                        .toResponseBody("application/json".toMediaTypeOrNull())
+                    return retrofit2.Response.error(409, errBody)
+                }
+                val sink = okio.Buffer()
+                chunk.writeTo(sink)
+                val written = sink.size
+                serverReceivedBytes = chunkOffset + written
+                return retrofit2.Response.success(
+                    com.cloudyte.app.api.UploadChunkResponse(
+                        sessionId = sessionId,
+                        receivedBytes = serverReceivedBytes,
+                        totalBytes = payload.size.toLong(),
+                        nextOffset = serverReceivedBytes,
+                        complete = serverReceivedBytes >= payload.size.toLong()
+                    )
+                )
+            }
+
+            override suspend fun completeUploadSession(
+                sessionId: String
+            ): retrofit2.Response<com.cloudyte.app.api.UploadCompleteResponse> {
+                return retrofit2.Response.success(
+                    com.cloudyte.app.api.UploadCompleteResponse(
+                        success = serverReceivedBytes == payload.size.toLong(),
+                        sessionId = sessionId
+                    )
+                )
+            }
+        }
+
+        try {
+            val uploadRes = com.cloudyte.app.ui.screens.UploadHelper.uploadFileResumable(
+                context = context,
+                accountId = "acc-1",
+                folderId = "root",
+                uri = android.net.Uri.fromFile(tempFile),
+                explicitFileName = tempFile.name,
+                explicitMimeType = "application/octet-stream",
+                explicitFileSize = payload.size.toLong(),
+                idempotencyKey = "idem-upgrade-1",
+                provider = fakeProvider
+            )
+            assertTrue("Expected resumable upload to succeed after auto-resume and 409 reconciliation", uploadRes.isSuccess)
+            assertEquals(1, resumeCalls)
+            assertTrue(simulatedConflictTriggered)
+            assertEquals(3, directStreamCalls)
+            assertEquals(payload.size.toLong(), serverReceivedBytes)
+        } finally {
+            tempFile.delete()
+        }
     }
 }
 

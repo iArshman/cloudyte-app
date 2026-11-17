@@ -36,8 +36,18 @@ object ApiClient {
     @Volatile
     private var inMemoryToken: String? = null
 
+    private data class CachedMediaLink(
+        val url: String,
+        val expiresAtMs: Long
+    )
+
+    private val signedMediaCache = java.util.concurrent.ConcurrentHashMap<String, CachedMediaLink>()
+
     fun saveToken(token: String?) {
         inMemoryToken = token
+        if (token.isNullOrBlank()) {
+            signedMediaCache.clear()
+        }
         sharedPreferences?.edit()?.putString(TOKEN_KEY, token)?.apply()
     }
 
@@ -57,11 +67,22 @@ object ApiClient {
         chain.proceed(requestBuilder.build())
     }
 
-    fun parseError(errorBody: String?, statusCode: Int, isRegister: Boolean = false): String {
+    fun parseErrorEnvelope(errorBody: String?, statusCode: Int, isRegister: Boolean = false): ParsedApiError {
+        var parsedCode: String? = null
+        var parsedRequestId: String? = null
+        var parsedRetryable: Boolean? = null
         if (!errorBody.isNullOrBlank()) {
             try {
                 val json = org.json.JSONObject(errorBody)
+                parsedCode = json.optString("code").takeIf { it.isNotBlank() }
+                parsedRequestId = json.optString("requestId").takeIf { it.isNotBlank() }
+                if (json.has("retryable") && !json.isNull("retryable")) {
+                    parsedRetryable = json.optBoolean("retryable")
+                }
                 val nestedErrObj = json.optJSONObject("error")
+                if (parsedCode == null && nestedErrObj != null) {
+                    parsedCode = nestedErrObj.optString("code").takeIf { it.isNotBlank() }
+                }
                 val nestedErrMsg = nestedErrObj?.let { obj ->
                     obj.optString("message").takeIf { it.isNotBlank() }
                         ?: obj.optJSONArray("errors")?.optJSONObject(0)?.optString("message")?.takeIf { it.isNotBlank() }
@@ -76,15 +97,20 @@ object ApiClient {
                     ?: json.optString("msg").takeIf { it.isNotBlank() }
                     ?: json.optJSONArray("errors")?.optJSONObject(0)?.optString("message")?.takeIf { it.isNotBlank() }
                 if (!err.isNullOrBlank()) {
-                    return err
+                    return ParsedApiError(
+                        message = err,
+                        code = parsedCode,
+                        requestId = parsedRequestId,
+                        retryable = parsedRetryable
+                    )
                 }
             } catch (_: Exception) {
                 if (errorBody.length < 150 && !errorBody.contains("<html", ignoreCase = true) && !errorBody.trimStart().startsWith("{")) {
-                    return errorBody.trim()
+                    return ParsedApiError(message = errorBody.trim())
                 }
             }
         }
-        return when (statusCode) {
+        val fallbackMessage = when (statusCode) {
             401 -> if (isRegister) "Registration unauthorized. Please try a different username." else "Session expired or unauthorized. Please sign in again."
             400 -> "Invalid request (HTTP 400). Please check and try again."
             403 -> "Access denied by cloud provider (HTTP 403)."
@@ -92,9 +118,20 @@ object ApiClient {
             409 -> "Conflict occurred (HTTP 409). Please try again."
             416 -> "Download range mismatch (HTTP 416). Restarting from beginning."
             429 -> "Rate limited by provider (HTTP 429). Retrying shortly."
+            507 -> "Insufficient temporary server storage (HTTP 507). Please try again later."
             500, 502, 503 -> "Server is temporarily unavailable. Please try again in a moment."
             else -> "Request failed (HTTP $statusCode). Please try again."
         }
+        return ParsedApiError(
+            message = fallbackMessage,
+            code = parsedCode,
+            requestId = parsedRequestId,
+            retryable = parsedRetryable
+        )
+    }
+
+    fun parseError(errorBody: String?, statusCode: Int, isRegister: Boolean = false): String {
+        return parseErrorEnvelope(errorBody, statusCode, isRegister).message
     }
 
     private fun redactUrlSecrets(message: String): String {
@@ -212,5 +249,45 @@ object ApiClient {
 
     fun getFileUrl(accountId: String, fileId: String, preview: Boolean = false): String {
         return getCleanDownloadUrl(accountId, fileId, preview)
+    }
+
+    /**
+     * Resolves a 10-minute signed media URL (`GET /api/media-link/:accountId/:fileId`) bound to
+     * the exact account and file, caching valid links in memory and falling back to
+     * [getCleanDownloadUrl] if offline or unsupported.
+     */
+    suspend fun resolveSignedMediaUrl(
+        accountId: String,
+        fileId: String,
+        preview: Boolean = true,
+        api: CloudyteApi = apiService,
+        nowMs: Long = System.currentTimeMillis()
+    ): String {
+        if (accountId.isBlank() || fileId.isBlank()) {
+            return getCleanDownloadUrl(accountId, fileId, preview)
+        }
+        val key = "$accountId:$fileId"
+        val cached = signedMediaCache[key]
+        if (cached != null && cached.expiresAtMs > nowMs + 30_000L) {
+            return cached.url
+        }
+        val fetched = runCatching {
+            val response = api.getMediaLink(accountId, fileId)
+            val body = response.body()
+            if (response.isSuccessful && body != null && body.url.isNotBlank()) {
+                val resolvedUrl = when {
+                    body.url.startsWith("http://", ignoreCase = true) ||
+                        body.url.startsWith("https://", ignoreCase = true) -> body.url
+                    body.url.startsWith("/") -> "$API_BASE_URL${body.url}"
+                    else -> "$API_BASE_URL/${body.url}"
+                }
+                val expiry = if (body.expiresAt > nowMs) body.expiresAt else (nowMs + 9 * 60 * 1000L)
+                signedMediaCache[key] = CachedMediaLink(resolvedUrl, expiry)
+                resolvedUrl
+            } else {
+                null
+            }
+        }.getOrNull()
+        return fetched ?: getCleanDownloadUrl(accountId, fileId, preview)
     }
 }

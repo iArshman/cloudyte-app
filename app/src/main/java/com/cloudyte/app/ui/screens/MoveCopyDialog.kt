@@ -81,6 +81,8 @@ fun MoveCopyDialog(
     var folderItems by remember { mutableStateOf<List<CloudFile>>(emptyList()) }
     var isLoadingFolders by remember { mutableStateOf(false) }
     var isExecuting by remember { mutableStateOf(false) }
+    var activeJobId by remember { mutableStateOf<String?>(null) }
+    var activeExecutionJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var transferProgressPct by remember { mutableStateOf<Int?>(null) }
     var transferStageLabel by remember { mutableStateOf<String?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -525,10 +527,32 @@ fun MoveCopyDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     TextButton(
-                        onClick = onDismiss,
-                        enabled = !isExecuting
+                        onClick = {
+                            val runningJobId = activeJobId
+                            if (isExecuting && !runningJobId.isNullOrBlank()) {
+                                coroutineScope.launch {
+                                    runCatching { ApiClient.apiService.cancelJob(runningJobId) }
+                                    activeExecutionJob?.cancel()
+                                    isExecuting = false
+                                    activeJobId = null
+                                    transferProgressPct = null
+                                    transferStageLabel = null
+                                    errorMessage = "Cross-drive transfer cancelled"
+                                }
+                            } else if (!isExecuting) {
+                                onDismiss()
+                            }
+                        },
+                        enabled = !isExecuting || !activeJobId.isNullOrBlank()
                     ) {
-                        Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            text = if (isExecuting && !activeJobId.isNullOrBlank()) "Stop Transfer" else "Cancel",
+                            color = if (isExecuting && !activeJobId.isNullOrBlank()) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+                        )
                     }
 
                     Button(
@@ -537,7 +561,7 @@ fun MoveCopyDialog(
                             errorMessage = null
                             transferProgressPct = null
                             transferStageLabel = null
-                            coroutineScope.launch {
+                            activeExecutionJob = coroutineScope.launch {
                                 try {
                                     val targetFolderParam = currentTargetFolderId ?: "root"
                                     var succeeded = 0
@@ -565,6 +589,7 @@ fun MoveCopyDialog(
                                                 val body = asyncRes.body()
                                                 val jobId = body?.jobId
                                                 if (!jobId.isNullOrBlank()) {
+                                                    activeJobId = jobId
                                                     val jobResult = awaitTransferJobWithSse(
                                                         jobId = jobId,
                                                         onProgress = { pct, stage, bytesDone, totalBytes ->
@@ -586,6 +611,7 @@ fun MoveCopyDialog(
                                                             transferStageLabel = "$itemPrefix$stageReadable$bytesDetail"
                                                         }
                                                     )
+                                                    activeJobId = null
                                                     if (jobResult.isSuccess) {
                                                         succeeded++
                                                     } else {
@@ -598,6 +624,7 @@ fun MoveCopyDialog(
                                                 }
                                             } else {
                                                 lastErrorCode = asyncRes.code()
+                                                lastErrorText = ApiClient.parseError(asyncRes.errorBody()?.string(), asyncRes.code())
                                             }
                                         } else {
                                             val res = if (isMove) {
@@ -609,6 +636,7 @@ fun MoveCopyDialog(
                                                 succeeded++
                                             } else {
                                                 lastErrorCode = res.code()
+                                                lastErrorText = ApiClient.parseError(res.errorBody()?.string(), res.code())
                                             }
                                         }
                                     }
@@ -625,11 +653,14 @@ fun MoveCopyDialog(
                                     } else {
                                         errorMessage = lastErrorText ?: "Operation failed (HTTP ${lastErrorCode ?: 500})"
                                     }
+                                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                    throw cancelled
                                 } catch (e: Exception) {
                                     Log.e("MoveCopyDialog", "Move/Copy execution failed", e)
                                     errorMessage = e.localizedMessage ?: "Operation failed"
                                 } finally {
                                     isExecuting = false
+                                    activeJobId = null
                                     transferProgressPct = null
                                     transferStageLabel = null
                                 }
@@ -709,6 +740,8 @@ private suspend fun awaitTransferJobWithSse(
                                 if (status.status == "completed") {
                                     finalJob = status
                                     break
+                                } else if (status.status == "cancelled") {
+                                    throw IllegalStateException("Cross-account transfer cancelled")
                                 } else if (status.status == "failed") {
                                     throw IllegalStateException(status.lastError ?: "Cross-account transfer failed")
                                 }
@@ -723,11 +756,12 @@ private suspend fun awaitTransferJobWithSse(
 
     sseResult.getOrNull()?.let { return Result.success(it) }
     val sseErr = sseResult.exceptionOrNull()
-    if (sseErr is IllegalStateException && sseErr.message?.startsWith("SSE HTTP") == false && sseErr.message != "Empty SSE body") {
+    if (sseErr is IllegalStateException && sseErr.message == "Cross-account transfer cancelled") {
         return Result.failure(sseErr)
     }
 
-    // Fallback polling if SSE stream disconnected early or wasn't supported by proxy
+    var retriedOnce = false
+    // Fallback polling (and 1x server-side retry if transient failure)
     repeat(120) {
         val pollRes = runCatching { ApiClient.apiService.getJobStatus(jobId) }.getOrNull()
         val status = pollRes?.body()
@@ -735,7 +769,21 @@ private suspend fun awaitTransferJobWithSse(
             onProgress(status.progressPct, status.stage, status.bytesProcessed, status.totalBytes)
             when (status.status) {
                 "completed" -> return Result.success(status)
-                "failed" -> return Result.failure(IllegalStateException(status.lastError ?: "Transfer failed"))
+                "cancelled" -> return Result.failure(IllegalStateException("Cross-account transfer cancelled"))
+                "failed" -> {
+                    val canRetry = !retriedOnce &&
+                        status.deadLettered != true &&
+                        (status.attempts ?: 1) < (status.maxAttempts ?: 3)
+                    if (canRetry) {
+                        val retryRes = runCatching { ApiClient.apiService.retryJob(jobId) }.getOrNull()
+                        if (retryRes != null && retryRes.isSuccessful) {
+                            retriedOnce = true
+                            delay(1000L)
+                            return@repeat
+                        }
+                    }
+                    return Result.failure(IllegalStateException(status.lastError ?: "Transfer failed"))
+                }
             }
         }
         delay(1000L)

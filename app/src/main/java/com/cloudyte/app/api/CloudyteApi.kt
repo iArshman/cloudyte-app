@@ -114,11 +114,31 @@ interface CloudyteApi {
         @Part chunk: MultipartBody.Part
     ): Response<UploadChunkResponse>
 
+    @PUT("/api/upload-sessions/{sessionId}/chunks")
+    suspend fun uploadChunkStream(
+        @Path("sessionId") sessionId: String,
+        @Header("Content-Range") contentRange: String,
+        @Header("X-Chunk-Offset") chunkOffset: Long,
+        @Body chunk: RequestBody
+    ): Response<UploadChunkResponse>
+
+    @POST("/api/upload-sessions/{sessionId}/pause")
+    suspend fun pauseUploadSession(@Path("sessionId") sessionId: String): Response<UploadSessionResponse>
+
+    @POST("/api/upload-sessions/{sessionId}/resume")
+    suspend fun resumeUploadSession(@Path("sessionId") sessionId: String): Response<UploadSessionResponse>
+
     @POST("/api/upload-sessions/{sessionId}/complete")
     suspend fun completeUploadSession(@Path("sessionId") sessionId: String): Response<UploadCompleteResponse>
 
     @DELETE("/api/upload-sessions/{sessionId}")
     suspend fun cancelUploadSession(@Path("sessionId") sessionId: String): Response<Unit>
+
+    @GET("/api/media-link/{accountId}/{fileId}")
+    suspend fun getMediaLink(
+        @Path("accountId") accountId: String,
+        @Path("fileId") fileId: String
+    ): Response<MediaLinkResponse>
 
     @Streaming
     @GET("/api/download/{accountId}/{fileId}")
@@ -160,10 +180,41 @@ interface CloudyteApi {
         @Query("async") async: Boolean = true
     ): Response<TransferActionResponse>
 
+    @GET("/api/jobs")
+    suspend fun getJobs(
+        @Query("status") status: String? = null
+    ): Response<List<JobStatusResponse>>
+
     @GET("/api/jobs/{jobId}")
     suspend fun getJobStatus(
         @Path("jobId") jobId: String
     ): Response<JobStatusResponse>
+
+    @POST("/api/jobs/{jobId}/cancel")
+    suspend fun cancelJob(
+        @Path("jobId") jobId: String
+    ): Response<TransferActionResponse>
+
+    @POST("/api/jobs/{jobId}/retry")
+    suspend fun retryJob(
+        @Path("jobId") jobId: String
+    ): Response<TransferActionResponse>
+
+    @POST("/api/backups/batch")
+    suspend fun createBatchBackup(
+        @Body request: BatchBackupRequest
+    ): Response<TransferActionResponse>
+
+    @POST("/api/backups/{jobId}/verify")
+    suspend fun verifyBackupJob(
+        @Path("jobId") jobId: String
+    ): Response<BackupVerifyResponse>
+
+    @POST("/api/backups/{jobId}/restore")
+    suspend fun restoreBackupJob(
+        @Path("jobId") jobId: String,
+        @Body request: BackupRestoreRequest
+    ): Response<TransferActionResponse>
 
     @POST("/api/share")
     suspend fun shareFile(@Body request: ShareRequest): ShareResponse

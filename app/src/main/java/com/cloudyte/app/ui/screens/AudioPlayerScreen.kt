@@ -280,7 +280,14 @@ fun AudioPlayerScreen(
             when {
                 ready != null && ready.isFile && ready.length() > 0L -> Uri.fromFile(ready)
                 file?.isEncrypted == true -> null
-                else -> Uri.parse(audioUrl)
+                else -> {
+                    val signedUrl = ApiClient.resolveSignedMediaUrl(
+                        acc.ifBlank { effectiveAccId.ifBlank { accountId } },
+                        fileId,
+                        preview = true
+                    ).ifBlank { audioUrl }
+                    Uri.parse(signedUrl)
+                }
             }
         } else {
             val cached = file?.let { PreviewFetcher.resolveCachedOnly(context, acc, it) }
@@ -289,7 +296,12 @@ fun AudioPlayerScreen(
                 Uri.fromFile(cached)
             } else {
                 statusNote = null
-                Uri.parse(audioUrl)
+                val signedUrl = ApiClient.resolveSignedMediaUrl(
+                    acc.ifBlank { effectiveAccId.ifBlank { accountId } },
+                    fileId,
+                    preview = true
+                ).ifBlank { audioUrl }
+                Uri.parse(signedUrl)
             }
         }
 

@@ -832,10 +832,26 @@ class ResumableTransferTest {
         ): Response<UploadChunkResponse> = Response.success(
             UploadChunkResponse(sessionId = sessionId, receivedBytes = 0L, totalBytes = 0L, nextOffset = 0L)
         )
+        override suspend fun uploadChunkStream(
+            sessionId: String,
+            contentRange: String,
+            chunkOffset: Long,
+            chunk: RequestBody
+        ): Response<UploadChunkResponse> = uploadChunk(
+            sessionId = sessionId,
+            contentRange = contentRange,
+            chunk = MultipartBody.Part.createFormData("chunk", "chunk.bin", chunk)
+        )
+        override suspend fun pauseUploadSession(sessionId: String): Response<UploadSessionResponse> =
+            Response.success(UploadSessionResponse(sessionId = sessionId, status = "paused", totalBytes = 0L))
+        override suspend fun resumeUploadSession(sessionId: String): Response<UploadSessionResponse> =
+            Response.success(UploadSessionResponse(sessionId = sessionId, status = "active", totalBytes = 0L))
         override suspend fun completeUploadSession(sessionId: String): Response<UploadCompleteResponse> =
             Response.success(UploadCompleteResponse(success = true, sessionId = sessionId))
         override suspend fun cancelUploadSession(sessionId: String): Response<Unit> =
             Response.success(Unit)
+        override suspend fun getMediaLink(accountId: String, fileId: String): Response<com.cloudyte.app.api.MediaLinkResponse> =
+            Response.success(com.cloudyte.app.api.MediaLinkResponse(url = "/api/download/$accountId/$fileId?preview=1", expiresAt = System.currentTimeMillis() + 600_000L))
         override suspend fun downloadFile(
             accountId: String,
             fileId: String,
@@ -858,8 +874,20 @@ class ResumableTransferTest {
             Response.success(com.cloudyte.app.api.TransferActionResponse(success = true))
         override suspend fun copyFileAsync(request: MoveCopyRequest, async: Boolean): Response<com.cloudyte.app.api.TransferActionResponse> =
             Response.success(com.cloudyte.app.api.TransferActionResponse(success = true))
+        override suspend fun getJobs(status: String?): Response<List<com.cloudyte.app.api.JobStatusResponse>> =
+            Response.success(emptyList())
         override suspend fun getJobStatus(jobId: String): Response<com.cloudyte.app.api.JobStatusResponse> =
             Response.success(com.cloudyte.app.api.JobStatusResponse(id = jobId, status = "completed", progressPct = 100))
+        override suspend fun cancelJob(jobId: String): Response<com.cloudyte.app.api.TransferActionResponse> =
+            Response.success(com.cloudyte.app.api.TransferActionResponse(success = true, jobId = jobId, status = "cancelled"))
+        override suspend fun retryJob(jobId: String): Response<com.cloudyte.app.api.TransferActionResponse> =
+            Response.success(com.cloudyte.app.api.TransferActionResponse(success = true, jobId = jobId, status = "queued"))
+        override suspend fun createBatchBackup(request: com.cloudyte.app.api.BatchBackupRequest): Response<com.cloudyte.app.api.TransferActionResponse> =
+            Response.success(com.cloudyte.app.api.TransferActionResponse(success = true, async = true, jobId = "job-backup-1", status = "queued"))
+        override suspend fun verifyBackupJob(jobId: String): Response<com.cloudyte.app.api.BackupVerifyResponse> =
+            Response.success(com.cloudyte.app.api.BackupVerifyResponse(jobId = jobId, verified = true))
+        override suspend fun restoreBackupJob(jobId: String, request: com.cloudyte.app.api.BackupRestoreRequest): Response<com.cloudyte.app.api.TransferActionResponse> =
+            Response.success(com.cloudyte.app.api.TransferActionResponse(success = true, async = true, jobId = "job-restore-1", status = "queued"))
         override suspend fun getTrash(accountId: String?): List<CloudFile> = emptyList()
         override suspend fun restoreFromTrash(request: com.cloudyte.app.api.TrashRestoreRequest): Response<Unit> = Response.success(Unit)
         override suspend fun deleteFromTrash(fileId: String, accountId: String): Response<Unit> = Response.success(Unit)
