@@ -25,6 +25,9 @@ interface ThumbnailDao {
     @Query("DELETE FROM thumbnail_cache WHERE cacheKey = :cacheKey")
     suspend fun delete(cacheKey: String)
 
+    @Query("SELECT * FROM thumbnail_cache WHERE accountId = :accountId")
+    suspend fun getForAccount(accountId: String): List<ThumbnailEntity>
+
     @Query("DELETE FROM thumbnail_cache WHERE accountId = :accountId")
     suspend fun deleteForAccount(accountId: String)
 

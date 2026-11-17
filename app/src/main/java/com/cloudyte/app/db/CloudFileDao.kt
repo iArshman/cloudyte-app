@@ -27,6 +27,9 @@ interface CloudFileDao {
     @Query("SELECT * FROM cloud_files")
     suspend fun getAllFiles(): List<LocalCloudFile>
 
+    @Query("SELECT id, accountId FROM cloud_files WHERE accountId IS NOT NULL")
+    suspend fun getFileAccountIdTuples(): List<CloudFileAccountIdTuple>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertFiles(files: List<LocalCloudFile>)
 
@@ -73,3 +76,8 @@ interface CloudFileDao {
     @Query("DELETE FROM cloud_files")
     suspend fun clearAll()
 }
+
+data class CloudFileAccountIdTuple(
+    val id: String,
+    val accountId: String?
+)

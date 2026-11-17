@@ -52,6 +52,9 @@ interface UploadRecordDao {
     @Query("SELECT COUNT(*) FROM upload_records WHERE status = 'SUCCESS'")
     fun countSuccessfulUploadsFlow(): Flow<Int>
 
+    @Query("DELETE FROM upload_records WHERE targetAccountId = :accountId")
+    suspend fun deleteForAccount(accountId: String)
+
     @Query("DELETE FROM upload_records")
     suspend fun clearHistory()
 }

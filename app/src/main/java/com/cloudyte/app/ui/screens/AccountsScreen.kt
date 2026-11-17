@@ -149,8 +149,15 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
             _errorMessage.value = null
             try {
                 val accs = ApiClient.apiService.getAccounts()
+                val validIds = accs.mapTo(mutableSetOf()) { it.effectiveId }
+                val staleIds = db.accountDao().getAllAccounts()
+                    .map { it.id }
+                    .filter { it.isNotBlank() && it !in validIds }
                 _accounts.value = accs
                 db.accountDao().insertAccounts(accs.map { LocalAccount.fromAccount(it) })
+                for (staleId in staleIds) {
+                    com.cloudyte.app.data.AccountSessionHelper.purgeDisconnectedAccount(getApplication(), staleId)
+                }
             } catch (e: Exception) {
                 Log.e("AccountsViewModel", "Failed to load accounts", e)
                 if (_accounts.value.isEmpty()) {
@@ -170,7 +177,7 @@ class AccountsViewModel(application: Application) : AndroidViewModel(application
             try {
                 val res = ApiClient.apiService.deleteAccount(id)
                 if (res.isSuccessful || res.code() == 404) {
-                    db.accountDao().deleteAccountById(id)
+                    com.cloudyte.app.data.AccountSessionHelper.purgeDisconnectedAccount(getApplication(), id)
                     _accounts.value = _accounts.value.filter { it.effectiveId != id }
                     deleted = true
                 } else {

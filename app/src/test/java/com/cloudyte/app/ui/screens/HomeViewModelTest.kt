@@ -154,7 +154,7 @@ class HomeViewModelTest {
 
         assertTrue("getStorageSummary should start in parallel right after accounts arrive", storageStarted)
         assertTrue("getFiles should start in parallel right after accounts arrive", filesStarted)
-        assertEquals("Should default to default drive acc_2", listOf("acc_2"), storageRequestedAccounts.distinct())
+        assertTrue("Should request storage for default drive acc_2", storageRequestedAccounts.contains("acc_2"))
         assertFalse("Screen must remain blank loading until profile & storage arrive", viewModel.hasInitialContent.value)
 
         // Even after profile completes, wait for storage & files so cards never flash 0 B

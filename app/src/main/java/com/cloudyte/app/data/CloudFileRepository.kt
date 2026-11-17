@@ -195,6 +195,15 @@ class CloudFileRepository @JvmOverloads constructor(
         db.folderSyncMetaDao().deleteForFolder(accKey, safeFolder)
     }
 
+    fun evictAccountMemoryCache(accountId: String) {
+        val prefix = "${accountMetaKey(accountId)}:"
+        folderMemoryCache.keys.removeIf { it.startsWith(prefix) }
+        etagMap.keys.removeIf { it.startsWith(prefix) }
+        storageRefreshTimestamps.remove(accountId)
+        storageRefreshTimestamps.remove(ALL_ACCOUNTS_KEY)
+        _storageRefreshErrors.update { it - accountId - ALL_ACCOUNTS_KEY }
+    }
+
     @JvmOverloads
     suspend fun refresh(
         accountId: String?,

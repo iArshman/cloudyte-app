@@ -179,13 +179,15 @@ class RoomTransferQueueDrainer(
                 applyOutcome(transfer, leaseOwner, interrupted.outcome)
                 processed++
             } catch (cancelled: CancellationException) {
-                val interrupted = detectInterruption(transfer.id)
-                if (interrupted != null && !isStopped()) {
-                    applyOutcome(transfer, leaseOwner, interrupted)
-                    processed++
-                } else {
-                    queueDao.returnToQueue(transfer.id, leaseOwner, now())
-                    throw cancelled
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                    val interrupted = detectInterruption(transfer.id)
+                    if (interrupted != null && !isStopped()) {
+                        applyOutcome(transfer, leaseOwner, interrupted)
+                        processed++
+                    } else {
+                        queueDao.returnToQueue(transfer.id, leaseOwner, now())
+                        throw cancelled
+                    }
                 }
             } catch (error: Exception) {
                 val interrupted = detectInterruption(transfer.id)
@@ -204,7 +206,9 @@ class RoomTransferQueueDrainer(
             } finally {
                 ActiveTransferSignalRegistry.unregisterHook(transfer.id)
                 ActiveTransferSignalRegistry.clear(transfer.id)
-                queueDao.releaseLease(transfer.id, leaseOwner, now())
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                    queueDao.releaseLease(transfer.id, leaseOwner, now())
+                }
             }
         }
         return if (isStopped()) DrainResult.Stopped else DrainResult.Drained(processed, queueDao.hasRunnableTransfers(now()))
@@ -232,6 +236,7 @@ class RoomTransferQueueDrainer(
         outcome: TransferOutcome
     ) {
         var effectiveOutcome = outcome
+        var recordedAttemptCount = transfer.attemptCount
         when (outcome) {
             TransferOutcome.Completed -> {
                 transition(transfer, leaseOwner, TransferState.RUNNING, TransferState.COMPLETED, "COMPLETED")
@@ -239,8 +244,10 @@ class RoomTransferQueueDrainer(
                 runCatching { onTerminalOutcome?.invoke(transfer, outcome) }
             }
             is TransferOutcome.Retryable -> {
+                val nextAttemptCount = transfer.attemptCount + 1
+                recordedAttemptCount = nextAttemptCount
                 val retryLimit = runCatching { maxRetryCount() }.getOrDefault(Int.MAX_VALUE).coerceAtLeast(0)
-                if (transfer.attemptCount > retryLimit) {
+                if (nextAttemptCount > retryLimit) {
                     val permanentMessage = "Retry limit ($retryLimit) exceeded: ${outcome.message}"
                     val permanent = TransferOutcome.Permanent("RETRY_LIMIT_EXCEEDED", permanentMessage, outcome.httpStatus)
                     effectiveOutcome = permanent
@@ -252,9 +259,10 @@ class RoomTransferQueueDrainer(
                         "FAILED",
                         permanent.code,
                         permanent.message,
-                        httpStatus = permanent.httpStatus
+                        httpStatus = permanent.httpStatus,
+                        attemptCount = nextAttemptCount
                     )
-                    runCatching { onTerminalOutcome?.invoke(transfer, permanent) }
+                    runCatching { onTerminalOutcome?.invoke(transfer.copy(attemptCount = nextAttemptCount), permanent) }
                 } else {
                     transition(
                         transfer,
@@ -264,14 +272,27 @@ class RoomTransferQueueDrainer(
                         "FAILED",
                         outcome.code,
                         outcome.message,
-                        outcome.retryAt ?: retryAt(transfer.attemptCount),
-                        outcome.httpStatus
+                        outcome.retryAt ?: retryAt(nextAttemptCount),
+                        outcome.httpStatus,
+                        attemptCount = nextAttemptCount
                     )
                 }
             }
             is TransferOutcome.Permanent -> {
-                transition(transfer, leaseOwner, TransferState.RUNNING, TransferState.FAILED_PERMANENT, "FAILED", outcome.code, outcome.message, httpStatus = outcome.httpStatus)
-                runCatching { onTerminalOutcome?.invoke(transfer, outcome) }
+                val nextAttemptCount = transfer.attemptCount + 1
+                recordedAttemptCount = nextAttemptCount
+                transition(
+                    transfer,
+                    leaseOwner,
+                    TransferState.RUNNING,
+                    TransferState.FAILED_PERMANENT,
+                    "FAILED",
+                    outcome.code,
+                    outcome.message,
+                    httpStatus = outcome.httpStatus,
+                    attemptCount = nextAttemptCount
+                )
+                runCatching { onTerminalOutcome?.invoke(transfer.copy(attemptCount = nextAttemptCount), outcome) }
             }
             is TransferOutcome.WaitingForNetwork -> transition(transfer, leaseOwner, TransferState.RUNNING, TransferState.WAITING_FOR_NETWORK, "PENDING", outcome.code, outcome.message)
             is TransferOutcome.WaitingForAuth -> {
@@ -281,7 +302,9 @@ class RoomTransferQueueDrainer(
             TransferOutcome.Paused -> transitionPausedDeterministic(transfer, leaseOwner)
             TransferOutcome.Cancelled -> {
                 val latest = queueDao.currentRow(transfer.id) ?: transfer
-                runCatching { executor.onCancelled(latest) }
+                if (latest.leaseOwner == null || latest.leaseOwner == leaseOwner) {
+                    runCatching { executor.onCancelled(latest) }
+                }
                 transitionCancelledDeterministic(transfer, leaseOwner)
             }
         }
@@ -291,7 +314,7 @@ class RoomTransferQueueDrainer(
             accountId = transfer.accountId,
             providerType = transfer.providerType,
             state = effectiveOutcome.diagnosticState(),
-            retryCount = transfer.attemptCount,
+            retryCount = recordedAttemptCount,
             errorCode = effectiveOutcome.diagnosticCode(),
             httpStatus = effectiveOutcome.diagnosticHttpStatus(),
             checkpointAt = now(),
@@ -301,8 +324,16 @@ class RoomTransferQueueDrainer(
 
     private suspend fun transitionPausedDeterministic(transfer: LocalTransfer, leaseOwner: String) {
         val current = queueDao.currentRow(transfer.id)
+        if (current != null && current.state == TransferState.QUEUED.name && (current.leaseOwner == leaseOwner || current.leaseOwner == null)) {
+            // User already resumed the transfer while this worker was unwinding its pause.
+            // Release the lease and keep the row in QUEUED so it resumes cleanly on the next iteration.
+            queueDao.releaseLease(transfer.id, leaseOwner, now())
+            return
+        }
         if (current != null && current.state == TransferState.RUNNING.name && current.leaseOwner == leaseOwner) {
             transitionVia(transfer, leaseOwner, TransferState.RUNNING, TransferState.PAUSING, TransferState.PAUSED, "PAUSED")
+        } else if (current != null && current.state == TransferState.PAUSING.name && current.leaseOwner == leaseOwner) {
+            check(queueDao.transitionOwned(transfer.id, leaseOwner, TransferState.PAUSING.name, TransferState.PAUSED.name, "PAUSED", null, null, null, null, false, now()) == 1)
         } else {
             queueDao.finalizeInterrupted(
                 id = transfer.id,
@@ -320,6 +351,8 @@ class RoomTransferQueueDrainer(
         val current = queueDao.currentRow(transfer.id)
         if (current != null && current.state == TransferState.RUNNING.name && current.leaseOwner == leaseOwner) {
             transitionVia(transfer, leaseOwner, TransferState.RUNNING, TransferState.CANCELLING, TransferState.CANCELLED, "CANCELLED")
+        } else if (current != null && current.state == TransferState.CANCELLING.name && current.leaseOwner == leaseOwner) {
+            check(queueDao.transitionOwned(transfer.id, leaseOwner, TransferState.CANCELLING.name, TransferState.CANCELLED.name, "CANCELLED", "USER_CANCELLED", "Cancelled", null, null, false, now()) == 1)
         } else {
             queueDao.finalizeInterrupted(
                 id = transfer.id,
@@ -342,10 +375,11 @@ class RoomTransferQueueDrainer(
         errorCode: String? = null,
         errorMessage: String? = null,
         nextAttemptAt: Long? = null,
-        httpStatus: Int? = null
+        httpStatus: Int? = null,
+        attemptCount: Int? = null
     ) {
         require(expected.canTransitionTo(next)) { "Illegal transfer transition $expected -> $next for ${transfer.id}" }
-        check(queueDao.transitionOwned(transfer.id, leaseOwner, expected.name, next.name, legacyStatus, errorCode, errorMessage, nextAttemptAt, httpStatus, false, now()) == 1) {
+        check(queueDao.transitionOwned(transfer.id, leaseOwner, expected.name, next.name, legacyStatus, errorCode, errorMessage, nextAttemptAt, httpStatus, false, now(), attemptCount) == 1) {
             "Transfer lease lost before state transition"
         }
     }

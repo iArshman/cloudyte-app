@@ -132,6 +132,26 @@ class AppContainer(context: Context) {
 
     private val immediateDrainMutex = Mutex()
     private val immediateDrainRequested = AtomicBoolean(false)
+    private val startupCleanupCompleted = AtomicBoolean(false)
+    private val startupCleanupMutex = Mutex()
+
+    suspend fun runStartupCleanupOnce() {
+        if (startupCleanupCompleted.get()) return
+        startupCleanupMutex.lock()
+        try {
+            if (!startupCleanupCompleted.get()) {
+                runCatching {
+                    val now = System.currentTimeMillis()
+                    database.transferQueueDao().recoverExpiredLeases(now)
+                    val activeIds = database.transferDao().getResumableTransferIds().toSet()
+                    com.cloudyte.app.core.security.SecureFileCleanup.cleanupStaleTempFiles(appContext, activeIds, now)
+                }
+                startupCleanupCompleted.set(true)
+            }
+        } finally {
+            startupCleanupMutex.unlock()
+        }
+    }
 
     /**
      * Immediately drains runnable transfers in-process on [dispatchers.io] using the atomic Room
@@ -141,6 +161,7 @@ class AppContainer(context: Context) {
     fun kickImmediateDrain(trigger: DrainTrigger = DrainTrigger.USER_ENQUEUE, reason: String? = null) {
         immediateDrainRequested.set(true)
         applicationScope.launch(dispatchers.io) {
+            runStartupCleanupOnce()
             while (immediateDrainRequested.get()) {
                 if (!immediateDrainMutex.tryLock()) break
                 try {
@@ -308,11 +329,8 @@ class AppContainer(context: Context) {
 
     init {
         networkMonitor.start()
-        applicationScope.launch {
-            runCatching {
-                val activeIds = database.transferDao().observeActiveTransfers().first().map { it.id }.toSet()
-                com.cloudyte.app.core.security.SecureFileCleanup.cleanupStaleTempFiles(appContext, activeIds)
-            }
+        applicationScope.launch(dispatchers.io) {
+            runStartupCleanupOnce()
         }
         applicationScope.launch {
             networkMonitor.status

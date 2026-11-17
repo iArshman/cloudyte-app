@@ -74,6 +74,7 @@ class TransferWorker(
             )
             return Result.success()
         }
+        container.runStartupCleanupOnce()
         val queueDao = container.database.transferQueueDao()
         val now = System.currentTimeMillis()
         queueDao.recoverExpiredLeases(now)
@@ -139,7 +140,9 @@ class TransferWorker(
             batches++
             if (drained is DrainResult.Drained) {
                 totalProcessed += drained.processed
-                if (!drained.hasMore || drained.processed == 0) break
+                if (!drained.hasMore || drained.processed == 0) {
+                    if (!queueDao.hasRunnableTransfers(System.currentTimeMillis())) break
+                }
             } else {
                 break
             }

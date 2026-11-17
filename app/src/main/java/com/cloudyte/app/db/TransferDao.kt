@@ -16,6 +16,9 @@ interface TransferDao {
     @Query("SELECT * FROM transfers WHERE status IN ('PENDING', 'RUNNING', 'PAUSED') ORDER BY createdAt DESC")
     fun observeActiveTransfers(): Flow<List<LocalTransfer>>
 
+    @Query("SELECT id FROM transfers WHERE state IN ('QUEUED', 'RUNNING', 'PAUSED', 'PAUSING', 'FAILED_RETRYABLE', 'WAITING_FOR_NETWORK', 'WAITING_FOR_AUTH') OR status IN ('PENDING', 'RUNNING', 'PAUSED')")
+    suspend fun getResumableTransferIds(): List<String>
+
     @Query("SELECT * FROM transfers WHERE status = :status ORDER BY createdAt DESC")
     fun observeTransfersByStatus(status: String): Flow<List<LocalTransfer>>
 
@@ -46,6 +49,12 @@ interface TransferDao {
     @Query("DELETE FROM transfers WHERE status IN ('COMPLETED', 'CANCELLED', 'FAILED')")
     suspend fun deleteCompletedTransfers()
 
+    @Query("SELECT * FROM transfers WHERE accountId = :accountId")
+    suspend fun getByAccountId(accountId: String): List<LocalTransfer>
+
+    @Query("DELETE FROM transfers WHERE accountId = :accountId")
+    suspend fun deleteByAccountId(accountId: String)
+
     @Query("DELETE FROM transfers")
     suspend fun clearAll()
 
@@ -57,6 +66,15 @@ interface TransferDao {
 
     @Query("UPDATE transfers SET status=:status, state=CASE :status WHEN 'PENDING' THEN 'QUEUED' WHEN 'RUNNING' THEN 'RUNNING' WHEN 'PAUSED' THEN 'PAUSED' WHEN 'COMPLETED' THEN 'COMPLETED' WHEN 'FAILED' THEN 'FAILED_RETRYABLE' WHEN 'CANCELLED' THEN 'CANCELLED' ELSE state END, errorMessage=:error, lastErrorMessage=:error, leaseOwner=CASE WHEN :status IN ('PENDING','PAUSED','CANCELLED','FAILED','COMPLETED') THEN NULL ELSE leaseOwner END, leaseExpiresAt=CASE WHEN :status IN ('PENDING','PAUSED','CANCELLED','FAILED','COMPLETED') THEN NULL ELSE leaseExpiresAt END, nextAttemptAt=CASE WHEN :status='PENDING' THEN NULL ELSE nextAttemptAt END, updatedAt=:updatedAt WHERE id=:id")
     suspend fun updateStatus(id: String, status: String, error: String? = null, updatedAt: Long = System.currentTimeMillis())
+
+    @Query("UPDATE transfers SET status='PAUSED', state=CASE WHEN state IN ('RUNNING','PAUSING') AND leaseOwner IS NOT NULL AND (leaseExpiresAt IS NULL OR leaseExpiresAt > :now) THEN 'PAUSING' ELSE 'PAUSED' END, leaseOwner=CASE WHEN state IN ('RUNNING','PAUSING') AND leaseOwner IS NOT NULL AND (leaseExpiresAt IS NULL OR leaseExpiresAt > :now) THEN leaseOwner ELSE NULL END, leaseExpiresAt=CASE WHEN state IN ('RUNNING','PAUSING') AND leaseOwner IS NOT NULL AND (leaseExpiresAt IS NULL OR leaseExpiresAt > :now) THEN leaseExpiresAt ELSE NULL END, updatedAt=:now WHERE id=:id")
+    suspend fun requestPause(id: String, now: Long = System.currentTimeMillis()): Int
+
+    @Query("UPDATE transfers SET status='PENDING', state='QUEUED', errorMessage=NULL, lastErrorCode=NULL, lastErrorMessage=NULL, nextAttemptAt=NULL, leaseOwner=CASE WHEN state IN ('RUNNING','PAUSING') AND leaseOwner IS NOT NULL AND leaseExpiresAt IS NOT NULL AND leaseExpiresAt > :now THEN leaseOwner ELSE NULL END, leaseExpiresAt=CASE WHEN state IN ('RUNNING','PAUSING') AND leaseOwner IS NOT NULL AND leaseExpiresAt IS NOT NULL AND leaseExpiresAt > :now THEN leaseExpiresAt ELSE NULL END, updatedAt=:now WHERE id=:id")
+    suspend fun requestResume(id: String, now: Long = System.currentTimeMillis()): Int
+
+    @Query("UPDATE transfers SET status='CANCELLED', state=CASE WHEN state IN ('RUNNING','PAUSING','CANCELLING') AND leaseOwner IS NOT NULL AND (leaseExpiresAt IS NULL OR leaseExpiresAt > :now) THEN 'CANCELLING' ELSE 'CANCELLED' END, errorMessage=:error, lastErrorMessage=:error, leaseOwner=CASE WHEN state IN ('RUNNING','PAUSING','CANCELLING') AND leaseOwner IS NOT NULL AND (leaseExpiresAt IS NULL OR leaseExpiresAt > :now) THEN leaseOwner ELSE NULL END, leaseExpiresAt=CASE WHEN state IN ('RUNNING','PAUSING','CANCELLING') AND leaseOwner IS NOT NULL AND (leaseExpiresAt IS NULL OR leaseExpiresAt > :now) THEN leaseExpiresAt ELSE NULL END, updatedAt=:now WHERE id=:id")
+    suspend fun requestCancel(id: String, error: String? = "Cancelled", now: Long = System.currentTimeMillis()): Int
 
     @Query("UPDATE transfers SET status = 'PENDING', state = 'QUEUED', leaseOwner = NULL, leaseExpiresAt = NULL, errorMessage = :error, lastErrorCode = 'WORKER_INTERRUPTED', lastErrorMessage = :error, updatedAt = :updatedAt WHERE status = 'RUNNING' AND updatedAt < :staleBefore")
     suspend fun recoverStaleRunning(staleBefore: Long, error: String = "Recovered after interrupted transfer", updatedAt: Long = System.currentTimeMillis()): Int

@@ -568,6 +568,217 @@ class ResumableTransferTest {
         }
     }
 
+    @Test
+    fun plaintextDownloadVerifiesChecksumAndRejectsCorruptedPayloadBeforeCommit(): Unit = runBlocking {
+        database.accountDao().insertAccounts(
+            listOf(
+                LocalAccount(
+                    id = "acc-checksum",
+                    name = "Cloudyte",
+                    driveName = "Main",
+                    email = "u@cloudyte.io",
+                    accountType = "cloudyte",
+                    usageBytes = 0L,
+                    totalBytes = 1000L,
+                    percentage = 0f,
+                    fileCount = 0,
+                    isDefault = true,
+                    channelId = null
+                )
+            )
+        )
+
+        val expectedBytes = "expected-authentic-content".toByteArray()
+        val corruptedBytes = "corrupted-payload-bytes!!!".toByteArray()
+        val expectedChecksum = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(expectedBytes)
+            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+
+        val destFile = File(context.cacheDir, "checksum_guarded_target.bin")
+        val partFile = File(destFile.parentFile, "${destFile.name}.part")
+        destFile.writeText("existing-safe-local-file")
+        partFile.delete()
+
+        try {
+            val api = object : BaseFakeApi() {
+                override suspend fun downloadFile(
+                    accountId: String,
+                    fileId: String,
+                    preview: Int?,
+                    range: String?
+                ): Response<ResponseBody> {
+                    return Response.success(
+                        corruptedBytes.toResponseBody("application/octet-stream".toMediaType())
+                    )
+                }
+            }
+            val registry = ProviderRegistry(api)
+            val executor = CloudTransferOperationExecutor(
+                context = context,
+                database = database,
+                transfers = TransferRepository(database.transferDao(), registry),
+                providers = registry
+            )
+
+            val transfer = LocalTransfer(
+                id = "dl-checksum-mismatch",
+                accountId = "acc-checksum",
+                fileId = "remote-checksum-1",
+                remoteId = "remote-checksum-1",
+                fileName = destFile.name,
+                localPath = destFile.absolutePath,
+                direction = TransferDirection.DOWNLOAD.name,
+                operationType = TransferDirection.DOWNLOAD.name,
+                providerType = "cloudyte",
+                status = "RUNNING",
+                state = TransferState.RUNNING.name,
+                totalBytes = expectedBytes.size.toLong(),
+                checksum = expectedChecksum,
+                leaseOwner = "owner-cs",
+                leaseExpiresAt = System.currentTimeMillis() + 120_000L
+            )
+            database.transferDao().insert(transfer)
+
+            val outcome = executor.execute(transfer, "owner-cs") { _, _, _, _ -> }
+            assertTrue("Corrupted plaintext download must fail permanently", outcome is TransferOutcome.Permanent)
+            assertEquals("CHECKSUM_MISMATCH", (outcome as TransferOutcome.Permanent).code)
+            assertFalse("Corrupted .part file must be deleted on checksum mismatch", partFile.exists())
+            assertTrue("Pre-existing destination file must remain intact", destFile.exists())
+            assertEquals("existing-safe-local-file", destFile.readText())
+        } finally {
+            destFile.delete()
+            partFile.delete()
+        }
+    }
+
+    @Test
+    fun commitPartFilePreservesExistingDestinationFileWhenStagingFails() {
+        val registry = ProviderRegistry(BaseFakeApi())
+        val executor = CloudTransferOperationExecutor(
+            context = context,
+            database = database,
+            transfers = TransferRepository(database.transferDao(), registry),
+            providers = registry
+        )
+
+        val destFile = File(context.cacheDir, "atomic_commit_existing.txt")
+        val missingPartFile = File(context.cacheDir, "non_existent_part_file.part")
+        destFile.writeText("important-existing-user-document")
+        missingPartFile.delete()
+
+        try {
+            val thrown = runCatching {
+                executor.commitPartFile(
+                    partFile = missingPartFile,
+                    targetFile = destFile,
+                    uri = Uri.fromFile(destFile),
+                    isContentUri = false
+                )
+            }.exceptionOrNull()
+            assertNotNull("Expected IOException when partFile is missing/unreadable", thrown)
+            assertTrue("Pre-existing destination file must not be deleted when commit fails", destFile.exists())
+            assertEquals("important-existing-user-document", destFile.readText())
+        } finally {
+            destFile.delete()
+        }
+    }
+
+    @Test
+    fun oversizedPartFileIsResetAndRedownloadedFromByteZero(): Unit = runBlocking {
+        database.accountDao().insertAccounts(
+            listOf(
+                LocalAccount(
+                    id = "acc-oversized",
+                    name = "Cloudyte",
+                    driveName = "Main",
+                    email = "u@cloudyte.io",
+                    accountType = "cloudyte",
+                    usageBytes = 0L,
+                    totalBytes = 1000L,
+                    percentage = 0f,
+                    fileCount = 0,
+                    isDefault = true,
+                    channelId = null
+                )
+            )
+        )
+
+        val newSmallerPayload = "NEW_SMALL!".toByteArray() // 10 bytes
+        val destFile = File(context.cacheDir, "oversized_part_target.bin")
+        val partFile = File(destFile.parentFile, "${destFile.name}.part")
+        destFile.delete()
+        // Pre-populate .part file with 32 bytes (> 10-byte expected total)
+        partFile.writeText("STALE_LARGER_PREVIOUS_VERSION_XX")
+
+        val capturedRanges = mutableListOf<String?>()
+        try {
+            val api = object : BaseFakeApi() {
+                override suspend fun downloadFile(
+                    accountId: String,
+                    fileId: String,
+                    preview: Int?,
+                    range: String?
+                ): Response<ResponseBody> {
+                    capturedRanges += range
+                    return if (range != null) {
+                        // Server mistakenly returns 206 Partial Content even though local .part is larger than the new 10-byte file
+                        val rawResponse = okhttp3.Response.Builder()
+                            .request(Request.Builder().url("https://cloudyte.local/download").build())
+                            .protocol(Protocol.HTTP_1_1)
+                            .code(206)
+                            .message("Partial Content")
+                            .headers(Headers.headersOf("Content-Range", "bytes 0-9/10"))
+                            .build()
+                        Response.success(
+                            newSmallerPayload.toResponseBody("application/octet-stream".toMediaType()),
+                            rawResponse
+                        )
+                    } else {
+                        Response.success(
+                            newSmallerPayload.toResponseBody("application/octet-stream".toMediaType())
+                        )
+                    }
+                }
+            }
+            val registry = ProviderRegistry(api)
+            val executor = CloudTransferOperationExecutor(
+                context = context,
+                database = database,
+                transfers = TransferRepository(database.transferDao(), registry),
+                providers = registry
+            )
+
+            val transfer = LocalTransfer(
+                id = "dl-oversized-1",
+                accountId = "acc-oversized",
+                fileId = "remote-oversized-1",
+                remoteId = "remote-oversized-1",
+                fileName = destFile.name,
+                localPath = destFile.absolutePath,
+                direction = TransferDirection.DOWNLOAD.name,
+                operationType = TransferDirection.DOWNLOAD.name,
+                providerType = "cloudyte",
+                status = "RUNNING",
+                state = TransferState.RUNNING.name,
+                totalBytes = newSmallerPayload.size.toLong(),
+                bytesTransferred = 32L,
+                leaseOwner = "owner-ov",
+                leaseExpiresAt = System.currentTimeMillis() + 120_000L
+            )
+            database.transferDao().insert(transfer)
+
+            val outcome = executor.execute(transfer, "owner-ov") { _, _, _, _ -> }
+            assertTrue(outcome is TransferOutcome.Completed)
+            assertEquals(listOf("bytes=32-", null), capturedRanges)
+            assertFalse(partFile.exists())
+            assertTrue(destFile.exists())
+            assertEquals("NEW_SMALL!", destFile.readText())
+        } finally {
+            destFile.delete()
+            partFile.delete()
+        }
+    }
+
     private open class BaseFakeApi : CloudyteApi {
         override suspend fun getPublicSettings(): PublicSettingsResponse = PublicSettingsResponse()
         override suspend fun register(request: RegisterRequest): Response<ResponseBody> =

@@ -94,11 +94,8 @@ class TransferScheduler @JvmOverloads constructor(
             builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
         }
         val wm = workManager()
-        val policy = if (reason == ScheduleReason.PERIODIC_MAINTENANCE) {
-            ExistingWorkPolicy.KEEP
-        } else {
-            ExistingWorkPolicy.REPLACE
-        }
+        val policy = ExistingWorkPolicy.KEEP
+        val queueWorkName = if (allowMetered) UNIQUE_QUEUE_NAME else UNIQUE_UNMETERED_QUEUE_NAME
         if (wm == null) {
             diagnostics?.recordEvent(
                 operationType = "queue_kick",
@@ -108,7 +105,7 @@ class TransferScheduler @JvmOverloads constructor(
             )
             return
         }
-        wm.enqueueUniqueWork(UNIQUE_QUEUE_NAME, policy, builder.build())
+        wm.enqueueUniqueWork(queueWorkName, policy, builder.build())
         diagnostics?.recordEvent(
             operationType = "queue_kick",
             state = reason.name,
@@ -171,6 +168,7 @@ class TransferScheduler @JvmOverloads constructor(
 
     companion object {
         const val UNIQUE_QUEUE_NAME = "cloudyte_transfer_queue"
+        const val UNIQUE_UNMETERED_QUEUE_NAME = "cloudyte_transfer_queue_unmetered"
         const val MAINTENANCE_WORK_NAME = "cloudyte_transfer_queue_maintenance"
         const val RETRY_DUE_WORK_NAME = "cloudyte_transfer_queue_retry_due"
         const val NETWORK_RECOVERY_WORK_NAME = "cloudyte_transfer_queue_network_recovery"

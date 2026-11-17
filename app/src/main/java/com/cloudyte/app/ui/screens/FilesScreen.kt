@@ -221,13 +221,17 @@ private data class FolderPane(
     val breadcrumbs: List<BreadcrumbItem>
 )
 
+private val CLOUD_FILE_DATE_FORMATTER: java.time.format.DateTimeFormatter =
+    java.time.format.DateTimeFormatter.ofPattern("dd MMM yyyy", java.util.Locale.US)
+
 private val CloudFile.formattedDate: String
     get() {
         val t = time ?: updatedAt
         if (t != null && t > 0L) {
             val millis = if (t < 100000000000L) t * 1000L else t
-            val sdf = java.text.SimpleDateFormat("dd MMM yyyy", java.util.Locale.US)
-            return sdf.format(java.util.Date(millis))
+            return CLOUD_FILE_DATE_FORMATTER.format(
+                java.time.Instant.ofEpochMilli(millis).atZone(java.time.ZoneId.systemDefault())
+            )
         }
         if (!createdAt.isNullOrBlank()) {
             return createdAt.take(10)
@@ -525,9 +529,11 @@ class FilesViewModel(
                 }
             }
         }
-        // Refresh the current folder and invalidate storage stats whenever an upload/backup completes.
+        // Refresh the current folder and invalidate storage stats whenever a new upload/backup completes.
         viewModelScope.launch {
             val app = getApplication<CloudyteApplication>()
+            var initializedBaseline = false
+            var previousCompletedIds = emptySet<String>()
             app.container.transferRepository
                 .observeByStatus(com.cloudyte.app.db.TransferStatus.COMPLETED.name)
                 .map { list ->
@@ -538,7 +544,13 @@ class FilesViewModel(
                 }
                 .distinctUntilChanged()
                 .collect { completedIds ->
-                    if (completedIds.isNotEmpty()) {
+                    val newlyCompleted = completedIds - previousCompletedIds
+                    previousCompletedIds = completedIds
+                    if (!initializedBaseline) {
+                        initializedBaseline = true
+                        return@collect
+                    }
+                    if (newlyCompleted.isNotEmpty()) {
                         repo.invalidateStorageCache()
                         refresh(force = true)
                     }

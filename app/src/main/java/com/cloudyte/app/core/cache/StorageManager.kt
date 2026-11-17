@@ -145,7 +145,7 @@ object StorageManager {
 
         val db = runCatching { AppDatabase.getDatabase(appContext) }.getOrNull()
         val activeIds = runCatching {
-            db?.transferDao()?.observeActiveTransfers()?.first()?.map { it.id }?.toSet() ?: emptySet()
+            db?.transferDao()?.getResumableTransferIds()?.toSet() ?: emptySet()
         }.getOrDefault(emptySet())
         deletedCount += SecureFileCleanup.cleanupStaleTempFiles(appContext, activeIds)
 
