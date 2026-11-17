@@ -6,6 +6,7 @@ import com.cloudyte.app.api.UploadCompleteResponse
 import com.cloudyte.app.api.UploadSessionRequest
 import com.cloudyte.app.api.UploadSessionResponse
 import okhttp3.MultipartBody
+import okhttp3.RequestBody
 import okhttp3.ResponseBody
 import retrofit2.Response
 
@@ -25,6 +26,17 @@ interface CloudProvider {
     suspend fun queryUploadSession(sessionId: String): Response<UploadSessionResponse> =
         throw UnsupportedProviderOperation(type, "upload session offset query")
     suspend fun uploadChunk(sessionId: String, contentRange: String, chunk: MultipartBody.Part): Response<UploadChunkResponse>
+    suspend fun uploadChunkStream(
+        sessionId: String,
+        contentRange: String,
+        chunkOffset: Long,
+        chunk: RequestBody
+    ): Response<UploadChunkResponse> =
+        uploadChunk(sessionId, contentRange, MultipartBody.Part.createFormData("chunk", "chunk.bin", chunk))
+    suspend fun pauseUploadSession(sessionId: String): Response<UploadSessionResponse> =
+        Response.success(UploadSessionResponse(sessionId = sessionId, status = "paused"))
+    suspend fun resumeUploadSession(sessionId: String): Response<UploadSessionResponse> =
+        Response.success(UploadSessionResponse(sessionId = sessionId, status = "active"))
     suspend fun completeUploadSession(sessionId: String): Response<UploadCompleteResponse>
     suspend fun cancelUploadSession(sessionId: String): Response<Unit> =
         throw UnsupportedProviderOperation(type, "upload session cancellation")
@@ -45,6 +57,14 @@ abstract class ApiCloudProvider(private val api: CloudyteApi) : CloudProvider {
     override suspend fun createUploadSession(accountId: String, request: UploadSessionRequest) = api.createUploadSession(accountId, request)
     override suspend fun queryUploadSession(sessionId: String) = api.getUploadSession(sessionId)
     override suspend fun uploadChunk(sessionId: String, contentRange: String, chunk: MultipartBody.Part) = api.uploadChunk(sessionId, contentRange, chunk)
+    override suspend fun uploadChunkStream(
+        sessionId: String,
+        contentRange: String,
+        chunkOffset: Long,
+        chunk: RequestBody
+    ) = api.uploadChunkStream(sessionId, contentRange, chunkOffset, chunk)
+    override suspend fun pauseUploadSession(sessionId: String) = api.pauseUploadSession(sessionId)
+    override suspend fun resumeUploadSession(sessionId: String) = api.resumeUploadSession(sessionId)
     override suspend fun completeUploadSession(sessionId: String) = api.completeUploadSession(sessionId)
     override suspend fun cancelUploadSession(sessionId: String) = api.cancelUploadSession(sessionId)
     override suspend fun downloadFile(

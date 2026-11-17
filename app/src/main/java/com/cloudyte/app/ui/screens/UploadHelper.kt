@@ -36,16 +36,30 @@ data class UploadResult(
     val errorMessage: String? = null,
     val fileName: String = "",
     val isIoError: Boolean = false,
-    val isPermanentFailure: Boolean = false
+    val isPermanentFailure: Boolean = false,
+    val errorCode: String? = null,
+    val serverRetryable: Boolean? = null
 ) {
     val isFatalClientError: Boolean
-        get() = isPermanentFailure || (!isIoError && statusCode in PERMANENT_HTTP_CODES)
+        get() {
+            if (isPermanentFailure) return true
+            if (serverRetryable == true) return false
+            if (errorCode != null && errorCode in RETRYABLE_ERROR_CODES) return false
+            if (serverRetryable == false) return true
+            return !isIoError && statusCode in PERMANENT_HTTP_CODES
+        }
 
     val isRetryable: Boolean
         get() = !isSuccess && !isFatalClientError && statusCode != 401
 
     companion object {
         val PERMANENT_HTTP_CODES = setOf(400, 403, 404, 405, 409, 410, 413, 414, 415, 422, 507)
+        val RETRYABLE_ERROR_CODES = setOf(
+            "UPLOAD_SESSION_OFFSET_CONFLICT",
+            "UPLOAD_SESSION_NOT_ACTIVE",
+            "RATE_LIMITED",
+            "ENCRYPTED_UPLOAD_INCOMPLETE"
+        )
     }
 }
 
@@ -221,14 +235,16 @@ object UploadHelper {
                     UploadResult(isSuccess = true, statusCode = response.code(), fileName = safeFileName)
                 } else {
                     val rawErr = response.errorBody()?.string()
-                    val parsedErr = ApiClient.parseError(rawErr, response.code())
-                    Log.e("UploadHelper", "Upload failed: HTTP ${response.code()}")
+                    val envelope = ApiClient.parseErrorEnvelope(rawErr, response.code())
+                    Log.e("UploadHelper", "Upload failed: HTTP ${response.code()} (${envelope.code ?: "no_code"})")
                     UploadResult(
                         isSuccess = false,
                         statusCode = response.code(),
-                        errorMessage = "HTTP ${response.code()}: $parsedErr",
+                        errorMessage = "HTTP ${response.code()}: ${envelope.message}",
                         fileName = safeFileName,
-                        isIoError = false
+                        isIoError = false,
+                        errorCode = envelope.code,
+                        serverRetryable = envelope.retryable
                     )
                 }
             } catch (e: CancellationException) {
@@ -272,15 +288,41 @@ object UploadHelper {
         }
     }
 
-    private fun parseResponseError(response: retrofit2.Response<*>, fallback: String): String {
+    private fun parseResponseErrorEnvelope(
+        response: retrofit2.Response<*>,
+        fallback: String
+    ): com.cloudyte.app.api.ParsedApiError {
         val raw = runCatching { response.errorBody()?.string() }.getOrNull()
         val code = response.code()
-        val parsed = if (code > 0) ApiClient.parseError(raw, code) else raw.orEmpty()
-        return when {
-            parsed.isNotBlank() && !parsed.startsWith("Request failed (HTTP") -> parsed
+        val envelope = if (code > 0) {
+            ApiClient.parseErrorEnvelope(raw, code)
+        } else {
+            com.cloudyte.app.api.ParsedApiError(message = raw.orEmpty())
+        }
+        val msg = when {
+            envelope.message.isNotBlank() && !envelope.message.startsWith("Request failed (HTTP") -> envelope.message
             code > 0 -> "$fallback (HTTP $code)"
             else -> fallback
         }
+        return envelope.copy(message = msg)
+    }
+
+    private fun buildFailureResult(
+        response: retrofit2.Response<*>,
+        fallback: String,
+        fileName: String,
+        overrideErrorCode: String? = null,
+        overrideRetryable: Boolean? = null
+    ): UploadResult {
+        val env = parseResponseErrorEnvelope(response, fallback)
+        return UploadResult(
+            isSuccess = false,
+            statusCode = response.code(),
+            errorMessage = env.message,
+            fileName = fileName,
+            errorCode = overrideErrorCode ?: env.code,
+            serverRetryable = overrideRetryable ?: env.retryable
+        )
     }
 
     suspend fun uploadFileResumable(
@@ -338,24 +380,14 @@ object UploadHelper {
             )
             var sessionResponse = provider.createUploadSession(accountId, sessionRequest)
             if (!sessionResponse.isSuccessful || sessionResponse.body() == null) {
-                return@withContext UploadResult(
-                    false,
-                    sessionResponse.code(),
-                    parseResponseError(sessionResponse, "Could not create upload session"),
-                    explicitFileName
-                )
+                return@withContext buildFailureResult(sessionResponse, "Could not create upload session", explicitFileName)
             }
             val createdSession = sessionResponse.body()!!
             // Creation is idempotent by logical transfer key; query the provider/server state
             // before resuming so local progress is never mistaken for committed bytes.
             val statusResponse = provider.queryUploadSession(createdSession.sessionId)
             if (!statusResponse.isSuccessful || statusResponse.body() == null) {
-                return@withContext UploadResult(
-                    false,
-                    statusResponse.code(),
-                    parseResponseError(statusResponse, "Could not reconcile upload session offset"),
-                    explicitFileName
-                )
+                return@withContext buildFailureResult(statusResponse, "Could not reconcile upload session offset", explicitFileName)
             }
             var session = statusResponse.body()!!
             if (session.status.equals("expired", ignoreCase = true) || session.status.equals("UPLOAD_SESSION_EXPIRED", ignoreCase = true)) {
@@ -363,23 +395,20 @@ object UploadHelper {
                 // key creates a fresh provider session without changing transfer identity.
                 sessionResponse = provider.createUploadSession(accountId, sessionRequest)
                 if (!sessionResponse.isSuccessful || sessionResponse.body() == null) {
-                    return@withContext UploadResult(
-                        false,
-                        sessionResponse.code(),
-                        parseResponseError(sessionResponse, "Could not renew expired upload session"),
-                        explicitFileName
-                    )
+                    return@withContext buildFailureResult(sessionResponse, "Could not renew expired upload session", explicitFileName)
                 }
                 val renewed = provider.queryUploadSession(sessionResponse.body()!!.sessionId)
                 if (!renewed.isSuccessful || renewed.body() == null || renewed.body()!!.status.equals("expired", ignoreCase = true)) {
-                    return@withContext UploadResult(
-                        false,
-                        renewed.code(),
-                        parseResponseError(renewed, "Could not reconcile renewed upload session"),
-                        explicitFileName
-                    )
+                    return@withContext buildFailureResult(renewed, "Could not reconcile renewed upload session", explicitFileName)
                 }
                 session = renewed.body()!!
+            } else if (session.status.equals("paused", ignoreCase = true)) {
+                val resumed = runCatching { provider.resumeUploadSession(session.sessionId) }.getOrNull()
+                if (resumed != null && resumed.isSuccessful && resumed.body() != null) {
+                    session = resumed.body()!!.let { body ->
+                        if (body.totalBytes > 0L) body else session.copy(status = "active")
+                    }
+                }
             }
             var offset = session.receivedBytes.coerceIn(0L, totalBytes)
             val directLocalFile = if (uri.scheme.equals("file", ignoreCase = true)) {
@@ -389,7 +418,9 @@ object UploadHelper {
             val chunkSize = session.chunkSize.coerceAtLeast(64L * 1024L).coerceAtMost(maxChunkCap)
             var nextChunkIndex = ((offset + chunkSize - 1L) / chunkSize).toInt()
             onSessionReady(session.sessionId, chunkSize, checksum, offset, nextChunkIndex)
-            val chunkMediaType = effectiveSessionMimeType.toMediaTypeOrNull()
+            // Direct Stream Mode (Section 6.4.2 #3): application/octet-stream avoids Multer double disk writes
+            val chunkMediaType = "application/octet-stream".toMediaTypeOrNull()
+            var conflictReconciliations = 0
             if (directLocalFile != null) {
                 val earlyFailure: UploadResult? = coroutineScope {
                     val streamChannel = Channel<Long>(Channel.CONFLATED)
@@ -411,18 +442,43 @@ object UploadHelper {
                                     streamChannel.trySend(writtenTotal.coerceAtMost(maxLiveBytes))
                                 }
                             )
-                            val part = MultipartBody.Part.createFormData("chunk", explicitFileName, body)
-                            val response = provider.uploadChunk(
+                            val response = provider.uploadChunkStream(
                                 sessionId = session.sessionId,
                                 contentRange = "bytes $offset-${offset + expected - 1}/$totalBytes",
-                                chunk = part
+                                chunkOffset = offset,
+                                chunk = body
                             )
                             if (!response.isSuccessful || response.body() == null) {
+                                val env = parseResponseErrorEnvelope(response, "Chunk upload failed at offset $offset")
+                                val canReconcileConflict = response.code() == 409 &&
+                                    (env.code == null ||
+                                        env.code.equals("UPLOAD_SESSION_OFFSET_CONFLICT", ignoreCase = true) ||
+                                        env.code.equals("UPLOAD_SESSION_NOT_ACTIVE", ignoreCase = true)) &&
+                                    conflictReconciliations < 2
+                                if (canReconcileConflict) {
+                                    conflictReconciliations++
+                                    if (env.code.equals("UPLOAD_SESSION_NOT_ACTIVE", ignoreCase = true)) {
+                                        runCatching { provider.resumeUploadSession(session.sessionId) }
+                                    }
+                                    val reconciled = runCatching { provider.queryUploadSession(session.sessionId) }.getOrNull()
+                                    val reconciledBody = reconciled?.body()
+                                    if (reconciled != null && reconciled.isSuccessful && reconciledBody != null) {
+                                        if (reconciledBody.status.equals("paused", ignoreCase = true)) {
+                                            runCatching { provider.resumeUploadSession(session.sessionId) }
+                                        }
+                                        offset = reconciledBody.receivedBytes.coerceIn(0L, totalBytes)
+                                        nextChunkIndex = ((offset + chunkSize - 1L) / chunkSize).toInt()
+                                        onProgress(offset, nextChunkIndex)
+                                        continue
+                                    }
+                                }
                                 return@coroutineScope UploadResult(
-                                    false,
-                                    response.code(),
-                                    parseResponseError(response, "Chunk upload failed at offset $offset"),
-                                    explicitFileName
+                                    isSuccess = false,
+                                    statusCode = response.code(),
+                                    errorMessage = env.message,
+                                    fileName = explicitFileName,
+                                    errorCode = env.code,
+                                    serverRetryable = env.retryable
                                 )
                             }
                             val nextOffset = response.body()!!.nextOffset.coerceIn(0L, totalBytes)
@@ -483,18 +539,68 @@ object UploadHelper {
                                         streamChannel.trySend(writtenTotal.coerceAtMost(maxLiveBytes))
                                     }
                                 )
-                                val part = MultipartBody.Part.createFormData("chunk", explicitFileName, body)
-                                val response = provider.uploadChunk(
+                                val response = provider.uploadChunkStream(
                                     sessionId = session.sessionId,
                                     contentRange = "bytes $offset-${offset + readTotal - 1}/$totalBytes",
-                                    chunk = part
+                                    chunkOffset = offset,
+                                    chunk = body
                                 )
                                 if (!response.isSuccessful || response.body() == null) {
+                                    val env = parseResponseErrorEnvelope(response, "Chunk upload failed at offset $offset")
+                                    val isConflict = response.code() == 409 &&
+                                        (env.code == null ||
+                                            env.code.equals("UPLOAD_SESSION_OFFSET_CONFLICT", ignoreCase = true) ||
+                                            env.code.equals("UPLOAD_SESSION_NOT_ACTIVE", ignoreCase = true))
+                                    if (isConflict && conflictReconciliations < 2) {
+                                        conflictReconciliations++
+                                        if (env.code.equals("UPLOAD_SESSION_NOT_ACTIVE", ignoreCase = true)) {
+                                            runCatching { provider.resumeUploadSession(session.sessionId) }
+                                        }
+                                        val reconciled = runCatching { provider.queryUploadSession(session.sessionId) }.getOrNull()
+                                        val reconciledBody = reconciled?.body()
+                                        if (reconciled != null && reconciled.isSuccessful && reconciledBody != null) {
+                                            if (reconciledBody.status.equals("paused", ignoreCase = true)) {
+                                                runCatching { provider.resumeUploadSession(session.sessionId) }
+                                            }
+                                            val currentStreamPos = offset + readTotal.toLong()
+                                            val serverOffset = reconciledBody.receivedBytes.coerceIn(0L, totalBytes)
+                                            if (serverOffset >= currentStreamPos) {
+                                                var advanceNeeded = serverOffset - currentStreamPos
+                                                while (advanceNeeded > 0L) {
+                                                    val n = input.skip(advanceNeeded)
+                                                    if (n > 0L) {
+                                                        advanceNeeded -= n
+                                                    } else {
+                                                        val drainBuf = skipDrainBuffer ?: ByteArray(64 * 1024).also { skipDrainBuffer = it }
+                                                        val toDrain = minOf(drainBuf.size.toLong(), advanceNeeded).toInt()
+                                                        val r = input.read(drainBuf, 0, toDrain)
+                                                        if (r < 0) throw IOException("Could not advance stream to reconciled offset $serverOffset")
+                                                        advanceNeeded -= r
+                                                    }
+                                                }
+                                                offset = serverOffset
+                                                nextChunkIndex = ((offset + chunkSize - 1L) / chunkSize).toInt()
+                                                onProgress(offset, nextChunkIndex)
+                                                continue
+                                            } else {
+                                                return@coroutineScope UploadResult(
+                                                    isSuccess = false,
+                                                    statusCode = 409,
+                                                    errorMessage = env.message,
+                                                    fileName = explicitFileName,
+                                                    errorCode = env.code ?: "UPLOAD_SESSION_OFFSET_CONFLICT",
+                                                    serverRetryable = true
+                                                )
+                                            }
+                                        }
+                                    }
                                     return@coroutineScope UploadResult(
-                                        false,
-                                        response.code(),
-                                        parseResponseError(response, "Chunk upload failed at offset $offset"),
-                                        explicitFileName
+                                        isSuccess = false,
+                                        statusCode = response.code(),
+                                        errorMessage = env.message,
+                                        fileName = explicitFileName,
+                                        errorCode = env.code,
+                                        serverRetryable = env.retryable ?: isConflict
                                     )
                                 }
                                 val nextOffset = response.body()!!.nextOffset.coerceIn(0L, totalBytes)
@@ -518,12 +624,7 @@ object UploadHelper {
             if (complete.isSuccessful && complete.body()?.success == true) {
                 UploadResult(true, complete.code(), fileName = explicitFileName)
             } else {
-                UploadResult(
-                    false,
-                    complete.code(),
-                    parseResponseError(complete, "Could not finalize upload session"),
-                    explicitFileName
-                )
+                buildFailureResult(complete, "Could not finalize upload session", explicitFileName)
             }
         } catch (e: CancellationException) {
             throw e

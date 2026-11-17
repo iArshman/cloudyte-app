@@ -416,6 +416,12 @@ class TransferReliabilityAndDeletionTest {
                 "createUploadSession" -> onCreateUploadSession(args[0] as String, args[1] as UploadSessionRequest)
                 "getUploadSession" -> onGetUploadSession(args[0] as String)
                 "uploadChunk" -> onUploadChunk(args[0] as String, args[1] as String, args[2] as MultipartBody.Part)
+                "uploadChunkStream" -> {
+                    val part = MultipartBody.Part.createFormData("chunk", "chunk.bin", args[3] as okhttp3.RequestBody)
+                    onUploadChunk(args[0] as String, args[1] as String, part)
+                }
+                "pauseUploadSession" -> Response.success(UploadSessionResponse(sessionId = args[0] as String, status = "paused"))
+                "resumeUploadSession" -> Response.success(UploadSessionResponse(sessionId = args[0] as String, status = "active"))
                 "completeUploadSession" -> onCompleteUploadSession(args[0] as String)
                 "cancelUploadSession" -> Response.success(Unit)
                 else -> {

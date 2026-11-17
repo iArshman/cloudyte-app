@@ -214,13 +214,15 @@ fun GDriveVideoContent(
                 isBuffering = false
                 playbackError = "Unable to prepare encrypted video"
             } else {
-                exoPlayer.setMediaItem(MediaItem.fromUri(ApiClient.getFileUrl(acc, file.effectiveId, preview = true)))
+                val streamUrl = ApiClient.resolveSignedMediaUrl(acc, file.effectiveId, preview = true)
+                exoPlayer.setMediaItem(MediaItem.fromUri(streamUrl))
                 exoPlayer.prepare()
                 exoPlayer.playWhenReady = isActive && prefs.autoPlayVideo
             }
         } else {
             statusNote = null
-            exoPlayer.setMediaItem(MediaItem.fromUri(ApiClient.getFileUrl(acc, file.effectiveId, preview = true)))
+            val streamUrl = ApiClient.resolveSignedMediaUrl(acc, file.effectiveId, preview = true)
+            exoPlayer.setMediaItem(MediaItem.fromUri(streamUrl))
             exoPlayer.prepare()
             exoPlayer.playWhenReady = isActive && prefs.autoPlayVideo
         }

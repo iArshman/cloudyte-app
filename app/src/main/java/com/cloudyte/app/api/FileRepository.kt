@@ -41,7 +41,7 @@ object FileRepository {
         val db = AppDatabase.getInstance()
         if (db != null) {
             try {
-                val dbFiles = runBlocking {
+                val dbFiles = runBlocking(Dispatchers.IO) {
                     val acc = activeAccountId
                     if (acc != null) {
                         db.cloudFileDao().getFilesForAccount(acc)
@@ -68,7 +68,7 @@ object FileRepository {
         val db = AppDatabase.getInstance()
         if (db != null) {
             try {
-                val local = runBlocking {
+                val local = runBlocking(Dispatchers.IO) {
                     db.cloudFileDao().getFileById(id)
                 }
                 if (local != null) {

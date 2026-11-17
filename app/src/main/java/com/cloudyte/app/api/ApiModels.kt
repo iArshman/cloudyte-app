@@ -457,11 +457,55 @@ data class TransferActionResponse(
 @JsonClass(generateAdapter = true)
 data class JobStatusResponse(
     val id: String = "",
+    val type: String? = null,
     val status: String = "",
     val stage: String? = null,
     val progressPct: Int? = null,
     val bytesProcessed: Long? = null,
     val totalBytes: Long? = null,
+    val attempts: Int? = null,
+    val maxAttempts: Int? = null,
+    val deadLettered: Boolean? = null,
     val lastError: String? = null
 )
+
+@JsonClass(generateAdapter = true)
+data class MediaLinkResponse(
+    val url: String = "",
+    val expiresAt: Long = 0L
+)
+
+@JsonClass(generateAdapter = true)
+data class BatchBackupRequest(
+    val sourceAccountId: String,
+    val targetAccountId: String,
+    val targetFolderId: String = "root",
+    val fileIds: List<String>,
+    val conflictStrategy: String = "rename"
+)
+
+@JsonClass(generateAdapter = true)
+data class BackupVerifyResponse(
+    val jobId: String = "",
+    val verified: Boolean = false,
+    val totalItems: Int = 0,
+    val verifiedCount: Int = 0,
+    val failedVerifications: List<String> = emptyList(),
+    val verifiedAt: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class BackupRestoreRequest(
+    val targetAccountId: String,
+    val targetFolderId: String = "root",
+    val conflictStrategy: String = "rename"
+)
+
+data class ParsedApiError(
+    val message: String,
+    val code: String? = null,
+    val requestId: String? = null,
+    val retryable: Boolean? = null
+)
+
 

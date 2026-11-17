@@ -328,8 +328,10 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
             onSessionReady = { sessionId, chunkSize, checksum, bytes, chunkIndex ->
                 activeSessionId = sessionId
                 checkInterruptedOutcome(transfer.id)?.let { outcome ->
-                    if (outcome == TransferOutcome.Cancelled) {
-                        runCatching { provider.cancelUploadSession(sessionId) }
+                    when (outcome) {
+                        TransferOutcome.Cancelled -> runCatching { provider.cancelUploadSession(sessionId) }
+                        TransferOutcome.Paused -> runCatching { provider.pauseUploadSession(sessionId) }
+                        else -> Unit
                     }
                     throw TransferInterruptedException(outcome)
                 }
@@ -338,8 +340,10 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
                 ) {
                     val interrupted = checkInterruptedOutcome(transfer.id)
                     if (interrupted != null) {
-                        if (interrupted == TransferOutcome.Cancelled) {
-                            runCatching { provider.cancelUploadSession(sessionId) }
+                        when (interrupted) {
+                            TransferOutcome.Cancelled -> runCatching { provider.cancelUploadSession(sessionId) }
+                            TransferOutcome.Paused -> runCatching { provider.pauseUploadSession(sessionId) }
+                            else -> Unit
                         }
                         throw TransferInterruptedException(interrupted)
                     }
@@ -349,8 +353,12 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
             onProgress = { bytes, chunkIndex ->
                 currentCoroutineContext().ensureActive()
                 checkInterruptedOutcome(transfer.id)?.let { outcome ->
-                    if (outcome == TransferOutcome.Cancelled && !activeSessionId.isNullOrBlank()) {
-                        runCatching { provider.cancelUploadSession(activeSessionId!!) }
+                    if (!activeSessionId.isNullOrBlank()) {
+                        when (outcome) {
+                            TransferOutcome.Cancelled -> runCatching { provider.cancelUploadSession(activeSessionId!!) }
+                            TransferOutcome.Paused -> runCatching { provider.pauseUploadSession(activeSessionId!!) }
+                            else -> Unit
+                        }
                     }
                     throw TransferInterruptedException(outcome)
                 }
@@ -359,8 +367,12 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
                 if (!transfers.updateResumableProgressOwned(transfer.id, leaseOwner, bytes, chunkIndex)) {
                     val interrupted = checkInterruptedOutcome(transfer.id)
                     if (interrupted != null) {
-                        if (interrupted == TransferOutcome.Cancelled && !activeSessionId.isNullOrBlank()) {
-                            runCatching { provider.cancelUploadSession(activeSessionId!!) }
+                        if (!activeSessionId.isNullOrBlank()) {
+                            when (interrupted) {
+                                TransferOutcome.Cancelled -> runCatching { provider.cancelUploadSession(activeSessionId!!) }
+                                TransferOutcome.Paused -> runCatching { provider.pauseUploadSession(activeSessionId!!) }
+                                else -> Unit
+                            }
                         }
                         throw TransferInterruptedException(interrupted)
                     }
@@ -370,8 +382,12 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
             onStreamProgress = { streamedBytes ->
                 currentCoroutineContext().ensureActive()
                 checkInterruptedOutcome(transfer.id)?.let { outcome ->
-                    if (outcome == TransferOutcome.Cancelled && !activeSessionId.isNullOrBlank()) {
-                        runCatching { provider.cancelUploadSession(activeSessionId!!) }
+                    if (!activeSessionId.isNullOrBlank()) {
+                        when (outcome) {
+                            TransferOutcome.Cancelled -> runCatching { provider.cancelUploadSession(activeSessionId!!) }
+                            TransferOutcome.Paused -> runCatching { provider.pauseUploadSession(activeSessionId!!) }
+                            else -> Unit
+                        }
                     }
                     throw TransferInterruptedException(outcome)
                 }
@@ -381,8 +397,12 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
         )
 
         checkInterruptedOutcome(transfer.id)?.let { outcome ->
-            if (outcome == TransferOutcome.Cancelled && !activeSessionId.isNullOrBlank()) {
-                runCatching { provider.cancelUploadSession(activeSessionId!!) }
+            if (!activeSessionId.isNullOrBlank()) {
+                when (outcome) {
+                    TransferOutcome.Cancelled -> runCatching { provider.cancelUploadSession(activeSessionId!!) }
+                    TransferOutcome.Paused -> runCatching { provider.pauseUploadSession(activeSessionId!!) }
+                    else -> Unit
+                }
             }
             return outcome
         }
@@ -432,9 +452,13 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
                 onSessionReady = { sessionId, chunkSize, checksum, bytes, chunkIndex ->
                     activeSessionId = sessionId
                     checkInterruptedOutcome(transfer.id)?.let { outcome ->
-                        if (outcome == TransferOutcome.Cancelled) {
-                            runCatching { provider.cancelUploadSession(sessionId) }
-                            SecureFileCleanup.cleanupTransferStaging(context, transfer.id, prepared.stagingFile.absolutePath)
+                        when (outcome) {
+                            TransferOutcome.Cancelled -> {
+                                runCatching { provider.cancelUploadSession(sessionId) }
+                                SecureFileCleanup.cleanupTransferStaging(context, transfer.id, prepared.stagingFile.absolutePath)
+                            }
+                            TransferOutcome.Paused -> runCatching { provider.pauseUploadSession(sessionId) }
+                            else -> Unit
                         }
                         throw TransferInterruptedException(outcome)
                     }
@@ -443,9 +467,13 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
                     ) {
                         val interrupted = checkInterruptedOutcome(transfer.id)
                         if (interrupted != null) {
-                            if (interrupted == TransferOutcome.Cancelled) {
-                                runCatching { provider.cancelUploadSession(sessionId) }
-                                SecureFileCleanup.cleanupTransferStaging(context, transfer.id, prepared.stagingFile.absolutePath)
+                            when (interrupted) {
+                                TransferOutcome.Cancelled -> {
+                                    runCatching { provider.cancelUploadSession(sessionId) }
+                                    SecureFileCleanup.cleanupTransferStaging(context, transfer.id, prepared.stagingFile.absolutePath)
+                                }
+                                TransferOutcome.Paused -> runCatching { provider.pauseUploadSession(sessionId) }
+                                else -> Unit
                             }
                             throw TransferInterruptedException(interrupted)
                         }
@@ -455,9 +483,15 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
                 onProgress = { bytes, chunkIndex ->
                     currentCoroutineContext().ensureActive()
                     checkInterruptedOutcome(transfer.id)?.let { outcome ->
-                        if (outcome == TransferOutcome.Cancelled && !activeSessionId.isNullOrBlank()) {
-                            runCatching { provider.cancelUploadSession(activeSessionId!!) }
-                            SecureFileCleanup.cleanupTransferStaging(context, transfer.id, prepared.stagingFile.absolutePath)
+                        if (!activeSessionId.isNullOrBlank()) {
+                            when (outcome) {
+                                TransferOutcome.Cancelled -> {
+                                    runCatching { provider.cancelUploadSession(activeSessionId!!) }
+                                    SecureFileCleanup.cleanupTransferStaging(context, transfer.id, prepared.stagingFile.absolutePath)
+                                }
+                                TransferOutcome.Paused -> runCatching { provider.pauseUploadSession(activeSessionId!!) }
+                                else -> Unit
+                            }
                         }
                         throw TransferInterruptedException(outcome)
                     }
@@ -466,9 +500,15 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
                     if (!transfers.updateResumableProgressOwned(transfer.id, leaseOwner, bytes, chunkIndex)) {
                         val interrupted = checkInterruptedOutcome(transfer.id)
                         if (interrupted != null) {
-                            if (interrupted == TransferOutcome.Cancelled && !activeSessionId.isNullOrBlank()) {
-                                runCatching { provider.cancelUploadSession(activeSessionId!!) }
-                                SecureFileCleanup.cleanupTransferStaging(context, transfer.id, prepared.stagingFile.absolutePath)
+                            if (!activeSessionId.isNullOrBlank()) {
+                                when (interrupted) {
+                                    TransferOutcome.Cancelled -> {
+                                        runCatching { provider.cancelUploadSession(activeSessionId!!) }
+                                        SecureFileCleanup.cleanupTransferStaging(context, transfer.id, prepared.stagingFile.absolutePath)
+                                    }
+                                    TransferOutcome.Paused -> runCatching { provider.pauseUploadSession(activeSessionId!!) }
+                                    else -> Unit
+                                }
                             }
                             throw TransferInterruptedException(interrupted)
                         }
@@ -478,9 +518,15 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
                 onStreamProgress = { streamedBytes ->
                     currentCoroutineContext().ensureActive()
                     checkInterruptedOutcome(transfer.id)?.let { outcome ->
-                        if (outcome == TransferOutcome.Cancelled && !activeSessionId.isNullOrBlank()) {
-                            runCatching { provider.cancelUploadSession(activeSessionId!!) }
-                            SecureFileCleanup.cleanupTransferStaging(context, transfer.id, prepared.stagingFile.absolutePath)
+                        if (!activeSessionId.isNullOrBlank()) {
+                            when (outcome) {
+                                TransferOutcome.Cancelled -> {
+                                    runCatching { provider.cancelUploadSession(activeSessionId!!) }
+                                    SecureFileCleanup.cleanupTransferStaging(context, transfer.id, prepared.stagingFile.absolutePath)
+                                }
+                                TransferOutcome.Paused -> runCatching { provider.pauseUploadSession(activeSessionId!!) }
+                                else -> Unit
+                            }
                         }
                         throw TransferInterruptedException(outcome)
                     }
@@ -490,11 +536,19 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
             )
 
             checkInterruptedOutcome(transfer.id)?.let { outcome ->
-                if (outcome == TransferOutcome.Cancelled) {
-                    if (!activeSessionId.isNullOrBlank()) {
-                        runCatching { provider.cancelUploadSession(activeSessionId!!) }
+                when (outcome) {
+                    TransferOutcome.Cancelled -> {
+                        if (!activeSessionId.isNullOrBlank()) {
+                            runCatching { provider.cancelUploadSession(activeSessionId!!) }
+                        }
+                        SecureFileCleanup.cleanupTransferStaging(context, transfer.id, prepared.stagingFile.absolutePath)
                     }
-                    SecureFileCleanup.cleanupTransferStaging(context, transfer.id, prepared.stagingFile.absolutePath)
+                    TransferOutcome.Paused -> {
+                        if (!activeSessionId.isNullOrBlank()) {
+                            runCatching { provider.pauseUploadSession(activeSessionId!!) }
+                        }
+                    }
+                    else -> Unit
                 }
                 return outcome
             }
@@ -1002,10 +1056,22 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
             result.isSuccess -> TransferOutcome.Completed
             result.isIoError -> TransferOutcome.WaitingForNetwork("NETWORK_IO", result.errorMessage ?: "Network interrupted")
             result.statusCode == 401 -> TransferOutcome.WaitingForAuth("AUTH_REQUIRED", result.errorMessage ?: "Authentication required")
-            result.statusCode > 0 -> mapHttpOutcome(result.statusCode, result.errorMessage ?: "Upload failed")
+            result.serverRetryable == true || (result.errorCode != null && result.errorCode in UploadResult.RETRYABLE_ERROR_CODES) ->
+                TransferOutcome.Retryable(
+                    result.errorCode ?: "UPLOAD_RETRYABLE",
+                    result.errorMessage ?: "Upload failed",
+                    httpStatus = result.statusCode.takeIf { it > 0 }
+                )
+            result.serverRetryable == false ->
+                TransferOutcome.Permanent(
+                    result.errorCode ?: "UPLOAD_FAILED",
+                    result.errorMessage ?: "Upload permanently failed",
+                    httpStatus = result.statusCode.takeIf { it > 0 }
+                )
+            result.statusCode > 0 -> mapHttpOutcome(result.statusCode, result.errorMessage ?: "Upload failed", result.errorCode)
             isExplicitlyUnrecoverableMessage(result.errorMessage) ->
-                TransferOutcome.Permanent("UPLOAD_FAILED", result.errorMessage ?: "Upload permanently failed")
-            else -> TransferOutcome.Retryable("UPLOAD_RETRYABLE", result.errorMessage ?: "Upload failed")
+                TransferOutcome.Permanent(result.errorCode ?: "UPLOAD_FAILED", result.errorMessage ?: "Upload permanently failed")
+            else -> TransferOutcome.Retryable(result.errorCode ?: "UPLOAD_RETRYABLE", result.errorMessage ?: "Upload failed")
         }
     }
 
@@ -1092,19 +1158,22 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
         }
     }
 
-    private fun mapHttpOutcome(statusCode: Int, message: String): TransferOutcome {
-        if (statusCode == 507 || message.contains("quota", ignoreCase = true)) {
-            return TransferOutcome.Permanent("QUOTA_EXCEEDED", message, httpStatus = statusCode)
+    private fun mapHttpOutcome(statusCode: Int, message: String, serverCode: String? = null): TransferOutcome {
+        if (statusCode == 507 || serverCode == "INSUFFICIENT_STORAGE" || message.contains("quota", ignoreCase = true)) {
+            return TransferOutcome.Permanent(serverCode ?: "QUOTA_EXCEEDED", message, httpStatus = statusCode)
+        }
+        if (serverCode != null && serverCode in UploadResult.RETRYABLE_ERROR_CODES) {
+            return TransferOutcome.Retryable(serverCode, message, httpStatus = statusCode)
         }
         return when (val mapped = TransferErrorMapper.fromHttp(statusCode)) {
-            is TransferError.Authentication -> TransferOutcome.WaitingForAuth(mapped.code, message)
-            is TransferError.Network -> TransferOutcome.WaitingForNetwork(mapped.code, message)
+            is TransferError.Authentication -> TransferOutcome.WaitingForAuth(serverCode ?: mapped.code, message)
+            is TransferError.Network -> TransferOutcome.WaitingForNetwork(serverCode ?: mapped.code, message)
             is TransferError.Permission, is TransferError.InvalidRequest, is TransferError.Storage ->
-                TransferOutcome.Permanent(mapped.code, message, httpStatus = statusCode)
+                TransferOutcome.Permanent(serverCode ?: mapped.code, message, httpStatus = statusCode)
             else -> if (statusCode in UploadResult.PERMANENT_HTTP_CODES) {
-                TransferOutcome.Permanent(mapped.code, message, httpStatus = statusCode)
+                TransferOutcome.Permanent(serverCode ?: mapped.code, message, httpStatus = statusCode)
             } else {
-                TransferOutcome.Retryable(mapped.code, message, httpStatus = statusCode)
+                TransferOutcome.Retryable(serverCode ?: mapped.code, message, httpStatus = statusCode)
             }
         }
     }
