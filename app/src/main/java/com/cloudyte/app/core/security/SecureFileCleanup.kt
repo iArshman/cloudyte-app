@@ -83,7 +83,8 @@ object SecureFileCleanup {
     fun cleanupStaleTempFiles(
         context: Context,
         activeTransferIds: Set<String> = emptySet(),
-        nowMs: Long = System.currentTimeMillis()
+        nowMs: Long = System.currentTimeMillis(),
+        purgeAll: Boolean = false
     ): Int {
         var deletedCount = 0
 
@@ -96,7 +97,7 @@ object SecureFileCleanup {
                 }
                 val isTmp = name.endsWith(".tmp")
                 val isStale = (nowMs - file.lastModified()) > STALE_TEMP_MAX_AGE_MS
-                if (!matchesActive && (isTmp || activeTransferIds.isEmpty() || isStale)) {
+                if (!matchesActive && (isTmp || purgeAll || isStale)) {
                     if (deleteFileSafely(file)) deletedCount++
                 }
             }
@@ -113,7 +114,7 @@ object SecureFileCleanup {
                 val isStale = (nowMs - file.lastModified()) > STALE_TEMP_MAX_AGE_MS
                 if (isPlaintextTmp && !matchesActive) {
                     if (deleteFileSafely(file)) deletedCount++
-                } else if (!matchesActive && (activeTransferIds.isEmpty() || isStale)) {
+                } else if (!matchesActive && (purgeAll || isStale)) {
                     if (deleteFileSafely(file)) deletedCount++
                 }
             }
@@ -124,7 +125,7 @@ object SecureFileCleanup {
             viewCacheDir.listFiles()?.forEach { file ->
                 val isTmp = file.name.endsWith(".tmp")
                 val isStale = (nowMs - file.lastModified()) > VIEW_CACHE_MAX_AGE_MS
-                if (isTmp || isStale || activeTransferIds.isEmpty()) {
+                if (isTmp || isStale || purgeAll) {
                     if (deleteFileSafely(file)) deletedCount++
                 }
             }
@@ -135,7 +136,7 @@ object SecureFileCleanup {
             offlineVaultDir.walkTopDown().filter { it.isFile }.forEach { file ->
                 if (file.name.endsWith(".tmp") || file.name.endsWith(".part")) {
                     val isStale = (nowMs - file.lastModified()) > STALE_TEMP_MAX_AGE_MS
-                    if (activeTransferIds.isEmpty() || isStale) {
+                    if (purgeAll || isStale) {
                         if (deleteFileSafely(file)) deletedCount++
                     }
                 }
@@ -147,7 +148,7 @@ object SecureFileCleanup {
             if (dir.exists()) {
                 dir.listFiles()?.forEach { file ->
                     val isStale = (nowMs - file.lastModified()) > VIEW_CACHE_MAX_AGE_MS
-                    if (activeTransferIds.isEmpty() || isStale) {
+                    if (purgeAll || isStale) {
                         if (file.isDirectory) {
                             if (file.deleteRecursively()) deletedCount++
                         } else if (deleteFileSafely(file)) {

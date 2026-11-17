@@ -267,6 +267,8 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
         TransferOutcome.Permanent("INVALID_PARAMETERS", error.message ?: "Invalid transfer parameters")
     } catch (error: UnsupportedProviderOperation) {
         TransferOutcome.Permanent("PROVIDER_UNSUPPORTED_OPERATION", error.message ?: "Provider does not support this transfer operation")
+    } catch (error: PlaintextChecksumMismatchException) {
+        TransferOutcome.Permanent("CHECKSUM_MISMATCH", error.message ?: "Downloaded file failed checksum verification")
     } catch (error: IOException) {
         if (isExplicitlyUnrecoverableIo(error)) {
             TransferOutcome.Permanent("UNRECOVERABLE_IO", error.message ?: "Unrecoverable I/O error")
@@ -668,6 +670,10 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
             partFile.delete()
         }
 
+        val expectedEncryptedOrRawTotal = transfer.encryptedSizeBytes
+            ?: cachedCloudFile?.encryptedSizeBytes
+            ?: transfer.totalBytes
+
         var existingOffset = if (supportsResume && partFile.isFile) partFile.length().coerceAtLeast(0L) else 0L
         var rangeHeader = if (existingOffset > 0L) "bytes=$existingOffset-" else null
 
@@ -676,10 +682,6 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
             fileId = remoteId,
             range = rangeHeader
         )
-
-        val expectedEncryptedOrRawTotal = transfer.encryptedSizeBytes
-            ?: cachedCloudFile?.encryptedSizeBytes
-            ?: transfer.totalBytes
 
         if (response.code() == 416) {
             val contentRangeTotal = parseContentRangeTotal(response.headers()["Content-Range"])
@@ -723,16 +725,41 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
             return mapHttpOutcome(code, message)
         }
 
-        val body = response.body()
+        var body = response.body()
             ?: return TransferOutcome.Retryable("EMPTY_DOWNLOAD_BODY", "Server returned empty download stream")
 
-        val isPartialContent = response.code() == 206 && existingOffset > 0L
+        var isPartialContent = response.code() == 206 && existingOffset > 0L
+        var contentRangeTotal = parseContentRangeTotal(response.headers()["Content-Range"])
+        val maxKnownRemoteTotal = contentRangeTotal?.takeIf { it > 0L }
+            ?: expectedEncryptedOrRawTotal.takeIf { it > 0L }
+
+        if (isPartialContent && maxKnownRemoteTotal != null && existingOffset > maxKnownRemoteTotal) {
+            runCatching { body.close() }
+            SecureFileCleanup.deleteFileSafely(partFile)
+            existingOffset = 0L
+            rangeHeader = null
+            transfers.updateResumableProgressOwned(transfer.id, leaseOwner, 0L, 0)
+            response = provider.downloadFile(
+                accountId = transfer.accountId,
+                fileId = remoteId,
+                range = null
+            )
+            if (!response.isSuccessful) {
+                val rawError = response.errorBody()?.string()
+                val code = response.code()
+                return mapHttpOutcome(code, ApiClient.parseError(rawError, code))
+            }
+            body = response.body()
+                ?: return TransferOutcome.Retryable("EMPTY_DOWNLOAD_BODY", "Server returned empty download stream")
+            isPartialContent = false
+            contentRangeTotal = parseContentRangeTotal(response.headers()["Content-Range"])
+        }
+
         val startOffset = if (isPartialContent) existingOffset else 0L
         if (!isPartialContent && partFile.exists() && existingOffset > 0L) {
             partFile.delete()
         }
 
-        val contentRangeTotal = parseContentRangeTotal(response.headers()["Content-Range"])
         val contentLength = body.contentLength()
         val authoritativeExpectedTotal: Long? = when {
             contentRangeTotal != null && contentRangeTotal > 0L -> contentRangeTotal
@@ -821,6 +848,16 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
         val shouldDecrypt = isKnownEncrypted || hasCyteHeader
 
         if (!shouldDecrypt) {
+            val expectedChecksum = transfer.checksum?.trim()?.takeIf { it.isNotEmpty() }
+            if (expectedChecksum != null) {
+                val actualChecksum = ResumableTransfer.sha256(partFile)
+                if (!actualChecksum.equals(expectedChecksum, ignoreCase = true)) {
+                    SecureFileCleanup.deleteFileSafely(partFile)
+                    throw PlaintextChecksumMismatchException(
+                        "Downloaded file checksum mismatch (expected $expectedChecksum, got $actualChecksum)"
+                    )
+                }
+            }
             commitPartFile(partFile, targetFile, uri, isContentUri)
             return
         }
@@ -891,7 +928,7 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
         }
     }
 
-    private fun commitPartFile(partFile: File, targetFile: File?, uri: Uri, isContentUri: Boolean) {
+    internal fun commitPartFile(partFile: File, targetFile: File?, uri: Uri, isContentUri: Boolean) {
         if (isContentUri) {
             val output = context.contentResolver.openOutputStream(uri, "wt")
                 ?: throw FileNotFoundException("Could not open destination URI: $uri")
@@ -905,16 +942,60 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
         } else {
             val destinationFile = targetFile
                 ?: throw IllegalArgumentException("Missing destination file")
-            destinationFile.parentFile?.mkdirs()
-            if (destinationFile.exists() && !destinationFile.delete()) {
-                throw IOException("Unable to replace existing target file: ${destinationFile.name}")
+            if (!partFile.exists() || !partFile.isFile) {
+                throw IOException("Temporary download file is missing before commit")
             }
-            if (!partFile.renameTo(destinationFile)) {
-                partFile.copyTo(destinationFile, overwrite = true)
-                partFile.delete()
+            destinationFile.parentFile?.mkdirs()
+            if (!destinationFile.exists() && partFile.renameTo(destinationFile)) {
+                return
+            }
+            val parentDir = destinationFile.parentFile ?: context.cacheDir
+            val token = java.util.UUID.randomUUID().toString()
+            val stageFile = File(parentDir, ".${destinationFile.name}.$token.commit.tmp")
+            val backupFile = File(parentDir, ".${destinationFile.name}.$token.commit.bak")
+            var movedPartToStage = false
+            try {
+                if (partFile.parentFile == parentDir && partFile.renameTo(stageFile)) {
+                    movedPartToStage = true
+                } else {
+                    partFile.copyTo(stageFile, overwrite = true)
+                }
+                if (destinationFile.exists()) {
+                    if (!destinationFile.renameTo(backupFile)) {
+                        stageFile.copyTo(destinationFile, overwrite = true)
+                        stageFile.delete()
+                        if (partFile.exists()) partFile.delete()
+                        return
+                    }
+                }
+                if (!stageFile.renameTo(destinationFile)) {
+                    stageFile.copyTo(destinationFile, overwrite = true)
+                    stageFile.delete()
+                }
+                if (backupFile.exists()) {
+                    backupFile.delete()
+                }
+                if (partFile.exists()) {
+                    partFile.delete()
+                }
+            } catch (err: Throwable) {
+                if (stageFile.exists()) {
+                    if (movedPartToStage && !partFile.exists()) {
+                        stageFile.renameTo(partFile)
+                    }
+                    stageFile.delete()
+                }
+                if (backupFile.exists()) {
+                    if (!destinationFile.exists() || destinationFile.delete()) {
+                        backupFile.renameTo(destinationFile)
+                    }
+                }
+                throw err
             }
         }
     }
+
+    private class PlaintextChecksumMismatchException(message: String) : IOException(message)
 
     private fun mapUploadResultOutcome(result: UploadResult): TransferOutcome {
         return when {

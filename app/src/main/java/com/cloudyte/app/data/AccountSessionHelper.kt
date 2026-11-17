@@ -16,6 +16,7 @@ import com.cloudyte.app.sync.AutoSyncManager
 import com.cloudyte.app.sync.SyncLogger
 import com.cloudyte.app.sync.SyncLogLevel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
@@ -71,7 +72,7 @@ object AccountSessionHelper {
         runCatching { OfflineFileManager.clearAllOfflineCache(appContext) }
         runCatching { (app?.container?.previewStore ?: PreviewStore(appContext)).clear() }
         runCatching { MediaStreamCache.clear(appContext) }
-        runCatching { SecureFileCleanup.cleanupStaleTempFiles(appContext, emptySet()) }
+        runCatching { SecureFileCleanup.cleanupStaleTempFiles(appContext, emptySet(), purgeAll = true) }
         runCatching { SecureFileCleanup.clearShareAndTempDirs(appContext) }
         runCatching { File(appContext.filesDir, "cloudyte_thumbnails").deleteRecursively() }
         runCatching { ApiClient.okHttpClient.cache?.evictAll() }
@@ -100,5 +101,85 @@ object AccountSessionHelper {
             if (remoteOk) SyncLogLevel.INFO else SyncLogLevel.WARNING
         )
         LogoutResult(remoteRevoked = remoteOk, warningMessage = warning)
+    }
+
+    suspend fun purgeDisconnectedAccount(
+        context: Context,
+        accountId: String
+    ) = withContext(Dispatchers.IO) {
+        if (accountId.isBlank()) return@withContext
+        val appContext = context.applicationContext
+        val app = appContext as? CloudyteApplication
+        val db = AppDatabase.getDatabase(appContext)
+
+        // 1. Signal cancellation and clean up temporary staging/download files for any transfers on this account
+        val accountTransfers = runCatching { db.transferDao().getByAccountId(accountId) }.getOrDefault(emptyList())
+        for (transfer in accountTransfers) {
+            com.cloudyte.app.core.transfer.ActiveTransferSignalRegistry.signalCancel(transfer.id)
+            runCatching {
+                SecureFileCleanup.cleanupTransferStaging(
+                    context = appContext,
+                    transferId = transfer.id,
+                    customStagePath = transfer.encryptedStagePath
+                )
+            }
+            runCatching {
+                SecureFileCleanup.cleanupDownloadTemp(
+                    context = appContext,
+                    transferId = transfer.id,
+                    removePartFile = true
+                )
+            }
+        }
+
+        // 2. Delete cached thumbnail files on disk for this account
+        val accountThumbs = runCatching { db.thumbnailDao().getForAccount(accountId) }.getOrDefault(emptyList())
+        for (thumb in accountThumbs) {
+            if (thumb.path.isNotBlank()) {
+                runCatching { File(thumb.path).delete() }
+            }
+        }
+
+        // 3. Atomically purge all account-scoped Room rows
+        runCatching {
+            db.withTransaction {
+                db.accountDao().deleteAccountById(accountId)
+                db.cloudFileDao().deleteFilesForAccount(accountId)
+                db.storageSummaryDao().deleteByAccountId(accountId)
+                db.storageSummaryDao().deleteByAccountId("all")
+                db.folderSyncMetaDao().deleteForAccount(accountId)
+                db.transferDao().deleteByAccountId(accountId)
+                db.fileMutationDao().deleteForAccount(accountId)
+                db.fileTombstoneDao().deleteForAccount(accountId)
+                db.uploadRecordDao().deleteForAccount(accountId)
+                db.thumbnailDao().deleteForAccount(accountId)
+                db.backupSourceDao().clearTargetAccount(accountId)
+            }
+        }
+
+        // 4. Clean up offline vault files, decrypted view cache, and in-memory caches for this account
+        runCatching { OfflineFileManager.deleteOfflineFilesForAccount(appContext, accountId) }
+        runCatching { OfflineFileManager.refreshDownloadedSetAsync(appContext) }
+        runCatching { app?.container?.cloudFileRepository?.evictAccountMemoryCache(accountId) }
+
+        // 5. Reset selected account preferences if they pointed to the disconnected account
+        runCatching {
+            val prefs = UserPreferences.observe(appContext).first()
+            if (prefs.lastActiveAccountId == accountId) {
+                UserPreferences.setLastActiveAccountId(appContext, null)
+            }
+            if (prefs.homeStorageAccountId == accountId) {
+                UserPreferences.setHomeStorageAccountId(appContext, null)
+            }
+            if (prefs.backupAccountId == accountId) {
+                UserPreferences.setBackupAccountId(appContext, null)
+            }
+        }
+        runCatching {
+            val drivePrefs = appContext.getSharedPreferences("cloudyte_drive_state", Context.MODE_PRIVATE)
+            if (drivePrefs.getString("last_active_account_id", null) == accountId) {
+                drivePrefs.edit().remove("last_active_account_id").apply()
+            }
+        }
     }
 }

@@ -31,7 +31,7 @@ object OfflineFileManager {
 
     fun init(context: Context) {
         scope.launch {
-            refreshDownloadedSet(context)
+            refreshDownloadedSetAsync(context)
         }
     }
 
@@ -125,7 +125,17 @@ object OfflineFileManager {
         return _activeDownloads.value[fileId]
     }
 
-    fun refreshDownloadedSet(context: Context) {
+    suspend fun refreshDownloadedSetAsync(context: Context) = withContext(Dispatchers.IO) {
+        val vaultFiles = getAllVaultDirs(context).flatMap { dir ->
+            dir.listFiles { _, name -> !name.endsWith(".tmp") && !name.endsWith(".part") }
+                ?.filter { it.isFile && it.length() > 0L }
+                ?: emptyList()
+        }
+        if (vaultFiles.isEmpty()) {
+            _downloadedFiles.value = emptySet()
+            return@withContext
+        }
+
         val set = mutableSetOf<String>()
         val db = com.cloudyte.app.db.AppDatabase.getInstance()
         val knownAccountPrefixes = mutableListOf<String>()
@@ -133,47 +143,46 @@ object OfflineFileManager {
 
         if (db != null) {
             runCatching {
-                kotlinx.coroutines.runBlocking(Dispatchers.IO) {
-                    db.accountDao().getAllAccounts().forEach { acc ->
-                        knownAccountPrefixes += "${sanitizeFileName(acc.id)}_"
-                    }
-                    db.cloudFileDao().getAllFiles().forEach { cf ->
-                        val acc = cf.accountId?.takeIf { it.isNotBlank() } ?: return@forEach
-                        val prefix = "${sanitizeFileName(acc)}_${sanitizeFileName(cf.id)}_"
-                        knownFileMatches += prefix to cf.id
-                    }
+                db.accountDao().getAllAccounts().forEach { acc ->
+                    knownAccountPrefixes += "${sanitizeFileName(acc.id)}_"
+                }
+                db.cloudFileDao().getFileAccountIdTuples().forEach { tuple ->
+                    val acc = tuple.accountId?.takeIf { it.isNotBlank() } ?: return@forEach
+                    val prefix = "${sanitizeFileName(acc)}_${sanitizeFileName(tuple.id)}_"
+                    knownFileMatches += prefix to tuple.id
                 }
             }
         }
         val sortedAccountPrefixes = knownAccountPrefixes.distinct().sortedByDescending { it.length }
         val sortedFileMatches = knownFileMatches.sortedByDescending { it.first.length }
 
-        for (dir in getAllVaultDirs(context)) {
-            val files = dir.listFiles { _, name -> !name.endsWith(".tmp") && !name.endsWith(".part") } ?: emptyArray()
-            for (f in files) {
-                if (f.length() > 0) {
-                    val matchedKnownFile = sortedFileMatches.firstOrNull { (prefix, _) -> f.name.startsWith(prefix) }
-                    if (matchedKnownFile != null) {
-                        set.add(matchedKnownFile.second)
-                        continue
-                    }
-                    val matchedAccPrefix = sortedAccountPrefixes.firstOrNull { prefix -> f.name.startsWith(prefix) }
-                    if (matchedAccPrefix != null) {
-                        val remainder = f.name.removePrefix(matchedAccPrefix)
-                        val fid = remainder.substringBefore("_")
-                        if (fid.isNotEmpty()) {
-                            set.add(fid)
-                            continue
-                        }
-                    }
-                    val parts = f.name.split("_")
-                    if (parts.size >= 3) {
-                        set.add(parts[1])
-                    }
+        for (f in vaultFiles) {
+            val matchedKnownFile = sortedFileMatches.firstOrNull { (prefix, _) -> f.name.startsWith(prefix) }
+            if (matchedKnownFile != null) {
+                set.add(matchedKnownFile.second)
+                continue
+            }
+            val matchedAccPrefix = sortedAccountPrefixes.firstOrNull { prefix -> f.name.startsWith(prefix) }
+            if (matchedAccPrefix != null) {
+                val remainder = f.name.removePrefix(matchedAccPrefix)
+                val fid = remainder.substringBefore("_")
+                if (fid.isNotEmpty()) {
+                    set.add(fid)
+                    continue
                 }
+            }
+            val parts = f.name.split("_")
+            if (parts.size >= 3) {
+                set.add(parts[1])
             }
         }
         _downloadedFiles.value = set
+    }
+
+    fun refreshDownloadedSet(context: Context) {
+        kotlinx.coroutines.runBlocking(Dispatchers.IO) {
+            refreshDownloadedSetAsync(context)
+        }
     }
 
     @Suppress("UNUSED_PARAMETER")
@@ -349,6 +358,24 @@ object OfflineFileManager {
             com.cloudyte.app.core.security.SecureFileCleanup.deleteFileSafely(it)
         }
         return deleted
+    }
+
+    fun deleteOfflineFilesForAccount(context: Context, accountId: String): Int {
+        val safeAcc = sanitizeFileName(accountId)
+        val prefix = "${safeAcc}_"
+        var deletedCount = 0
+        for (dir in getAllVaultDirs(context)) {
+            dir.listFiles { _, name -> name.startsWith(prefix) }?.forEach { file ->
+                if (com.cloudyte.app.core.security.SecureFileCleanup.deleteFileSafely(file)) {
+                    deletedCount++
+                }
+            }
+        }
+        val viewCacheDir = com.cloudyte.app.core.security.SecureFileCleanup.getDecryptedViewCacheDir(context)
+        viewCacheDir.listFiles { _, name -> name.startsWith("view_${safeAcc}_") }?.forEach { file ->
+            com.cloudyte.app.core.security.SecureFileCleanup.deleteFileSafely(file)
+        }
+        return deletedCount
     }
 
     fun getOfflineCacheSize(context: Context): Long {

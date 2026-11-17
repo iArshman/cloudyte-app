@@ -98,6 +98,40 @@ private class StreamingChunkRequestBody(
     }
 }
 
+private class FileSliceChunkRequestBody(
+    private val file: File,
+    private val chunkStartOffset: Long,
+    private val byteCount: Int,
+    private val mediaType: MediaType?,
+    private val onBytesWritten: (Long) -> Unit
+) : RequestBody() {
+
+    override fun contentType(): MediaType? = mediaType
+
+    override fun contentLength(): Long = byteCount.toLong()
+
+    override fun writeTo(sink: BufferedSink) {
+        java.io.RandomAccessFile(file, "r").use { raf ->
+            raf.seek(chunkStartOffset)
+            val sliceBuffer = ByteArray(32 * 1024)
+            var pos = 0
+            var lastNotifiedAt = 0L
+            while (pos < byteCount) {
+                val toRead = minOf(sliceBuffer.size, byteCount - pos)
+                val read = raf.read(sliceBuffer, 0, toRead)
+                if (read < 0) throw IOException("Unexpected end of local file at offset ${chunkStartOffset + pos}")
+                sink.write(sliceBuffer, 0, read)
+                pos += read
+                val now = System.currentTimeMillis()
+                if (lastNotifiedAt == 0L || (now - lastNotifiedAt) >= 120L || pos >= byteCount) {
+                    lastNotifiedAt = now
+                    onBytesWritten(chunkStartOffset + pos.toLong())
+                }
+            }
+        }
+    }
+}
+
 object UploadHelper {
     suspend fun uploadFile(
         context: Context,
@@ -348,26 +382,15 @@ object UploadHelper {
                 session = renewed.body()!!
             }
             var offset = session.receivedBytes.coerceIn(0L, totalBytes)
-            val chunkSize = session.chunkSize.coerceAtLeast(64L * 1024L).coerceAtMost(16L * 1024L * 1024L)
+            val directLocalFile = if (uri.scheme.equals("file", ignoreCase = true)) {
+                uri.path?.let(::File)?.takeIf { it.isFile }
+            } else null
+            val maxChunkCap = if (directLocalFile != null) 16L * 1024L * 1024L else 2L * 1024L * 1024L
+            val chunkSize = session.chunkSize.coerceAtLeast(64L * 1024L).coerceAtMost(maxChunkCap)
             var nextChunkIndex = ((offset + chunkSize - 1L) / chunkSize).toInt()
             onSessionReady(session.sessionId, chunkSize, checksum, offset, nextChunkIndex)
-            openUriStream(context, uri)?.use { input ->
-                var skipped = 0L
-                var skipDrainBuffer: ByteArray? = null
-                while (skipped < offset) {
-                    val n = input.skip(offset - skipped)
-                    if (n > 0L) {
-                        skipped += n
-                    } else {
-                        val drainBuf = skipDrainBuffer ?: ByteArray(64 * 1024).also { skipDrainBuffer = it }
-                        val toRead = minOf(drainBuf.size.toLong(), offset - skipped).toInt()
-                        val read = input.read(drainBuf, 0, toRead)
-                        if (read < 0) throw IOException("Could not seek to resumable upload offset $offset")
-                        skipped += read
-                    }
-                }
-                val chunkMediaType = effectiveSessionMimeType.toMediaTypeOrNull()
-                val chunkBuffer = ByteArray(minOf(chunkSize, totalBytes).coerceAtLeast(1L).toInt())
+            val chunkMediaType = effectiveSessionMimeType.toMediaTypeOrNull()
+            if (directLocalFile != null) {
                 val earlyFailure: UploadResult? = coroutineScope {
                     val streamChannel = Channel<Long>(Channel.CONFLATED)
                     val streamJob = launch {
@@ -378,18 +401,12 @@ object UploadHelper {
                     try {
                         while (offset < totalBytes) {
                             val expected = minOf(chunkSize, totalBytes - offset).toInt()
-                            var readTotal = 0
-                            while (readTotal < expected) {
-                                val read = input.read(chunkBuffer, readTotal, expected - readTotal)
-                                if (read < 0) throw IOException("Unexpected end of local file")
-                                readTotal += read
-                            }
-                            val maxLiveBytes = (offset + readTotal.toLong() - 1L).coerceAtLeast(offset)
-                            val body = StreamingChunkRequestBody(
-                                data = chunkBuffer,
-                                byteCount = readTotal,
-                                mediaType = chunkMediaType,
+                            val maxLiveBytes = (offset + expected.toLong() - 1L).coerceAtLeast(offset)
+                            val body = FileSliceChunkRequestBody(
+                                file = directLocalFile,
                                 chunkStartOffset = offset,
+                                byteCount = expected,
+                                mediaType = chunkMediaType,
                                 onBytesWritten = { writtenTotal ->
                                     streamChannel.trySend(writtenTotal.coerceAtMost(maxLiveBytes))
                                 }
@@ -397,7 +414,7 @@ object UploadHelper {
                             val part = MultipartBody.Part.createFormData("chunk", explicitFileName, body)
                             val response = provider.uploadChunk(
                                 sessionId = session.sessionId,
-                                contentRange = "bytes $offset-${offset + readTotal - 1}/$totalBytes",
+                                contentRange = "bytes $offset-${offset + expected - 1}/$totalBytes",
                                 chunk = part
                             )
                             if (!response.isSuccessful || response.body() == null) {
@@ -423,7 +440,80 @@ object UploadHelper {
                 if (earlyFailure != null) {
                     return@withContext earlyFailure
                 }
-            } ?: throw IOException("Cannot open local file stream")
+            } else {
+                openUriStream(context, uri)?.use { input ->
+                    var skipped = 0L
+                    var skipDrainBuffer: ByteArray? = null
+                    while (skipped < offset) {
+                        val n = input.skip(offset - skipped)
+                        if (n > 0L) {
+                            skipped += n
+                        } else {
+                            val drainBuf = skipDrainBuffer ?: ByteArray(64 * 1024).also { skipDrainBuffer = it }
+                            val toRead = minOf(drainBuf.size.toLong(), offset - skipped).toInt()
+                            val read = input.read(drainBuf, 0, toRead)
+                            if (read < 0) throw IOException("Could not seek to resumable upload offset $offset")
+                            skipped += read
+                        }
+                    }
+                    val chunkBuffer = ByteArray(minOf(chunkSize, totalBytes).coerceAtLeast(1L).toInt())
+                    val earlyFailure: UploadResult? = coroutineScope {
+                        val streamChannel = Channel<Long>(Channel.CONFLATED)
+                        val streamJob = launch {
+                            for (streamedBytes in streamChannel) {
+                                onStreamProgress(streamedBytes)
+                            }
+                        }
+                        try {
+                            while (offset < totalBytes) {
+                                val expected = minOf(chunkSize, totalBytes - offset).toInt()
+                                var readTotal = 0
+                                while (readTotal < expected) {
+                                    val read = input.read(chunkBuffer, readTotal, expected - readTotal)
+                                    if (read < 0) throw IOException("Unexpected end of local file")
+                                    readTotal += read
+                                }
+                                val maxLiveBytes = (offset + readTotal.toLong() - 1L).coerceAtLeast(offset)
+                                val body = StreamingChunkRequestBody(
+                                    data = chunkBuffer,
+                                    byteCount = readTotal,
+                                    mediaType = chunkMediaType,
+                                    chunkStartOffset = offset,
+                                    onBytesWritten = { writtenTotal ->
+                                        streamChannel.trySend(writtenTotal.coerceAtMost(maxLiveBytes))
+                                    }
+                                )
+                                val part = MultipartBody.Part.createFormData("chunk", explicitFileName, body)
+                                val response = provider.uploadChunk(
+                                    sessionId = session.sessionId,
+                                    contentRange = "bytes $offset-${offset + readTotal - 1}/$totalBytes",
+                                    chunk = part
+                                )
+                                if (!response.isSuccessful || response.body() == null) {
+                                    return@coroutineScope UploadResult(
+                                        false,
+                                        response.code(),
+                                        parseResponseError(response, "Chunk upload failed at offset $offset"),
+                                        explicitFileName
+                                    )
+                                }
+                                val nextOffset = response.body()!!.nextOffset.coerceIn(0L, totalBytes)
+                                if (nextOffset <= offset) throw IOException("Provider did not advance the upload offset")
+                                offset = nextOffset
+                                nextChunkIndex++
+                                onProgress(offset, nextChunkIndex)
+                            }
+                            null
+                        } finally {
+                            streamChannel.close()
+                            streamJob.join()
+                        }
+                    }
+                    if (earlyFailure != null) {
+                        return@withContext earlyFailure
+                    }
+                } ?: throw IOException("Cannot open local file stream")
+            }
             val complete = provider.completeUploadSession(session.sessionId)
             if (complete.isSuccessful && complete.body()?.success == true) {
                 UploadResult(true, complete.code(), fileName = explicitFileName)

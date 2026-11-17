@@ -19,6 +19,7 @@ import com.cloudyte.app.core.security.KeyBackupCodec
 import com.cloudyte.app.core.security.KeyBackupException
 import com.cloudyte.app.core.security.PassphraseKdf
 import com.cloudyte.app.data.AccountSessionHelper
+import com.cloudyte.app.data.UserPreferences
 import com.cloudyte.app.db.AppDatabase
 import com.cloudyte.app.db.BackupSourceEntity
 import com.cloudyte.app.db.LocalAccount
@@ -29,6 +30,8 @@ import com.cloudyte.app.db.LocalFileTombstone
 import com.cloudyte.app.db.LocalTransfer
 import com.cloudyte.app.db.LocalUploadRecord
 import com.cloudyte.app.db.TransferDirection
+import com.cloudyte.app.db.TransferStatus
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
@@ -385,4 +388,91 @@ class SecurityAndPerformanceFixesTest {
             db.close()
         }
     }
+
+    @Test
+    fun accountSessionHelper_purgeDisconnectedAccountRemovesOnlyTargetAccountData() = runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+        val db = AppDatabase.getDatabase(context)
+        db.clearAllTables()
+        OfflineFileManager.clearAllOfflineCache(context)
+
+        val removedAcc = "acc-removed"
+        val keptAcc = "acc-kept"
+
+        db.accountDao().insertAccounts(
+            listOf(
+                LocalAccount(removedAcc, "Removed", "Removed", "removed@example.com", "gdrive", 0L, 100L, 0f, 1, true, null),
+                LocalAccount(keptAcc, "Kept", "Kept", "kept@example.com", "onedrive", 0L, 100L, 0f, 1, false, null)
+            )
+        )
+        db.cloudFileDao().insertFiles(
+            listOf(
+                LocalCloudFile("file-rem", "rem.txt", "file", "10 B", accountId = removedAcc),
+                LocalCloudFile("file-kept", "kept.txt", "file", "20 B", accountId = keptAcc)
+            )
+        )
+        db.transferDao().insert(
+            LocalTransfer(id = "tx-rem", accountId = removedAcc, fileName = "rem.txt", direction = TransferDirection.UPLOAD.name, status = TransferStatus.PENDING.name)
+        )
+        db.transferDao().insert(
+            LocalTransfer(id = "tx-kept", accountId = keptAcc, fileName = "kept.txt", direction = TransferDirection.UPLOAD.name, status = TransferStatus.PENDING.name)
+        )
+        db.fileMutationDao().insert(
+            LocalFileMutation(operationId = "mut-rem", accountId = removedAcc, operation = LocalFileMutation.RENAME, fileId = "file-rem")
+        )
+        db.fileMutationDao().insert(
+            LocalFileMutation(operationId = "mut-kept", accountId = keptAcc, operation = LocalFileMutation.RENAME, fileId = "file-kept")
+        )
+        db.fileTombstoneDao().insertAll(
+            listOf(
+                LocalFileTombstone("tomb-rem", removedAcc, "gdrive", "file-rem", "root", 1L, null),
+                LocalFileTombstone("tomb-kept", keptAcc, "onedrive", "file-kept", "root", 2L, null)
+            )
+        )
+        db.uploadRecordDao().insertRecord(
+            LocalUploadRecord(localUri = "content://rem/1", fileName = "1.jpg", fileSize = 10L, lastModified = 1L, targetAccountId = removedAcc, targetFolderId = "root")
+        )
+        db.uploadRecordDao().insertRecord(
+            LocalUploadRecord(localUri = "content://kept/2", fileName = "2.jpg", fileSize = 20L, lastModified = 2L, targetAccountId = keptAcc, targetFolderId = "root")
+        )
+
+        val remVaultFile = OfflineFileManager.getLocalFile(context, removedAcc, "file-rem", "rem.txt").apply { writeText("secret-rem") }
+        val keptVaultFile = OfflineFileManager.getLocalFile(context, keptAcc, "file-kept", "kept.txt").apply { writeText("secret-kept") }
+        OfflineFileManager.refreshDownloadedSet(context)
+        assertTrue(OfflineFileManager.downloadedFiles.value.contains("file-rem"))
+        assertTrue(OfflineFileManager.downloadedFiles.value.contains("file-kept"))
+
+        UserPreferences.setActiveAndHomeAccountId(context, removedAcc)
+        UserPreferences.setBackupAccountId(context, removedAcc)
+        context.getSharedPreferences("cloudyte_drive_state", Context.MODE_PRIVATE)
+            .edit()
+            .putString("last_active_account_id", removedAcc)
+            .commit()
+
+        AccountSessionHelper.purgeDisconnectedAccount(context, removedAcc)
+        OfflineFileManager.refreshDownloadedSet(context)
+
+        // Removed account data must be completely purged while kept account data remains intact
+        assertEquals(listOf(keptAcc), db.accountDao().getAllAccounts().map { it.id })
+        assertTrue(db.cloudFileDao().getFilesForAccount(removedAcc).isEmpty())
+        assertEquals(1, db.cloudFileDao().getFilesForAccount(keptAcc).size)
+        assertTrue(db.transferDao().getByAccountId(removedAcc).isEmpty())
+        assertEquals(1, db.transferDao().getByAccountId(keptAcc).size)
+        assertEquals(listOf(keptAcc), db.fileMutationDao().pending().map { it.accountId })
+        assertTrue(db.fileTombstoneDao().forFolder(removedAcc, "root").isEmpty())
+        assertEquals(1, db.fileTombstoneDao().forFolder(keptAcc, "root").size)
+        assertEquals(listOf(keptAcc), db.uploadRecordDao().getAllRecords().map { it.targetAccountId })
+        assertFalse(remVaultFile.exists())
+        assertTrue(keptVaultFile.exists())
+        assertFalse(OfflineFileManager.downloadedFiles.value.contains("file-rem"))
+        assertTrue(OfflineFileManager.downloadedFiles.value.contains("file-kept"))
+        val prefsAfter = UserPreferences.observe(context).first()
+        assertNull(prefsAfter.lastActiveAccountId)
+        assertNull(prefsAfter.homeStorageAccountId)
+        assertNull(prefsAfter.backupAccountId)
+        assertNull(
+            context.getSharedPreferences("cloudyte_drive_state", Context.MODE_PRIVATE)
+                .getString("last_active_account_id", null)
+        )
+    }
 }
+

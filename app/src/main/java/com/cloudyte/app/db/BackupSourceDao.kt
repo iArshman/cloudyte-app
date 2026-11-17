@@ -57,6 +57,9 @@ interface BackupSourceDao {
         failedCount: Int
     )
 
+    @Query("UPDATE backup_sources SET enabled = 0, targetAccountId = NULL, targetFolderId = NULL, lastError = 'Target cloud account was disconnected' WHERE targetAccountId = :accountId")
+    suspend fun clearTargetAccount(accountId: String)
+
     @Query("DELETE FROM backup_sources")
     suspend fun clearAll()
 }

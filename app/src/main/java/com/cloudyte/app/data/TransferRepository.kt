@@ -154,8 +154,8 @@ class TransferRepository(
             transfer.status == TransferStatus.PENDING.name ||
             transfer.state in setOf("QUEUED", "RUNNING", "WAITING_FOR_NETWORK", "WAITING_FOR_AUTH")
         ) {
+            transferDao.requestPause(id)
             com.cloudyte.app.core.transfer.ActiveTransferSignalRegistry.signalPause(id)
-            transferDao.updateStatus(id, TransferStatus.PAUSED.name)
         }
     }
 
@@ -166,7 +166,7 @@ class TransferRepository(
             transfer.state in setOf("PAUSED", "PAUSING", "FAILED_RETRYABLE")
         ) {
             com.cloudyte.app.core.transfer.ActiveTransferSignalRegistry.clear(id)
-            transferDao.updateStatus(id, TransferStatus.PENDING.name)
+            transferDao.requestResume(id)
         }
     }
 
@@ -174,8 +174,7 @@ class TransferRepository(
         val transfer = transferDao.getById(id) ?: return
         if (transfer.state in setOf("FAILED_RETRYABLE", "WAITING_FOR_AUTH", "WAITING_FOR_NETWORK")) {
             com.cloudyte.app.core.transfer.ActiveTransferSignalRegistry.clear(id)
-            transferDao.updateStatus(id, TransferStatus.PENDING.name, error = null)
-            transferDao.incrementAttempt(id)
+            transferDao.requestResume(id)
         }
     }
 
@@ -199,7 +198,7 @@ class TransferRepository(
                 return
             }
         }
-        transferDao.updateStatus(id, TransferStatus.CANCELLED.name, error = "Cancelled")
+        transferDao.requestCancel(id, error = "Cancelled")
     }
 
     suspend fun clearCompleted() {

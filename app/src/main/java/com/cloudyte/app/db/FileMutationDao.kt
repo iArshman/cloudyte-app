@@ -48,6 +48,9 @@ interface FileMutationDao {
     @Query("DELETE FROM file_mutations WHERE operation = 'DELETE' AND fileId = :fileId")
     suspend fun removeDeletesForFile(fileId: String)
 
+    @Query("DELETE FROM file_mutations WHERE accountId = :accountId")
+    suspend fun deleteForAccount(accountId: String)
+
     @Query("DELETE FROM file_mutations")
     suspend fun clearAll()
 }

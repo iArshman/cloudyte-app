@@ -31,7 +31,7 @@ class CacheCleanupWorker(
             }
 
             val activeIds = runCatching {
-                db.transferDao().observeActiveTransfers().first().map { it.id }.toSet()
+                db.transferDao().getResumableTransferIds().toSet()
             }.getOrDefault(emptySet())
             com.cloudyte.app.core.security.SecureFileCleanup.cleanupStaleTempFiles(applicationContext, activeIds)
             Result.success()

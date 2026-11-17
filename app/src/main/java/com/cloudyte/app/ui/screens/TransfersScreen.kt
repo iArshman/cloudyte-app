@@ -202,10 +202,12 @@ fun TransfersScreen(
                 if (completedTransfers.isNotEmpty() || pausableActive.isNotEmpty() || retryableFailed.isNotEmpty()) {
                     Box {
                         Surface(
-                            shape = RoundedCornerShape(20.dp),
+                            shape = CircleShape,
                             color = MaterialTheme.colorScheme.surfaceContainer,
                             onClick = { showOverflowMenu = true },
-                            modifier = Modifier.size(52.dp)
+                            modifier = Modifier
+                                .size(48.dp)
+                                .testTag("transfers_overflow_button")
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
@@ -279,7 +281,7 @@ fun TransfersScreen(
                         color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainer,
                         onClick = { selectedTab = index },
                         modifier = Modifier
-                            .heightIn(min = 44.dp)
+                            .heightIn(min = 48.dp)
                             .testTag("transfers_filter_$index")
                     ) {
                         Box(
@@ -378,6 +380,14 @@ fun TransferItemCard(
     onCancel: () -> Unit
 ) {
     val ext = MaterialTheme.cloudyteColors
+    var lastActionAtMs by remember(transfer.id, transfer.status) { mutableStateOf(0L) }
+    val triggerOnce: (() -> Unit) -> Unit = { action ->
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastActionAtMs >= 400L) {
+            lastActionAtMs = now
+            action()
+        }
+    }
     var previousSample by remember(transfer.id) {
         mutableStateOf(TransferMetricSample(transfer.bytesTransferred, transfer.updatedAt))
     }
@@ -636,20 +646,44 @@ fun TransferItemCard(
                 when (transfer.status) {
                     TransferStatus.RUNNING.name, TransferStatus.PENDING.name -> {
                         Spacer(modifier = Modifier.width(6.dp))
-                        IconButton(onClick = onPause) {
-                            Icon(Icons.Default.Pause, contentDescription = stringResource(R.string.action_pause))
+                        IconButton(
+                            onClick = { triggerOnce(onPause) },
+                            modifier = Modifier.testTag("transfer_pause_${transfer.id}")
+                        ) {
+                            Icon(
+                                Icons.Default.Pause,
+                                contentDescription = "${stringResource(R.string.action_pause)} ${transfer.fileName}"
+                            )
                         }
-                        IconButton(onClick = onCancel) {
-                            Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_cancel))
+                        IconButton(
+                            onClick = { triggerOnce(onCancel) },
+                            modifier = Modifier.testTag("transfer_cancel_${transfer.id}")
+                        ) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "${stringResource(R.string.action_cancel)} ${transfer.fileName}"
+                            )
                         }
                     }
                     TransferStatus.PAUSED.name -> {
                         Spacer(modifier = Modifier.width(6.dp))
-                        IconButton(onClick = onResume) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = stringResource(R.string.action_resume))
+                        IconButton(
+                            onClick = { triggerOnce(onResume) },
+                            modifier = Modifier.testTag("transfer_resume_${transfer.id}")
+                        ) {
+                            Icon(
+                                Icons.Default.PlayArrow,
+                                contentDescription = "${stringResource(R.string.action_resume)} ${transfer.fileName}"
+                            )
                         }
-                        IconButton(onClick = onCancel) {
-                            Icon(Icons.Default.Close, contentDescription = stringResource(R.string.action_cancel))
+                        IconButton(
+                            onClick = { triggerOnce(onCancel) },
+                            modifier = Modifier.testTag("transfer_cancel_${transfer.id}")
+                        ) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "${stringResource(R.string.action_cancel)} ${transfer.fileName}"
+                            )
                         }
                     }
                     TransferStatus.FAILED.name -> {
@@ -657,13 +691,15 @@ fun TransferItemCard(
                         Surface(
                             shape = RoundedCornerShape(16.dp),
                             color = MaterialTheme.colorScheme.primary,
-                            onClick = onRetry,
-                            modifier = Modifier.size(48.dp)
+                            onClick = { triggerOnce(onRetry) },
+                            modifier = Modifier
+                                .size(48.dp)
+                                .testTag("transfer_retry_${transfer.id}")
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
                                     imageVector = Icons.Default.Refresh,
-                                    contentDescription = stringResource(R.string.action_retry),
+                                    contentDescription = "${stringResource(R.string.action_retry)} ${transfer.fileName}",
                                     tint = MaterialTheme.colorScheme.onPrimary,
                                     modifier = Modifier.size(22.dp)
                                 )
