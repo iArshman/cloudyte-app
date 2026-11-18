@@ -22,7 +22,9 @@ import kotlinx.coroutines.withContext
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
 
     private val app = application as CloudyteApplication
-    private val securityPrefs = application.getSharedPreferences("cloudyte_security_meta", Context.MODE_PRIVATE)
+    private val securityPrefs by lazy {
+        application.getSharedPreferences("cloudyte_security_meta", Context.MODE_PRIVATE)
+    }
 
     private val _prefsState = MutableStateFlow(UserPreferencesState())
     val prefsState: StateFlow<UserPreferencesState> = _prefsState.asStateFlow()
@@ -33,9 +35,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val _encryptionKeyStatus = MutableStateFlow("Not initialized")
     val encryptionKeyStatus: StateFlow<String> = _encryptionKeyStatus.asStateFlow()
 
-    private val _recoveryBackupStatus = MutableStateFlow(
-        securityPrefs.getString("recovery_backup_status", "Not created") ?: "Not created"
-    )
+    private val _recoveryBackupStatus = MutableStateFlow("Not created")
     val recoveryBackupStatus: StateFlow<String> = _recoveryBackupStatus.asStateFlow()
 
     private val _generatedRecoveryBackupJson = MutableStateFlow<String?>(null)
@@ -45,6 +45,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val securityFeedback: StateFlow<String?> = _securityFeedback.asStateFlow()
 
     init {
+        viewModelScope.launch(Dispatchers.IO) {
+            _recoveryBackupStatus.value = securityPrefs.getString("recovery_backup_status", "Not created") ?: "Not created"
+        }
         viewModelScope.launch {
             UserPreferences.observe(getApplication()).collectLatest { state ->
                 _prefsState.value = state

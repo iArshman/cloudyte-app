@@ -60,6 +60,41 @@ object BackupSourceManager {
             }
     }
 
+    fun findParentTreeGrantForRelativePath(
+        context: Context,
+        relativePath: String
+    ): Pair<Uri, String>? {
+        val cleanRel = relativePath.trim().trim('/')
+        if (cleanRel.isBlank()) return null
+        val persisted = runCatching { context.contentResolver.persistedUriPermissions }
+            .getOrDefault(emptyList())
+            .filter { it.isReadPermission }
+        for (perm in persisted) {
+            val treeDocId = runCatching { DocumentsContract.getTreeDocumentId(perm.uri) }.getOrNull() ?: continue
+            val treeRel = treeDocId.substringAfter(':', "").trim('/')
+            when {
+                treeRel.isEmpty() && treeDocId.endsWith(":") -> {
+                    // User granted the root of primary storage ("primary:") -> covers all relative paths!
+                    return perm.uri to cleanRel
+                }
+                cleanRel.equals(treeRel, ignoreCase = true) -> {
+                    return perm.uri to ""
+                }
+                cleanRel.startsWith("$treeRel/", ignoreCase = true) -> {
+                    val subPath = cleanRel.substring(treeRel.length + 1).trim('/')
+                    return perm.uri to subPath
+                }
+            }
+        }
+        return null
+    }
+
+    fun buildSubfolderTreeUri(parentTreeUri: Uri, subRelativePath: String): Uri {
+        val cleanSub = subRelativePath.trim('/')
+        if (cleanSub.isBlank()) return parentTreeUri
+        return "$parentTreeUri#subpath=$cleanSub".let { Uri.parse(it) }
+    }
+
     fun resolveTreeDocument(context: Context, uriString: String): DocumentFile? {
         val uri = runCatching { Uri.parse(uriString) }.getOrNull() ?: return null
         return resolveTreeDocument(context, uri)
@@ -68,7 +103,34 @@ object BackupSourceManager {
     fun resolveTreeDocument(context: Context, uri: Uri): DocumentFile? {
         return when (uri.scheme?.lowercase()) {
             "file" -> uri.path?.let { path -> DocumentFile.fromFile(File(path)) }
-            "content" -> runCatching { DocumentFile.fromTreeUri(context, uri) }.getOrNull()
+            "content" -> {
+                val subPath = uri.fragment
+                    ?.takeIf { it.startsWith("subpath=") }
+                    ?.removePrefix("subpath=")
+                    ?.trim('/')
+                    .orEmpty()
+                val baseTreeUri = if (uri.fragment != null) {
+                    uri.buildUpon().fragment(null).build()
+                } else {
+                    uri
+                }
+                val rootDoc = runCatching { DocumentFile.fromTreeUri(context, baseTreeUri) }.getOrNull()
+                    ?: return null
+                if (subPath.isBlank()) {
+                    rootDoc
+                } else {
+                    var current: DocumentFile? = rootDoc
+                    for (segment in subPath.split('/').filter { it.isNotBlank() }) {
+                        val next = current?.findFile(segment)
+                            ?: current?.listFiles()?.firstOrNull { it.isDirectory && it.name.equals(segment, ignoreCase = true) }
+                        if (next == null || !next.isDirectory) {
+                            return null
+                        }
+                        current = next
+                    }
+                    current
+                }
+            }
             else -> {
                 val path = uri.path
                 if (!path.isNullOrBlank() && File(path).exists()) {
@@ -119,8 +181,14 @@ object BackupSourceManager {
             }
         }
 
+        val baseTreeUri = if (uri.fragment != null) uri.buildUpon().fragment(null).build() else uri
         val persisted = runCatching { context.contentResolver.persistedUriPermissions }.getOrDefault(emptyList())
-        val perm = persisted.firstOrNull { it.uri == uri || it.uri.toString() == source.treeUri }
+        val perm = persisted.firstOrNull {
+            it.uri == uri ||
+                it.uri == baseTreeUri ||
+                it.uri.toString() == source.treeUri ||
+                it.uri.toString() == baseTreeUri.toString()
+        }
         if (perm == null || !perm.isReadPermission) {
             return BackupSourceHealth(
                 status = BackupSourcePermissionStatus.REVOKED,
@@ -131,7 +199,7 @@ object BackupSourceManager {
         }
 
         return try {
-            val doc = DocumentFile.fromTreeUri(context, uri)
+            val doc = resolveTreeDocument(context, uri)
             when {
                 doc == null || !doc.exists() -> BackupSourceHealth(
                     status = BackupSourcePermissionStatus.MISSING,
@@ -382,12 +450,18 @@ object BackupSourceManager {
         dao.deleteById(sourceId)
 
         val remaining = dao.getAll()
-        if (remaining.none { it.treeUri == existing.treeUri }) {
-            val uri = runCatching { Uri.parse(existing.treeUri) }.getOrNull()
-            if (uri != null && uri.scheme.equals("content", ignoreCase = true)) {
+        val existingUri = runCatching { Uri.parse(existing.treeUri) }.getOrNull()
+        val existingBaseUri = existingUri?.let { if (it.fragment != null) it.buildUpon().fragment(null).build() else it }
+        if (existingBaseUri != null && remaining.none {
+                val u = runCatching { Uri.parse(it.treeUri) }.getOrNull()
+                val base = u?.let { parsed -> if (parsed.fragment != null) parsed.buildUpon().fragment(null).build() else parsed }
+                base == existingBaseUri || it.treeUri == existing.treeUri
+            }
+        ) {
+            if (existingBaseUri.scheme.equals("content", ignoreCase = true)) {
                 runCatching {
                     context.contentResolver.releasePersistableUriPermission(
-                        uri,
+                        existingBaseUri,
                         Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                     )
                 }
@@ -404,18 +478,21 @@ object BackupSourceManager {
 
     private fun takePersistablePermission(context: Context, uri: Uri) {
         if (!uri.scheme.equals("content", ignoreCase = true)) return
+        val baseUri = if (uri.fragment != null) uri.buildUpon().fragment(null).build() else uri
         val contentResolver = context.contentResolver
         try {
             contentResolver.takePersistableUriPermission(
-                uri,
+                baseUri,
                 Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
             )
         } catch (_: SecurityException) {
             // Some document providers only allow read grants; fall back to read-only.
-            contentResolver.takePersistableUriPermission(
-                uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION
-            )
+            runCatching {
+                contentResolver.takePersistableUriPermission(
+                    baseUri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
         }
     }
 

@@ -28,8 +28,10 @@ class CacheCleanupWorker(
                 val previewQuotaBytes = (totalQuotaBytes * 4L) / 10L
                 val thumbStore = (applicationContext as? com.cloudyte.app.CloudyteApplication)?.container?.thumbnailStore
                     ?: ThumbnailStore(applicationContext, db.thumbnailDao())
+                val previewStore = (applicationContext as? com.cloudyte.app.CloudyteApplication)?.container?.previewStore
+                    ?: PreviewStore(applicationContext)
                 thumbStore.enforceQuota(thumbQuotaBytes)
-                PreviewStore(applicationContext).enforceQuota(previewQuotaBytes)
+                previewStore.enforceQuota(previewQuotaBytes)
             }
 
             val activeIds = runCatching {

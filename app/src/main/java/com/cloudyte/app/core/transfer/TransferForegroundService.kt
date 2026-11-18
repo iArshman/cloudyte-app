@@ -110,25 +110,36 @@ class TransferForegroundService : Service() {
             var lastDetailed: Boolean? = null
             var lastNotifyAt = 0L
 
+            val showDetailedRef = java.util.concurrent.atomic.AtomicBoolean(
+                runCatching {
+                    val p = UserPreferences.observe(this@TransferForegroundService).first()
+                    p.notificationsEnabled && p.progressAlerts
+                }.getOrDefault(false)
+            )
+            val prefsCollectorJob = launch {
+                runCatching {
+                    UserPreferences.observe(this@TransferForegroundService).collect { p ->
+                        showDetailedRef.set(p.notificationsEnabled && p.progressAlerts)
+                    }
+                }
+            }
+
             // Initial grace window so newly dispatched queue writes settle before checking exit
             delay(300L)
 
-            while (isActive) {
-                val draining = app.container.isImmediateDrainActive.value
-                val hasLive = runCatching { queueDao.hasLiveTransfers() }.getOrDefault(false)
-                if (!draining && !hasLive) {
-                    delay(450L)
-                    val stillDraining = app.container.isImmediateDrainActive.value
-                    val stillHasLive = runCatching { queueDao.hasLiveTransfers() }.getOrDefault(false)
-                    if (!stillDraining && !stillHasLive) {
-                        break
+            try {
+                while (isActive) {
+                    val draining = app.container.isImmediateDrainActive.value
+                    val hasLive = runCatching { queueDao.hasLiveTransfers() }.getOrDefault(false)
+                    if (!draining && !hasLive) {
+                        delay(450L)
+                        val stillDraining = app.container.isImmediateDrainActive.value
+                        val stillHasLive = runCatching { queueDao.hasLiveTransfers() }.getOrDefault(false)
+                        if (!stillDraining && !stillHasLive) {
+                            break
+                        }
                     }
-                }
-
-                val prefs = runCatching {
-                    UserPreferences.observe(this@TransferForegroundService).first()
-                }.getOrNull()
-                val showDetailed = prefs?.let { it.notificationsEnabled && it.progressAlerts } ?: false
+                val showDetailed = showDetailedRef.get()
                 val totals = runCatching { queueDao.aggregateProgressTotals() }.getOrNull()
                 val transferred = totals?.bytesTransferred ?: 0L
                 val total = totals?.totalBytes ?: 0L
@@ -162,7 +173,10 @@ class TransferForegroundService : Service() {
                     }
                 }
 
-                delay(400L)
+                    delay(400L)
+                }
+            } finally {
+                prefsCollectorJob.cancel()
             }
 
             ServiceCompat.stopForeground(this@TransferForegroundService, ServiceCompat.STOP_FOREGROUND_REMOVE)

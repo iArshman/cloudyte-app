@@ -127,7 +127,9 @@ object StorageManager {
         val before = measure(appContext).totalAppCacheBytes
         var deletedCount = 0
 
-        PreviewStore(appContext).clear()
+        val previewStore = (appContext as? com.cloudyte.app.CloudyteApplication)?.container?.previewStore
+            ?: PreviewStore(appContext)
+        previewStore.clear()
         deletedCount += deleteDirContents(File(appContext.cacheDir, "cloudyte_previews"))
         com.cloudyte.app.features.player.MediaStreamCache.clear(appContext)
 
@@ -166,6 +168,7 @@ object StorageManager {
         deletedCount += deleteDirContents(File(appContext.cacheDir, "thumbnail_cache"))
 
         runCatching {
+            (appContext as? com.cloudyte.app.CloudyteApplication)?.container?.thumbnailStore?.clearMemoryCache()
             AppDatabase.getDatabase(appContext).thumbnailDao().deleteAll()
         }
 

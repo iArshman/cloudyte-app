@@ -452,12 +452,63 @@ fun BackupSettingsSection(
                         onChange = { wantEnable ->
                             when {
                                 linkedSource == null -> {
-                                    pendingPreset = preset
-                                    addFolderLauncher.launch(BackupSourceManager.suggestedInitialUri(preset))
+                                    val parentGrant = BackupSourceManager.findParentTreeGrantForRelativePath(
+                                        context,
+                                        preset.relativePath
+                                    )
+                                    if (parentGrant != null) {
+                                        val derivedUri = BackupSourceManager.buildSubfolderTreeUri(
+                                            parentGrant.first,
+                                            parentGrant.second
+                                        )
+                                        scope.launch {
+                                            val result = BackupSourceManager.persistAndAddSource(
+                                                context = context,
+                                                treeUri = derivedUri,
+                                                presetType = preset,
+                                                targetAccountId = prefsState.backupAccountId,
+                                                db = db
+                                            )
+                                            result.onSuccess { added ->
+                                                snackbarHostState.showSnackbar("Enabled '${added.displayName}' using existing folder grant.")
+                                            }.onFailure {
+                                                pendingPreset = preset
+                                                addFolderLauncher.launch(BackupSourceManager.suggestedInitialUri(preset))
+                                            }
+                                        }
+                                    } else {
+                                        pendingPreset = preset
+                                        addFolderLauncher.launch(BackupSourceManager.suggestedInitialUri(preset))
+                                    }
                                 }
                                 wantEnable && !isHealthy -> {
-                                    pendingRegrantId = linkedSource.id
-                                    regrantLauncher.launch(BackupSourceManager.suggestedInitialUri(preset))
+                                    val parentGrant = BackupSourceManager.findParentTreeGrantForRelativePath(
+                                        context,
+                                        preset.relativePath
+                                    )
+                                    if (parentGrant != null) {
+                                        val derivedUri = BackupSourceManager.buildSubfolderTreeUri(
+                                            parentGrant.first,
+                                            parentGrant.second
+                                        )
+                                        scope.launch {
+                                            val result = BackupSourceManager.regrantSource(
+                                                context = context,
+                                                sourceId = linkedSource.id,
+                                                grantedTreeUri = derivedUri,
+                                                db = db
+                                            )
+                                            result.onSuccess { restored ->
+                                                snackbarHostState.showSnackbar("Restored '${restored.displayName}' using existing folder grant.")
+                                            }.onFailure {
+                                                pendingRegrantId = linkedSource.id
+                                                regrantLauncher.launch(BackupSourceManager.suggestedInitialUri(preset))
+                                            }
+                                        }
+                                    } else {
+                                        pendingRegrantId = linkedSource.id
+                                        regrantLauncher.launch(BackupSourceManager.suggestedInitialUri(preset))
+                                    }
                                 }
                                 else -> {
                                     scope.launch {

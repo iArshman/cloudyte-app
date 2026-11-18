@@ -175,13 +175,11 @@ class HomeViewModel(
             ?: CloudFileRepository(AppDatabase.getDatabase(application), ApiClient.apiService)
     )
 
-    private val drivePrefs = application.getSharedPreferences("cloudyte_drive_state", android.content.Context.MODE_PRIVATE)
+    private val drivePrefs by lazy {
+        application.getSharedPreferences("cloudyte_drive_state", android.content.Context.MODE_PRIVATE)
+    }
 
-    private val _profile = MutableStateFlow<UserProfile?>(
-        drivePrefs.getString("cached_username", null)?.takeIf { it.isNotBlank() }?.let {
-            UserProfile(username = it)
-        }
-    )
+    private val _profile = MutableStateFlow<UserProfile?>(null)
     val profile: StateFlow<UserProfile?> = _profile.asStateFlow()
 
     private val _accounts = MutableStateFlow<List<Account>>(emptyList())
@@ -269,6 +267,15 @@ class HomeViewModel(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     init {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            if (_profile.value == null) {
+                drivePrefs.getString("cached_username", null)?.takeIf { it.isNotBlank() }?.let {
+                    if (_profile.value == null) {
+                        _profile.value = UserProfile(username = it)
+                    }
+                }
+            }
+        }
         viewModelScope.launch {
             db.accountDao().getAllAccountsFlow()
                 .map { rows -> rows.map { it.toAccount() } }

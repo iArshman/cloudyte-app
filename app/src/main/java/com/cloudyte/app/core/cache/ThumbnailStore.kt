@@ -219,13 +219,17 @@ class ThumbnailStore @JvmOverloads constructor(
         null
     }
 
-    suspend fun clearAccount(accountId: String) = withContext(Dispatchers.IO) {
+    fun clearMemoryCache() {
         synchronized(memoryPathCache) { memoryPathCache.evictAll() }
+    }
+
+    suspend fun clearAccount(accountId: String) = withContext(Dispatchers.IO) {
+        clearMemoryCache()
         quotaManager.clearAccount(accountId)
     }
 
     suspend fun enforceQuota(maxBytes: Long = CacheQuotaManager.DEFAULT_THUMBNAIL_QUOTA_BYTES) {
-        synchronized(memoryPathCache) { memoryPathCache.evictAll() }
+        clearMemoryCache()
         quotaManager.enforceThumbnailQuota(maxBytes)
     }
 
