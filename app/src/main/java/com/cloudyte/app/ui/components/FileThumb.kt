@@ -199,13 +199,7 @@ fun FileThumb(
     val isApkOrArchiveOrCode = !file.isFolderItem && !file.isImage && !file.isVideo &&
         (ext == "apk" || ext == "zip" || ext == "rar" || ext == "7z" || file.isTextOrCode)
 
-    val containerBg = when {
-        file.isFolderItem -> MaterialTheme.colorScheme.primaryContainer
-        file.isEncrypted && !file.originalMetadataAvailable -> MaterialTheme.colorScheme.primaryContainer
-        ext == "apk" -> com.cloudyte.app.ui.theme.LocalCloudyteColors.current.mintContainer
-        isApkOrArchiveOrCode -> MaterialTheme.colorScheme.surfaceContainerHighest
-        else -> MaterialTheme.colorScheme.surfaceContainerHigh
-    }
+    val containerBg = MaterialTheme.colorScheme.surfaceContainer
 
     Box(
         modifier = containerModifier
