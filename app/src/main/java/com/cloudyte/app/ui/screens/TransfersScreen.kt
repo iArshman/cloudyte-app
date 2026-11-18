@@ -97,8 +97,9 @@ fun TransfersScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val db = remember { AppDatabase.getDatabase(context) }
-    val repo = remember { TransferRepository(db.transferDao()) }
+    val container = remember { (context.applicationContext as? CloudyteApplication)?.container }
+    val db = remember { container?.database ?: AppDatabase.getDatabase(context) }
+    val repo = remember { container?.transferRepository ?: TransferRepository(db.transferDao()) }
     val coordinator = remember {
         (context.applicationContext as CloudyteApplication).container.transferCoordinator
     }

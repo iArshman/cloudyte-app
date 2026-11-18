@@ -9,8 +9,8 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -89,7 +89,7 @@ fun VideoPlayerScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     var snackbarMsg by remember { mutableStateOf<String?>(null) }
-    val downloadedIds by OfflineFileManager.downloadedFiles.collectAsState()
+    val downloadedIds by OfflineFileManager.downloadedFiles.collectAsStateWithLifecycle()
 
     LaunchedEffect(snackbarMsg) {
         snackbarMsg?.let {

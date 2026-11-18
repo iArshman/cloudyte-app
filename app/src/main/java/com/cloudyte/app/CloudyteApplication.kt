@@ -8,7 +8,6 @@ import com.cloudyte.app.sync.AutoSyncManager
 import com.cloudyte.app.sync.FileMutationWorker
 import com.cloudyte.app.core.transfer.DrainTrigger
 import com.cloudyte.app.core.transfer.ScheduleReason
-import com.cloudyte.app.core.transfer.WorkMaintenanceScheduler
 import com.cloudyte.app.core.cache.CacheCleanupWorker
 
 import coil.ImageLoader
@@ -24,15 +23,15 @@ class CloudyteApplication : Application(), ImageLoaderFactory {
 
     override fun onCreate() {
         super.onCreate()
-        ApiClient.init(this)
         OfflineFileManager.init(this)
         container = AppContainer(this)
+        ApiClient.initAsync(this, container.applicationScope, container.dispatchers.io)
+        container.networkMonitor.start()
         FileMutationWorker.initialize(this)
         FileMutationWorker.enqueue()
         AutoSyncManager.init(this, container.applicationScope)
         try {
             container.transferScheduler.schedulePeriodicMaintenance()
-            WorkMaintenanceScheduler.scheduleMaintenance(this)
             container.transferScheduler.kick(ScheduleReason.APP_START, allowMetered = true)
         } catch (error: IllegalStateException) {
             Log.w("CloudyteApplication", "WorkManager is not initialized; startup queue work will be scheduled on the next trigger", error)

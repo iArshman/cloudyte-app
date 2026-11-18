@@ -45,8 +45,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -105,14 +105,14 @@ fun ImageViewerScreen(
     var dbFiles by remember(fileId) { mutableStateOf<List<CloudFile>>(emptyList()) }
     LaunchedEffect(fileId, accountId) {
         if (app != null) {
-            val dbFile = app.container.database.cloudFileDao().getFileById(fileId)?.toCloudFile()
-            if (dbFile != null) {
+            val localRow = app.container.database.cloudFileDao().getFileById(fileId)
+            val dbFile = localRow?.toCloudFile()
+            if (localRow != null && dbFile != null) {
                 FileRepository.cacheFiles(listOf(dbFile))
-                val folderFiles = if (accountId.isNotBlank() && accountId != "all" && accountId != "root") {
-                    app.container.database.cloudFileDao().getFilesForAccount(accountId).map { it.toCloudFile() }.filter { !it.isFolderItem }
-                } else {
-                    app.container.database.cloudFileDao().getAllFiles().map { it.toCloudFile() }.filter { !it.isFolderItem }
-                }
+                val folderFiles = app.container.database.cloudFileDao()
+                    .getFilesForFolder(localRow.accountId, localRow.folderId)
+                    .map { it.toCloudFile() }
+                    .filter { !it.isFolderItem }
                 dbFiles = folderFiles.ifEmpty { listOf(dbFile) }
             }
         }
@@ -165,7 +165,7 @@ fun ImageViewerScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var snackbarMsg by remember { mutableStateOf<String?>(null) }
 
-    val downloadedIds by OfflineFileManager.downloadedFiles.collectAsState()
+    val downloadedIds by OfflineFileManager.downloadedFiles.collectAsStateWithLifecycle()
 
     LaunchedEffect(snackbarMsg) {
         snackbarMsg?.let {

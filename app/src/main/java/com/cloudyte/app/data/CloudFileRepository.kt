@@ -14,6 +14,7 @@ import com.cloudyte.app.core.security.CryptoConstants
 import com.cloudyte.app.core.security.EncryptedMetadataCodec
 import com.cloudyte.app.db.AppDatabase
 import com.cloudyte.app.db.LocalCloudFile
+import com.cloudyte.app.db.inImmediateTransaction
 import com.cloudyte.app.db.LocalFileMutation
 import com.cloudyte.app.db.LocalFileTombstone
 import com.cloudyte.app.db.LocalFolderSyncMeta
@@ -461,7 +462,7 @@ class CloudFileRepository @JvmOverloads constructor(
             val existingRows = db.cloudFileDao().getFilesForFolder(normalizedAccount, safeFolder)
             val delta = com.cloudyte.app.core.sync.ReconciliationPolicy.computeDelta(existingRows, snapshot)
 
-            db.withTransaction {
+            db.inImmediateTransaction {
                 if (delta.staleIds.isNotEmpty()) {
                     val existingIds = existingRows.map { it.id }
                     val tombstones = com.cloudyte.app.core.sync.ReconciliationPolicy.tombstonesFor(

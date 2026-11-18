@@ -428,12 +428,21 @@ class FilesViewModel(
                 val accId = currentAccountId.value
                     ?: accounts.value.firstOrNull { it.isDefault == true }?.effectiveId
                     ?: accounts.value.firstOrNull()?.effectiveId
-                val allAccountFiles = if (!accId.isNullOrBlank()) {
-                    db.cloudFileDao().getFilesForAccount(accId).map { it.toCloudFile() }
+                val offlineIds = OfflineFileManager.downloadedFiles.value.ifEmpty {
+                    OfflineFileManager.refreshDownloadedSetAsync(getApplication())
+                    OfflineFileManager.downloadedFiles.value
+                }.toList()
+                val offlineRows = if (offlineIds.isEmpty()) {
+                    emptyList()
                 } else {
-                    db.cloudFileDao().getAllFiles().map { it.toCloudFile() }
+                    offlineIds.chunked(500).flatMap { db.cloudFileDao().getFilesByIds(it) }
                 }
-                _globalSearchResults.value = allAccountFiles
+                val offlineFiles = offlineRows
+                    .let { rows ->
+                        if (!accId.isNullOrBlank()) rows.filter { it.accountId == accId } else rows
+                    }
+                    .map { it.toCloudFile() }
+                _globalSearchResults.value = offlineFiles
             }
         } else if (_searchQuery.value.isBlank()) {
             _globalSearchResults.value = emptyList()

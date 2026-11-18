@@ -22,11 +22,11 @@ class MediaSweepWorker(
             MediaTriggerScheduler.cancel(context)
             return Result.success()
         }
-        MediaTriggerScheduler.schedule(
-            context = context,
-            wifiOnly = prefs.backupWifiOnly,
-            chargingOnly = prefs.backupChargingOnly
-        )
+        MediaTriggerScheduler.cancel(context)
+        val now = System.currentTimeMillis()
+        if (prefs.lastBackupAt > 0L && (now - prefs.lastBackupAt) < 45L * 60_000L) {
+            return Result.success()
+        }
         AutoSyncManager.enqueueImmediateSync(
             context = context,
             prefsOverride = prefs,

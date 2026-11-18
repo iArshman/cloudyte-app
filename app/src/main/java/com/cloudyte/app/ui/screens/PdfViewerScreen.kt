@@ -51,8 +51,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -163,7 +163,7 @@ fun PdfViewerScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     var snackbarMsg by remember { mutableStateOf<String?>(null) }
-    val downloadedIds by OfflineFileManager.downloadedFiles.collectAsState()
+    val downloadedIds by OfflineFileManager.downloadedFiles.collectAsStateWithLifecycle()
 
     val listState = rememberLazyListState()
     val currentVisiblePage by remember {
@@ -220,6 +220,12 @@ fun PdfViewerScreen(
             errorMessage = e.localizedMessage ?: "Failed to open PDF"
         } finally {
             isLoading = false
+        }
+    }
+
+    DisposableEffect(pageCache) {
+        onDispose {
+            pageCache.evictAll()
         }
     }
 

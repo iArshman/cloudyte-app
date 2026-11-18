@@ -72,11 +72,16 @@ class AppContainer(context: Context) {
 
     val dispatchers: DispatcherProvider = DefaultDispatcherProvider
     val applicationScope: CoroutineScope = CoroutineScope(SupervisorJob() + dispatchers.default)
-    val networkMonitor: ConnectivityNetworkMonitor = ConnectivityNetworkMonitor(appContext) {
-        applicationScope.launch(dispatchers.io) {
-            ApiClient.evictIdleConnections()
-        }
-    }
+    val powerMonitor = com.cloudyte.app.core.network.AndroidPowerMonitor(appContext)
+    val networkMonitor: ConnectivityNetworkMonitor = ConnectivityNetworkMonitor(
+        context = appContext,
+        onRouteChanged = {
+            applicationScope.launch(dispatchers.io) {
+                ApiClient.evictIdleConnections()
+            }
+        },
+        powerMonitor = powerMonitor
+    )
     val networkPolicy = DefaultNetworkPolicy()
     val transferNetworkGate = TransferNetworkGate(
         monitor = networkMonitor,

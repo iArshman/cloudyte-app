@@ -21,6 +21,7 @@ import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import java.io.File
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.launch
 
 object ApiClient {
     private const val TOKEN_KEY = "auth_token"
@@ -35,6 +36,9 @@ object ApiClient {
 
     @Volatile
     private var inMemoryToken: String? = null
+
+    @Volatile
+    private var initDeferred: kotlinx.coroutines.CompletableDeferred<Unit>? = null
 
     private data class CachedMediaLink(
         val url: String,
@@ -52,7 +56,11 @@ object ApiClient {
     }
 
     fun getToken(): String? {
-        return sharedPreferences?.getString(TOKEN_KEY, null) ?: inMemoryToken
+        return inMemoryToken ?: sharedPreferences?.getString(TOKEN_KEY, null)
+    }
+
+    suspend fun awaitInitialized() {
+        initDeferred?.await()
     }
 
     private val authInterceptor = Interceptor { chain ->
@@ -174,6 +182,7 @@ object ApiClient {
         return builder.build()
     }
 
+    @Volatile
     var okHttpClient: OkHttpClient = createClient()
         private set
 
@@ -181,12 +190,14 @@ object ApiClient {
         .addLast(KotlinJsonAdapterFactory())
         .build()
 
+    @Volatile
     private var retrofit: Retrofit = Retrofit.Builder()
         .baseUrl(API_BASE_URL)
         .client(okHttpClient)
         .addConverterFactory(MoshiConverterFactory.create(moshi))
         .build()
 
+    @Volatile
     var apiService: CloudyteApi = retrofit.create(CloudyteApi::class.java)
         private set
 
@@ -203,6 +214,24 @@ object ApiClient {
         )
     }
 
+    fun initAsync(
+        context: Context,
+        scope: kotlinx.coroutines.CoroutineScope,
+        dispatcher: kotlinx.coroutines.CoroutineDispatcher = kotlinx.coroutines.Dispatchers.IO
+    ) {
+        val appContext = context.applicationContext
+        val deferred = kotlinx.coroutines.CompletableDeferred<Unit>()
+        initDeferred = deferred
+        kotlinx.coroutines.CoroutineScope(scope.coroutineContext).launch(dispatcher) {
+            try {
+                init(appContext)
+            } finally {
+                deferred.complete(Unit)
+            }
+        }
+    }
+
+    @Synchronized
     fun init(context: Context) {
         // Remove any legacy plaintext fallback token file so tokens never persist unencrypted on disk
         runCatching { context.deleteSharedPreferences("cloudyte_secure_fallback") }
@@ -225,7 +254,7 @@ object ApiClient {
                 null
             }
         }
-        inMemoryToken = sharedPreferences?.getString(TOKEN_KEY, null) ?: inMemoryToken
+        inMemoryToken = inMemoryToken ?: sharedPreferences?.getString(TOKEN_KEY, null)
         val httpCache = Cache(File(context.cacheDir, "http"), 50L * 1024 * 1024)
         okHttpClient = createClient(httpCache)
         retrofit = Retrofit.Builder()
@@ -234,6 +263,7 @@ object ApiClient {
             .addConverterFactory(MoshiConverterFactory.create(moshi))
             .build()
         apiService = retrofit.create(CloudyteApi::class.java)
+        initDeferred?.complete(Unit)
     }
 
     /**

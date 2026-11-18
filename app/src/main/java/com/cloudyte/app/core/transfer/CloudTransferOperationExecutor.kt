@@ -646,17 +646,16 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
 
         if (existingStageFile.isFile && existingStageFile.length() > 0L && !transfer.encryptedMetadata.isNullOrBlank()) {
             try {
-                val header = streamFileCrypto.validateEncryptedFile(existingStageFile, expectedKeyId = keyMaterial.keyId)
                 val actualLength = existingStageFile.length()
                 val expectedLength = transfer.encryptedSizeBytes ?: actualLength
-                val actualSha256 = streamFileCrypto.calculateFileSha256(existingStageFile)
-                val expectedSha256 = transfer.encryptedChecksum ?: actualSha256
                 val envelope = metadataCodec.deserializeEnvelopeFromJson(transfer.encryptedMetadata)
-
-                if (actualLength == expectedLength &&
-                    actualSha256.equals(expectedSha256, ignoreCase = true) &&
-                    envelope.keyId == keyMaterial.keyId
-                ) {
+                if (actualLength == expectedLength && envelope.keyId == keyMaterial.keyId) {
+                    val header = streamFileCrypto.validateEncryptedFile(existingStageFile, expectedKeyId = keyMaterial.keyId)
+                    val resolvedChecksum = if (transfer.encryptedSizeBytes != null && !transfer.encryptedChecksum.isNullOrBlank()) {
+                        transfer.encryptedChecksum
+                    } else {
+                        streamFileCrypto.calculateFileSha256(existingStageFile)
+                    }
                     runCatching {
                         metadataCodec.decryptMetadata(envelope, keyMaterial).plaintextChecksum
                     }.getOrNull()?.takeIf { it.isNotBlank() }?.let { checksum ->
@@ -670,7 +669,7 @@ class CloudTransferOperationExecutor @JvmOverloads constructor(
                         stagingFile = existingStageFile,
                         opaqueRemoteName = opaqueName,
                         encryptedSizeBytes = actualLength,
-                        encryptedChecksum = actualSha256,
+                        encryptedChecksum = resolvedChecksum,
                         plaintextSizeBytes = header.plaintextSize,
                         envelope = envelope,
                         envelopeJson = transfer.encryptedMetadata

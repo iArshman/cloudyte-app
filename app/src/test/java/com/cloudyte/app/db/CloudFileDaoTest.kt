@@ -128,4 +128,18 @@ class CloudFileDaoTest {
         assertNull(afterClear?.etag)
         assertEquals(10_000L, afterClear?.lastSyncedAt)
     }
+
+    @Test
+    fun getFilesByIds_and_inImmediateTransaction_workCorrectly() = runTest {
+        val r1 = sampleRow(id = "offline_1", name = "Video1.mkv", accountId = "acc1", folderId = "movies")
+        val r2 = sampleRow(id = "offline_2", name = "Video2.mp4", accountId = "acc1", folderId = "clips")
+        val r3 = sampleRow(id = "other_3", name = "Doc.pdf", accountId = "acc1", folderId = "docs")
+
+        db.inImmediateTransaction {
+            dao.insertFiles(listOf(r1, r2, r3))
+        }
+
+        val fetched = dao.getFilesByIds(listOf("offline_1", "offline_2", "non_existent"))
+        assertEquals(setOf("offline_1", "offline_2"), fetched.map { it.id }.toSet())
+    }
 }

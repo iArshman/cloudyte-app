@@ -88,6 +88,7 @@ class DefaultNetworkPolicy : NetworkPolicy {
 
 class ConnectivityNetworkMonitor @JvmOverloads constructor(
     private val context: Context,
+    private val powerMonitor: PowerMonitor? = null,
     private val onRouteChanged: () -> Unit = {}
 ) : NetworkMonitor {
     private val connectivity = context.applicationContext.getSystemService(ConnectivityManager::class.java)
@@ -138,6 +139,7 @@ class ConnectivityNetworkMonitor @JvmOverloads constructor(
     fun start() {
         if (started.compareAndSet(false, true)) {
             runCatching { connectivity?.registerDefaultNetworkCallback(callback) }
+            runCatching { powerMonitor?.start() }
         }
         refresh()
     }
@@ -145,10 +147,11 @@ class ConnectivityNetworkMonitor @JvmOverloads constructor(
     fun stop() {
         if (started.compareAndSet(true, false)) {
             runCatching { connectivity?.unregisterNetworkCallback(callback) }
+            runCatching { powerMonitor?.stop() }
         }
     }
 
-    override fun current(): NetworkStatus = readStatus()
+    override fun current(): NetworkStatus = if (started.get()) _status.value else readStatus()
 
     override fun refresh(): NetworkStatus {
         val activeNetwork = runCatching { connectivity?.activeNetwork }.getOrNull()
@@ -169,18 +172,25 @@ class ConnectivityNetworkMonitor @JvmOverloads constructor(
         val capabilities = runCatching {
             connectivity?.activeNetwork?.let { connectivity.getNetworkCapabilities(it) }
         }.getOrNull()
-        val power = context.getSystemService(PowerManager::class.java)
-        val battery = context.getSystemService(BatteryManager::class.java)
-        val batteryLevel = battery?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: 100
+        val powerSnap = powerMonitor?.currentSnapshot() ?: run {
+            val power = context.getSystemService(PowerManager::class.java)
+            val battery = context.getSystemService(BatteryManager::class.java)
+            val batteryLevel = battery?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: 100
+            PowerSnapshot(
+                isCharging = battery?.isCharging == true,
+                batteryLevel = batteryLevel,
+                batterySaverActive = power?.isPowerSaveMode == true
+            )
+        }
         return NetworkPolicySnapshot(
             status = classifyCapabilities(capabilities),
             allowMeteredTransfers = preferences.allowMeteredTransfers,
             allowRoaming = preferences.allowRoaming,
             requireChargingForBackup = preferences.backupChargingOnly,
-            batterySaverActive = power?.isPowerSaveMode == true,
+            batterySaverActive = powerSnap.batterySaverActive,
             isRoaming = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_ROAMING) == false,
-            isCharging = battery?.isCharging == true,
-            batteryNotLow = batteryLevel < 0 || batteryLevel >= 15,
+            isCharging = powerSnap.isCharging,
+            batteryNotLow = powerSnap.batteryNotLow,
             requireWifiForBackup = preferences.backupWifiOnly
         )
     }

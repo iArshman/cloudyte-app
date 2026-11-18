@@ -135,7 +135,7 @@ class CloudyteDocumentsProvider : DocumentsProvider() {
 
         runBlocking(Dispatchers.IO) {
             if (parsed.itemId == ROOT_FOLDER_ID) {
-                val account = db.accountDao().getAllAccounts().firstOrNull { it.id == parsed.accountId }
+                val account = db.accountDao().getAccountById(parsed.accountId)
                 val title = account?.name?.ifBlank { account.driveName ?: "Cloudyte" } ?: "Cloudyte"
                 val row = cursor.newRow()
                 row.add(Document.COLUMN_DOCUMENT_ID, documentId)
