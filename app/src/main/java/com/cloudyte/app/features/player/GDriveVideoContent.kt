@@ -100,6 +100,7 @@ import com.cloudyte.app.core.cache.PreviewFetcher
 import com.cloudyte.app.core.network.isOnline
 import com.cloudyte.app.data.UserPreferences
 import com.cloudyte.app.data.UserPreferencesState
+import com.cloudyte.app.ui.components.FileThumb
 import com.cloudyte.app.ui.theme.MetricLabelTextStyle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -143,6 +144,7 @@ fun GDriveVideoContent(
     var seekOverlayIsForward by remember { mutableStateOf(true) }
     var resumedFromMs by remember(file.effectiveId) { mutableStateOf<Long?>(null) }
     var didApplyInitialResume by remember(file.effectiveId) { mutableStateOf(false) }
+    var isFirstFrameRendered by remember(file.effectiveId) { mutableStateOf(false) }
 
     val playbackPrefs = remember(context) {
         context.getSharedPreferences("cloudyte_video_playback", Context.MODE_PRIVATE)
@@ -188,6 +190,7 @@ fun GDriveVideoContent(
         attemptedFallback = false
         playingLocalFile = false
         isBuffering = true
+        isFirstFrameRendered = false
         val prefs = runCatching { UserPreferences.observe(context).first() }.getOrDefault(UserPreferencesState())
         autoPlayVideo = prefs.autoPlayVideo
         val acc = PreviewFetcher.resolveAccountId(context, accountId, file)
@@ -255,6 +258,10 @@ fun GDriveVideoContent(
 
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
+            override fun onRenderedFirstFrame() {
+                isFirstFrameRendered = true
+            }
+
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
             }
@@ -456,6 +463,31 @@ fun GDriveVideoContent(
             },
             modifier = Modifier.fillMaxSize()
         )
+
+        // Smooth thumbnail poster backdrop until ExoPlayer decodes the first video frame
+        AnimatedVisibility(
+            visible = !isFirstFrameRendered && playbackError == null,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                FileThumb(
+                    file = file,
+                    accountId = accountId,
+                    sizeDp = 320.dp,
+                    cornerRadius = 0.dp,
+                    showTypeBadgeInGrid = false,
+                    showEncryptedBadge = false,
+                    modifier = Modifier.fillMaxSize()
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.45f))
+                )
+            }
+        }
 
         if (playbackError != null) {
             Column(

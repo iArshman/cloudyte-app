@@ -94,7 +94,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -1948,9 +1948,9 @@ fun FilesScreen(
                         targetValue = if (isFabExpanded) 45f else 0f,
                         label = "files_fab_rotation"
                     )
-                    ExtendedFloatingActionButton(
+                    FloatingActionButton(
                         onClick = { if (!isUploading) isFabExpanded = !isFabExpanded },
-                        shape = RoundedCornerShape(18.dp),
+                        shape = CircleShape,
                         containerColor = MaterialTheme.colorScheme.primary,
                         contentColor = MaterialTheme.colorScheme.onPrimary,
                         elevation = FloatingActionButtonDefaults.elevation(
@@ -1958,29 +1958,21 @@ fun FilesScreen(
                             pressedElevation = 6.dp
                         ),
                         modifier = Modifier
-                            .height(56.dp)
-                            .testTag("files_new_fab"),
-                        icon = {
-                            if (isUploading) {
-                                AppLoadingIndicator(color = MaterialTheme.colorScheme.onPrimary, size = 22.dp)
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Default.Add,
-                                    contentDescription = if (isFabExpanded) "Close actions" else "New",
-                                    modifier = Modifier
-                                        .size(22.dp)
-                                        .rotate(fabIconRotation)
-                                )
-                            }
-                        },
-                        text = {
-                            Text(
-                                text = if (isFabExpanded) stringResource(R.string.action_close) else stringResource(R.string.files_new_fab),
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold
+                            .size(56.dp)
+                            .testTag("files_new_fab")
+                    ) {
+                        if (isUploading) {
+                            AppLoadingIndicator(color = MaterialTheme.colorScheme.onPrimary, size = 22.dp)
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = if (isFabExpanded) "Close actions" else "New",
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .rotate(fabIconRotation)
                             )
                         }
-                    )
+                    }
                 }
             }
         }
@@ -2418,29 +2410,30 @@ private fun SpeedDialPillButton(
     onClick: () -> Unit
 ) {
     Surface(
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        shadowElevation = 8.dp,
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.primary,
+        contentColor = MaterialTheme.colorScheme.onPrimary,
+        shadowElevation = 6.dp,
         modifier = Modifier
             .heightIn(min = 48.dp)
-            .clip(RoundedCornerShape(18.dp))
+            .clip(CircleShape)
             .clickable(onClick = onClick)
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = MaterialTheme.cloudyteColors.lightAccent,
+                tint = MaterialTheme.colorScheme.onPrimary,
                 modifier = Modifier.size(18.dp)
             )
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onPrimary,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
@@ -2605,6 +2598,7 @@ private fun OriginalFilesHeaderBar(
         Surface(
             shape = RoundedCornerShape(24.dp),
             color = MaterialTheme.colorScheme.surfaceContainer,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f)),
             modifier = Modifier
                 .weight(1f)
                 .height(48.dp)
@@ -2688,6 +2682,7 @@ private fun OriginalFilesHeaderBar(
         Surface(
             shape = CircleShape,
             color = MaterialTheme.colorScheme.surfaceContainer,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f)),
             modifier = Modifier
                 .size(48.dp)
                 .clip(CircleShape)
@@ -2709,6 +2704,11 @@ private fun OriginalFilesHeaderBar(
             Surface(
                 shape = CircleShape,
                 color = if (hasActiveFilter) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
+                border = BorderStroke(
+                    1.dp,
+                    if (hasActiveFilter) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+                    else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f)
+                ),
                 modifier = Modifier
                     .size(48.dp)
                     .clip(CircleShape)
@@ -2903,6 +2903,11 @@ fun FolderGridItem(
     Card(
         shape = RoundedCornerShape(if (isCompact) 16.dp else 20.dp),
         colors = CardDefaults.cardColors(containerColor = cardBg),
+        border = BorderStroke(
+            1.dp,
+            if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
+            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f)
+        ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         modifier = modifier
             .fillMaxWidth()
@@ -3093,6 +3098,11 @@ fun FileGridItem(
     Card(
         shape = RoundedCornerShape(if (isCompact) 16.dp else 20.dp),
         colors = CardDefaults.cardColors(containerColor = cardBg),
+        border = BorderStroke(
+            1.dp,
+            if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
+            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f)
+        ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         modifier = modifier
             .fillMaxWidth()
@@ -3208,8 +3218,7 @@ fun FileGridItem(
                     ) {
                         Text(
                             text = file.formattedSize,
-                            fontSize = 11.sp,
-                            lineHeight = 14.sp,
+                            style = com.cloudyte.app.ui.theme.MetricLabelTextStyle,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1
                         )
@@ -3338,6 +3347,11 @@ fun FileRow(
     Card(
         shape = RoundedCornerShape(if (isCompact) 14.dp else 18.dp),
         colors = CardDefaults.cardColors(containerColor = rowBg),
+        border = BorderStroke(
+            1.dp,
+            if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
+            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f)
+        ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         modifier = modifier
             .fillMaxWidth()
@@ -3415,7 +3429,7 @@ fun FileRow(
                 ) {
                     Text(
                         text = subtitle,
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, lineHeight = 14.sp),
+                        style = com.cloudyte.app.ui.theme.MetricLabelTextStyle,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
