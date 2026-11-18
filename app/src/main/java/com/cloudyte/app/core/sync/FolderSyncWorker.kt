@@ -22,7 +22,8 @@ class FolderSyncWorker(context: Context, params: WorkerParameters) : CoroutineWo
         val folderId = inputData.getString(KEY_FOLDER_ID) ?: "root"
         val providerType = inputData.getString(KEY_PROVIDER_TYPE)
         val database = AppDatabase.getDatabase(applicationContext)
-        val repository = CloudFileRepository(database, ApiClient.apiService)
+        val repository = (applicationContext as? com.cloudyte.app.CloudyteApplication)?.container?.cloudFileRepository
+            ?: CloudFileRepository(database, ApiClient.apiService)
         val result = repository.refresh(
             accountId = accountId,
             folderId = folderId,

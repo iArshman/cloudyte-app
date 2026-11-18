@@ -55,5 +55,15 @@ class TransferQueueDaoTest {
         assertEquals(0, queue.persistProgress("crashed", "process-1:worker-a", 5L, 20L, 1L, null, 202L))
         assertEquals(1, queue.persistProgress("crashed", "process-2:worker-b", 5L, 20L, 1L, null, 202L))
         assertEquals(401L, queue.nextLeaseExpiry(202L))
+
+        // Combined lease renewal + progress persistence atomically updates both fields and fences stale owners.
+        assertEquals(0, queue.renewLeaseAndPersistProgress("crashed", "process-1:worker-a", 900L, 10L, 20L, 2L, 5L, 250L))
+        assertEquals(1, queue.renewLeaseAndPersistProgress("crashed", "process-2:worker-b", 900L, 10L, 20L, 2L, 5L, 250L))
+        assertEquals(900L, queue.nextLeaseExpiry(250L))
+        val updated = queue.currentRow("crashed")
+        assertEquals(10L, updated?.bytesTransferred)
+        assertEquals(20L, updated?.totalBytes)
+        assertEquals(2L, updated?.bytesPerSecond)
+        assertEquals(5L, updated?.etaSeconds)
     }
 }

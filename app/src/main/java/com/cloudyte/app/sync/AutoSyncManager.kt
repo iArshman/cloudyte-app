@@ -164,11 +164,7 @@ object AutoSyncManager {
             return
         }
         MediaStoreWatcher.start(appContext)
-        MediaTriggerScheduler.schedule(
-            context = appContext,
-            wifiOnly = prefs.backupWifiOnly,
-            chargingOnly = prefs.backupChargingOnly
-        )
+        MediaTriggerScheduler.cancel(appContext)
         val sweepConstraints = buildConstraintsFromPreferences(prefs)
         val sweepRequest = PeriodicWorkRequestBuilder<MediaSweepWorker>(1, TimeUnit.HOURS)
             .setConstraints(sweepConstraints)

@@ -241,13 +241,19 @@ class RoomTransferQueueDrainer(
                                             detectInterruption(transfer.id)?.let { throw TransferInterruptedException(it) }
                                         }
                                         if (lastProgressPersistAt == 0L || isTerminalBytes || tick < lastProgressPersistAt || (tick - lastProgressPersistAt) >= 400L) {
-                                            if (queueDao.renewLease(transfer.id, leaseOwner, tick + leaseDurationMs, tick) != 1) {
+                                            if (queueDao.renewLeaseAndPersistProgress(
+                                                    id = transfer.id,
+                                                    ownerId = leaseOwner,
+                                                    leaseUntil = tick + leaseDurationMs,
+                                                    bytes = bytes,
+                                                    total = total,
+                                                    speed = speed,
+                                                    eta = eta,
+                                                    now = tick
+                                                ) != 1
+                                            ) {
                                                 detectInterruption(transfer.id)?.let { throw TransferInterruptedException(it) }
-                                                error("Transfer lease lost")
-                                            }
-                                            if (queueDao.persistProgress(transfer.id, leaseOwner, bytes, total, speed, eta, tick) != 1) {
-                                                detectInterruption(transfer.id)?.let { throw TransferInterruptedException(it) }
-                                                error("Transfer progress write lost its lease")
+                                                error("Transfer progress/lease update lost lease")
                                             }
                                             lastProgressPersistAt = tick
                                             emitProgress(

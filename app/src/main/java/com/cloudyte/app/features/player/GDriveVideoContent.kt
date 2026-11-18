@@ -191,9 +191,6 @@ fun GDriveVideoContent(
         val prefs = runCatching { UserPreferences.observe(context).first() }.getOrDefault(UserPreferencesState())
         autoPlayVideo = prefs.autoPlayVideo
         val acc = PreviewFetcher.resolveAccountId(context, accountId, file)
-        val isOnline = (context.applicationContext as? CloudyteApplication)
-            ?.container?.networkMonitor?.refresh()?.isOnline() ?: true
-
         val cachedLocal = PreviewFetcher.resolveCachedOnly(context, acc, file)
         if (cachedLocal != null && cachedLocal.isFile && cachedLocal.length() > 0L) {
             statusNote = null
@@ -204,17 +201,20 @@ fun GDriveVideoContent(
             exoPlayer.setMediaSource(mediaSource)
             exoPlayer.prepare()
             exoPlayer.playWhenReady = isActive && prefs.autoPlayVideo
-        } else if (acc.isBlank()) {
-            isBuffering = false
-            playbackError = if (!isOnline) {
-                "Offline — download this video to watch without internet"
-            } else {
-                "Drive account unavailable"
-            }
-        } else if (!isOnline) {
-            isBuffering = false
-            playbackError = "Offline — download this video to watch without internet"
-        } else if (file.isEncrypted && prefs.streamBeforeDownload) {
+        } else {
+            val isOnline = (context.applicationContext as? CloudyteApplication)
+                ?.container?.networkMonitor?.refresh()?.isOnline() ?: true
+            if (acc.isBlank()) {
+                isBuffering = false
+                playbackError = if (!isOnline) {
+                    "Offline — download this video to watch without internet"
+                } else {
+                    "Drive account unavailable"
+                }
+            } else if (!isOnline) {
+                isBuffering = false
+                playbackError = "Offline — download this video to watch without internet"
+            } else if (file.isEncrypted && prefs.streamBeforeDownload) {
             statusNote = null
             val cyteFactory = CyteStreamingDataSource.Factory(context, acc, file)
             val streamItem = MediaItem.fromUri(ApiClient.getFileUrl(acc, file.effectiveId, preview = true))
@@ -249,6 +249,7 @@ fun GDriveVideoContent(
             exoPlayer.setMediaItem(MediaItem.fromUri(streamUrl))
             exoPlayer.prepare()
             exoPlayer.playWhenReady = isActive && prefs.autoPlayVideo
+        }
         }
     }
 

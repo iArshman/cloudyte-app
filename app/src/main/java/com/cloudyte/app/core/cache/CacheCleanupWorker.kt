@@ -26,7 +26,9 @@ class CacheCleanupWorker(
                 val totalQuotaBytes = prefs.maxCacheSizeMb.toLong().coerceAtLeast(32L) * 1024L * 1024L
                 val thumbQuotaBytes = (totalQuotaBytes * 6L) / 10L
                 val previewQuotaBytes = (totalQuotaBytes * 4L) / 10L
-                ThumbnailStore(applicationContext, db.thumbnailDao()).enforceQuota(thumbQuotaBytes)
+                val thumbStore = (applicationContext as? com.cloudyte.app.CloudyteApplication)?.container?.thumbnailStore
+                    ?: ThumbnailStore(applicationContext, db.thumbnailDao())
+                thumbStore.enforceQuota(thumbQuotaBytes)
                 PreviewStore(applicationContext).enforceQuota(previewQuotaBytes)
             }
 
@@ -57,7 +59,6 @@ class CacheCleanupWorker(
                 .setConstraints(
                     Constraints.Builder()
                         .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
-                        .setRequiresCharging(true)
                         .build()
                 )
                 .build()

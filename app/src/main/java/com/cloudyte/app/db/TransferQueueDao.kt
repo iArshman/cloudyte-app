@@ -45,6 +45,9 @@ abstract class TransferQueueDao {
     @Query("UPDATE transfers SET bytesTransferred=:bytes, totalBytes=:total, bytesPerSecond=:speed, etaSeconds=:eta, lastProgressAt=:now, updatedAt=:now WHERE id=:id AND leaseOwner=:ownerId AND state='RUNNING' AND leaseExpiresAt > :now")
     abstract suspend fun persistProgress(id: String, ownerId: String, bytes: Long, total: Long, speed: Long, eta: Long?, now: Long): Int
 
+    @Query("UPDATE transfers SET leaseExpiresAt=:leaseUntil, bytesTransferred=:bytes, totalBytes=:total, bytesPerSecond=:speed, etaSeconds=:eta, lastProgressAt=:now, updatedAt=:now WHERE id=:id AND leaseOwner=:ownerId AND state='RUNNING' AND leaseExpiresAt > :now")
+    abstract suspend fun renewLeaseAndPersistProgress(id: String, ownerId: String, leaseUntil: Long, bytes: Long, total: Long, speed: Long, eta: Long?, now: Long): Int
+
     @Query("UPDATE transfers SET state='QUEUED', status='PENDING', leaseOwner=NULL, leaseExpiresAt=NULL, updatedAt=:now WHERE id=:id AND leaseOwner=:ownerId AND state='RUNNING'")
     abstract suspend fun returnToQueue(id: String, ownerId: String, now: Long): Int
 

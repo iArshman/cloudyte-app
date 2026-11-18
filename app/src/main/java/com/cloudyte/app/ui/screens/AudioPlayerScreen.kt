@@ -57,8 +57,8 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -146,7 +146,7 @@ fun AudioPlayerScreen(
         ApiClient.getFileUrl(acc, fileId, preview = true)
     }
 
-    val prefsState by UserPreferences.observe(context).collectAsState(initial = UserPreferencesState())
+    val prefsState by UserPreferences.observe(context).collectAsStateWithLifecycle(initialValue = UserPreferencesState())
     var resolvedPrefs by remember { mutableStateOf<UserPreferencesState?>(null) }
     LaunchedEffect(Unit) {
         resolvedPrefs = runCatching { UserPreferences.observe(context).first() }.getOrDefault(UserPreferencesState())
@@ -190,7 +190,7 @@ fun AudioPlayerScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     var snackbarMsg by remember { mutableStateOf<String?>(null) }
-    val downloadedIds by OfflineFileManager.downloadedFiles.collectAsState()
+    val downloadedIds by OfflineFileManager.downloadedFiles.collectAsStateWithLifecycle()
 
     LaunchedEffect(snackbarMsg) {
         snackbarMsg?.let {
@@ -249,7 +249,7 @@ fun AudioPlayerScreen(
             val currentControllerFuture = controllerFuture
             val currentPlayer = boundPlayer
             if (currentControllerFuture != null && !isLocalFallbackPlayer) {
-                if (!prefsState.backgroundPlayback) {
+                if (!backgroundPlaybackSetting) {
                     currentPlayer?.stop()
                     context.stopService(Intent(context, AudioPlaybackService::class.java))
                 }
@@ -271,35 +271,35 @@ fun AudioPlayerScreen(
             .setArtist("Cloudyte")
             .build()
 
-        val isOnline = (context.applicationContext as? CloudyteApplication)
-            ?.container?.networkMonitor?.refresh()?.isOnline() ?: true
-
-        val mediaUri: Uri? = if (file?.isEncrypted == true || !streamBeforeDownload) {
-            isBuffering = true
-            statusNote = if (file?.isEncrypted == true) "Decrypting audio…" else "Preparing audio preview…"
-            val cachedOnly = file?.let { PreviewFetcher.resolveCachedOnly(context, acc, it) }
-            val ready = cachedOnly ?: if (isOnline) {
-                file?.let { PreviewFetcher.resolvePreviewFile(context, acc, it).getOrNull() }
-            } else null
+        var resolvedOnline = true
+        val cachedOnly = file?.let { PreviewFetcher.resolveCachedOnly(context, acc, it) }
+        val mediaUri: Uri? = if (cachedOnly != null && cachedOnly.isFile && cachedOnly.length() > 0L) {
             statusNote = null
-            when {
-                ready != null && ready.isFile && ready.length() > 0L -> Uri.fromFile(ready)
-                !isOnline -> null
-                file?.isEncrypted == true -> null
-                else -> {
-                    val signedUrl = ApiClient.resolveSignedMediaUrl(
-                        acc.ifBlank { effectiveAccId.ifBlank { accountId } },
-                        fileId,
-                        preview = true
-                    ).ifBlank { audioUrl }
-                    Uri.parse(signedUrl)
-                }
-            }
+            Uri.fromFile(cachedOnly)
         } else {
-            val cached = file?.let { PreviewFetcher.resolveCachedOnly(context, acc, it) }
-            if (cached != null) {
+            val isOnline = (context.applicationContext as? CloudyteApplication)
+                ?.container?.networkMonitor?.refresh()?.isOnline() ?: true
+            resolvedOnline = isOnline
+            if (file?.isEncrypted == true || !streamBeforeDownload) {
+                isBuffering = true
+                statusNote = if (file?.isEncrypted == true) "Decrypting audio…" else "Preparing audio preview…"
+                val ready = if (isOnline) {
+                    file?.let { PreviewFetcher.resolvePreviewFile(context, acc, it).getOrNull() }
+                } else null
                 statusNote = null
-                Uri.fromFile(cached)
+                when {
+                    ready != null && ready.isFile && ready.length() > 0L -> Uri.fromFile(ready)
+                    !isOnline -> null
+                    file?.isEncrypted == true -> null
+                    else -> {
+                        val signedUrl = ApiClient.resolveSignedMediaUrl(
+                            acc.ifBlank { effectiveAccId.ifBlank { accountId } },
+                            fileId,
+                            preview = true
+                        ).ifBlank { audioUrl }
+                        Uri.parse(signedUrl)
+                    }
+                }
             } else if (!isOnline) {
                 null
             } else {
@@ -324,7 +324,7 @@ fun AudioPlayerScreen(
             player.playWhenReady = true
         } else {
             isBuffering = false
-            statusNote = if (!isOnline) {
+            statusNote = if (!resolvedOnline) {
                 "Offline — download this audio to listen without internet"
             } else {
                 "Unable to prepare audio file"

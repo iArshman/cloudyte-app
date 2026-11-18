@@ -115,7 +115,6 @@ class BackupWorker(
         val context = applicationContext
         SyncLogger.init(context)
         UserPreferences.migrateIfNeeded(context)
-        trySetForeground(createForegroundInfo(context, "Preparing backup…", 0, 0))
 
         val isManual = inputData.getBoolean("is_manual", false)
         val operationType = if (isManual) "MANUAL_BACKUP" else "BACKUP"
@@ -175,6 +174,7 @@ class BackupWorker(
             return Result.failure()
         }
 
+        trySetForeground(createForegroundInfo(context, "Preparing backup…", 0, 0))
         val exclusions = db.exclusionDao().getEnabledExclusions()
         val syncModeLabel = if (forceReupload) "Force Re-upload All" else "Smart Sync (New & Modified Only)"
         SyncLogger.log(

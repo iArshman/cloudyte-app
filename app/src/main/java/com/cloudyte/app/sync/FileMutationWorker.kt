@@ -26,39 +26,43 @@ class FileMutationWorker(context: Context, params: WorkerParameters) : Coroutine
     override suspend fun doWork(): Result {
         val database = AppDatabase.getDatabase(applicationContext)
         val dao = database.fileMutationDao()
-        val repository = CloudFileRepository(database, ApiClient.apiService)
+        val repository = (applicationContext as? com.cloudyte.app.CloudyteApplication)?.container?.cloudFileRepository
+            ?: CloudFileRepository(database, ApiClient.apiService)
         var hasRetryableWork = false
 
         // The list is account-grouped and creation-ordered. Processing it serially preserves
         // mutation order and guarantees no two operations for one remote file overlap.
         for (mutation in dao.pendingDue()) {
+            if (isStopped) {
+                hasRetryableWork = true
+                break
+            }
             if (dao.claim(mutation.operationId) != 1) continue
             try {
-                val response = when (mutation.operation) {
-                    LocalFileMutation.RENAME -> ApiClient.apiService.renameFile(
-                        mutation.remoteFileId ?: mutation.fileId ?: throw IllegalArgumentException("Missing remote file id"),
-                        mutation.accountId,
-                        RenameRequest(mutation.name ?: throw IllegalArgumentException("Missing name"))
-                    )
-                    LocalFileMutation.DELETE -> ApiClient.apiService.deleteFile(
-                        mutation.remoteFileId ?: mutation.fileId ?: throw IllegalArgumentException("Missing remote file id"),
-                        mutation.accountId
-                    )
-                    LocalFileMutation.CREATE_FOLDER -> ApiClient.apiService.createFolder(
-                        mutation.accountId,
-                        FolderRequest(
-                            mutation.name ?: throw IllegalArgumentException("Missing folder name"),
-                            mutation.parentFolderId.takeUnless { it == "root" }
-                        )
-                    )
-                    else -> {
-                        dao.markPermanent(mutation.operationId, "Unsupported queued operation", "UNSUPPORTED_OPERATION")
-                        rollbackOptimisticProjection(database, mutation)
+                var response = executeMutationRequest(mutation)
+                var status = response.code()
+
+                if (status == 429) {
+                    val retryAfterSec = response.headers()["Retry-After"]?.trim()?.toLongOrNull()
+                    if (retryAfterSec != null && retryAfterSec in 1L..60L) {
+                        var remainingMs = retryAfterSec * 1000L
+                        while (remainingMs > 0L && !isStopped) {
+                            val chunk = minOf(remainingMs, 1_000L)
+                            kotlinx.coroutines.delay(chunk)
+                            remainingMs -= chunk
+                        }
+                        if (!isStopped) {
+                            response = executeMutationRequest(mutation)
+                            status = response.code()
+                        }
+                    } else if (retryAfterSec != null && retryAfterSec > 60L) {
+                        val nextAt = System.currentTimeMillis() + (retryAfterSec.coerceAtMost(6L * 60L * 60L) * 1000L)
+                        dao.recordRetry(mutation.operationId, "HTTP 429", "HTTP_429", nextAt)
+                        hasRetryableWork = true
                         continue
                     }
                 }
 
-                val status = response.code()
                 when {
                     response.isSuccessful || (mutation.operation == LocalFileMutation.DELETE && status == 404) -> {
                         dao.remove(mutation.operationId)
@@ -80,7 +84,13 @@ class FileMutationWorker(context: Context, params: WorkerParameters) : Coroutine
                         refreshFolder(repository, mutation)
                     }
                     else -> {
-                        dao.recordRetry(mutation.operationId, "HTTP $status", "HTTP_$status", nextAttemptAt(mutation.attemptCount))
+                        val retryAt = if (status == 429) {
+                            val sec = response.headers()["Retry-After"]?.trim()?.toLongOrNull()?.coerceIn(1L, 6L * 60L * 60L)
+                            if (sec != null) System.currentTimeMillis() + sec * 1000L else nextAttemptAt(mutation.attemptCount)
+                        } else {
+                            nextAttemptAt(mutation.attemptCount)
+                        }
+                        dao.recordRetry(mutation.operationId, "HTTP $status", "HTTP_$status", retryAt)
                         hasRetryableWork = true
                     }
                 }
@@ -92,12 +102,39 @@ class FileMutationWorker(context: Context, params: WorkerParameters) : Coroutine
             } catch (e: IOException) {
                 dao.recordRetry(mutation.operationId, e.message ?: "Network error", "NETWORK", nextAttemptAt(mutation.attemptCount))
                 hasRetryableWork = true
+            } catch (e: UnsupportedOperationMutationException) {
+                dao.markPermanent(mutation.operationId, "Unsupported queued operation", "UNSUPPORTED_OPERATION")
+                rollbackOptimisticProjection(database, mutation)
             } catch (e: Exception) {
                 dao.markPermanent(mutation.operationId, e.message ?: "Invalid mutation", "INVALID_MUTATION")
                 rollbackOptimisticProjection(database, mutation)
             }
         }
         return if (hasRetryableWork) Result.retry() else Result.success()
+    }
+
+    private class UnsupportedOperationMutationException : IllegalStateException("Unsupported queued operation")
+
+    private suspend fun executeMutationRequest(mutation: LocalFileMutation): retrofit2.Response<*> {
+        return when (mutation.operation) {
+            LocalFileMutation.RENAME -> ApiClient.apiService.renameFile(
+                mutation.remoteFileId ?: mutation.fileId ?: throw IllegalArgumentException("Missing remote file id"),
+                mutation.accountId,
+                RenameRequest(mutation.name ?: throw IllegalArgumentException("Missing name"))
+            )
+            LocalFileMutation.DELETE -> ApiClient.apiService.deleteFile(
+                mutation.remoteFileId ?: mutation.fileId ?: throw IllegalArgumentException("Missing remote file id"),
+                mutation.accountId
+            )
+            LocalFileMutation.CREATE_FOLDER -> ApiClient.apiService.createFolder(
+                mutation.accountId,
+                FolderRequest(
+                    mutation.name ?: throw IllegalArgumentException("Missing folder name"),
+                    mutation.parentFolderId.takeUnless { it == "root" }
+                )
+            )
+            else -> throw UnsupportedOperationMutationException()
+        }
     }
 
     private suspend fun refreshFolder(repository: CloudFileRepository, mutation: LocalFileMutation) {

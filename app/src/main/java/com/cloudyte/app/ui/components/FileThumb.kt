@@ -22,8 +22,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -72,7 +72,7 @@ fun FileThumb(
         with(density) { sizeDp.roundToPx().coerceIn(64, 512) }
     }
     val app = context.applicationContext as? CloudyteApplication
-    val downloadedFiles by OfflineFileManager.downloadedFiles.collectAsState()
+    val downloadedFiles by OfflineFileManager.downloadedFiles.collectAsStateWithLifecycle()
     val isDownloadedOffline = file.effectiveId in downloadedFiles
 
     var dbAccountId by remember(file.effectiveId) { mutableStateOf("") }

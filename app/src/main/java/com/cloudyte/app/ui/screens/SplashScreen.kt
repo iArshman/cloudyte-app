@@ -36,6 +36,7 @@ import com.cloudyte.app.ui.theme.cloudyteColors
 @Composable
 fun SplashScreen(navController: NavController) {
     LaunchedEffect(Unit) {
+        ApiClient.awaitInitialized()
         val token = ApiClient.getToken()
         if (!token.isNullOrEmpty()) {
             try {

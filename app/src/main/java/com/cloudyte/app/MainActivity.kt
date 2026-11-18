@@ -61,7 +61,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
@@ -70,13 +69,21 @@ class MainActivity : ComponentActivity() {
     private val pendingShareIntentState = MutableStateFlow<Intent?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        installSplashScreen()
+        val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
 
-        val initialPrefs = runBlocking {
-            UserPreferences.migrateIfNeeded(this@MainActivity)
-            runCatching { UserPreferences.observe(this@MainActivity).first() }
-                .getOrDefault(UserPreferencesState())
+        val startupReadyState = MutableStateFlow(false)
+        val initialPrefsState = MutableStateFlow(UserPreferencesState())
+        splashScreen.setKeepOnScreenCondition { !startupReadyState.value }
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            runCatching {
+                UserPreferences.migrateIfNeeded(this@MainActivity)
+                val loaded = UserPreferences.observe(this@MainActivity).first()
+                initialPrefsState.value = loaded
+            }
+            runCatching { ApiClient.awaitInitialized() }
+            startupReadyState.value = true
         }
 
         if (savedInstanceState == null && isShareIntent(intent)) {
@@ -86,6 +93,8 @@ class MainActivity : ComponentActivity() {
 
         enableEdgeToEdge()
         setContent {
+            val startupReady by startupReadyState.collectAsStateWithLifecycle()
+            val initialPrefs by initialPrefsState.collectAsStateWithLifecycle()
             val prefs by UserPreferences.observe(this).collectAsStateWithLifecycle(initialValue = initialPrefs)
             val pendingShareIntent by pendingShareIntentState.collectAsStateWithLifecycle()
 
@@ -108,16 +117,24 @@ class MainActivity : ComponentActivity() {
             var lastBackgroundMs by remember { mutableLongStateOf(0L) }
             var isLocked by remember { mutableStateOf(initialPrefs.appLockEnabled) }
 
+            LaunchedEffect(startupReady, initialPrefs.appLockEnabled) {
+                if (startupReady && initialPrefs.appLockEnabled && lastBackgroundMs == 0L) {
+                    isLocked = true
+                }
+            }
+
             LaunchedEffect(prefs.appLockEnabled) {
                 if (!prefs.appLockEnabled) {
                     isLocked = false
                 }
             }
 
-            LaunchedEffect(pendingShareIntent, isLocked, prefs.appLockEnabled) {
+            LaunchedEffect(pendingShareIntent, isLocked, prefs.appLockEnabled, startupReady) {
+                if (!startupReady) return@LaunchedEffect
                 val share = pendingShareIntent ?: return@LaunchedEffect
                 if (isLocked && prefs.appLockEnabled) return@LaunchedEffect
                 pendingShareIntentState.value = null
+                ApiClient.awaitInitialized()
                 if (ApiClient.getToken().isNullOrBlank()) {
                     Toast.makeText(
                         this@MainActivity,
