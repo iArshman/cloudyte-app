@@ -367,13 +367,14 @@ fun DriveItemActionSheet(
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val ext = com.cloudyte.app.ui.theme.LocalCloudyteColors.current
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        shape = RoundedCornerShape(topStart = 40.dp, topEnd = 40.dp),
+        shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        modifier = Modifier.padding(top = 36.dp),
         dragHandle = {
             Box(
                 modifier = Modifier
@@ -391,20 +392,20 @@ fun DriveItemActionSheet(
                 .navigationBarsPadding()
                 .padding(bottom = 20.dp)
         ) {
-            // Header with Thumbnail + Metadata
+            // Compact Header Row: Thumbnail + Title/Subtitle + Small Info Icon Button (Zero extra row gap)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 8.dp)
+                    .padding(start = 20.dp, end = 12.dp, top = 4.dp, bottom = 4.dp)
             ) {
                 FileThumb(
                     file = file,
                     accountId = accountId,
-                    sizeDp = 48.dp,
-                    cornerRadius = 12.dp
+                    sizeDp = 44.dp,
+                    cornerRadius = 10.dp
                 )
-                Spacer(modifier = Modifier.width(14.dp))
+                Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = file.effectiveName,
@@ -414,7 +415,7 @@ fun DriveItemActionSheet(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Spacer(modifier = Modifier.height(3.dp))
+                    Spacer(modifier = Modifier.height(2.dp))
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -426,7 +427,7 @@ fun DriveItemActionSheet(
                         }
                         Text(
                             text = subtitle,
-                            style = MaterialTheme.typography.bodySmall,
+                            style = com.cloudyte.app.ui.theme.MetricLabelTextStyle,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         if (isOfflinePinned && !file.isFolderItem) {
@@ -455,13 +456,24 @@ fun DriveItemActionSheet(
                         }
                     }
                 }
+                androidx.compose.material3.IconButton(
+                    onClick = { onDismiss(); onQuickInfo() },
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = "Info",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
 
             if (offlineDownloadProgress != null) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 8.dp)
+                        .padding(horizontal = 20.dp, vertical = 6.dp)
                 ) {
                     Text(
                         text = "Saving for offline access… ${(offlineDownloadProgress * 100).toInt()}%",
@@ -476,50 +488,6 @@ fun DriveItemActionSheet(
                         trackColor = MaterialTheme.colorScheme.surfaceVariant
                     )
                 }
-            }
-
-            // Quick Action Bar (Google Drive style)
-            if (!file.isFolderItem) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    QuickActionPill(
-                        icon = Icons.Default.Share,
-                        label = "Share",
-                        onClick = {
-                            onDismiss()
-                            if (file.isEncrypted) {
-                                if (onSendFileCopy != null) onSendFileCopy()
-                                else coroutineScope.launch {
-                                    com.cloudyte.app.features.player.performSendFileCopy(context, accountId, file)
-                                }
-                            } else {
-                                onShare()
-                            }
-                        }
-                    )
-                    QuickActionPill(
-                        icon = if (isOfflinePinned) Icons.Default.DownloadDone else Icons.Default.OfflinePin,
-                        label = if (isOfflinePinned) "Pinned" else "Offline",
-                        highlighted = isOfflinePinned,
-                        onClick = { onDismiss(); onToggleOffline() }
-                    )
-                    QuickActionPill(
-                        icon = Icons.Default.Download,
-                        label = "Export",
-                        onClick = { onDismiss(); onDownload() }
-                    )
-                    QuickActionPill(
-                        icon = Icons.Default.Info,
-                        label = "Info",
-                        onClick = { onDismiss(); onQuickInfo() }
-                    )
-                }
-                Spacer(modifier = Modifier.height(8.dp))
             }
 
             HorizontalDivider(

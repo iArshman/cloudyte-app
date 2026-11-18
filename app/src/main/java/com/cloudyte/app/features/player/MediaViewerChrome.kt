@@ -281,12 +281,13 @@ fun GDriveActionsBottomSheet(
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = ViewerSheetContainer,
-        contentColor = Color.White
+        contentColor = Color.White,
+        modifier = Modifier.padding(top = 36.dp)
     ) {
         Column(
             modifier = Modifier
