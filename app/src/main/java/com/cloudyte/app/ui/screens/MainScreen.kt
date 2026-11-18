@@ -93,6 +93,49 @@ fun MainScreen(rootNavController: NavController) {
     val currentRoute = navBackStackEntry?.destination?.route ?: "home"
     var isSettingsInSubScreen by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
 
+    val app = context.applicationContext as? com.cloudyte.app.CloudyteApplication
+    val activeTransfers by remember(app) {
+        app?.container?.transferCoordinator?.observeActiveTransfers()
+            ?: kotlinx.coroutines.flow.flowOf(emptyList())
+    }.collectAsStateWithLifecycle(initialValue = emptyList())
+
+    val activeTransferSummary = remember(activeTransfers) {
+        val runningOrPending = activeTransfers.filter {
+            it.status == TransferStatus.RUNNING.name ||
+                it.status == TransferStatus.PENDING.name
+        }
+        if (runningOrPending.isEmpty()) {
+            null
+        } else {
+            val hasUpload = runningOrPending.any { it.direction.equals("UPLOAD", ignoreCase = true) }
+            val hasDownload = runningOrPending.any { !it.direction.equals("UPLOAD", ignoreCase = true) }
+            val direction = when {
+                hasUpload && hasDownload -> com.cloudyte.app.ui.components.ActiveTransferDirection.BOTH
+                hasDownload -> com.cloudyte.app.ui.components.ActiveTransferDirection.DOWNLOAD
+                else -> com.cloudyte.app.ui.components.ActiveTransferDirection.UPLOAD
+            }
+            val totalBytesSum = runningOrPending.sumOf { it.totalBytes.coerceAtLeast(0L) }
+            val transferredBytesSum = runningOrPending.sumOf {
+                it.bytesTransferred.coerceIn(0L, it.totalBytes.coerceAtLeast(it.bytesTransferred).coerceAtLeast(0L))
+            }
+            val progress = if (totalBytesSum > 0L) {
+                (transferredBytesSum.toFloat() / totalBytesSum.toFloat()).coerceIn(0f, 1f)
+            } else {
+                val primary = runningOrPending.first()
+                if (primary.totalBytes > 0L) {
+                    (primary.bytesTransferred.toFloat() / primary.totalBytes.toFloat()).coerceIn(0f, 1f)
+                } else {
+                    0.05f
+                }
+            }
+            com.cloudyte.app.ui.components.ActiveTransferSummary(
+                direction = direction,
+                progress = progress,
+                activeCount = runningOrPending.size
+            )
+        }
+    }
+
     val isHomeLoading = currentRoute == "home" && !hasInitialContent
     val hideBottomBar = isHomeLoading ||
         (currentRoute == "settings" && isSettingsInSubScreen) ||
@@ -122,12 +165,45 @@ fun MainScreen(rootNavController: NavController) {
                         ) {
                             Spacer(modifier = Modifier.weight(0.2f))
                             railItems.forEach { item ->
+                                val isTransfersItem = item.route == "transfers"
+                                val summary = if (isTransfersItem) activeTransferSummary else null
                                 NavigationRailItem(
                                     selected = currentRoute == item.route,
                                     onClick = { bottomNavController.navigateSingleTopRestore(item.route) },
-                                    icon = { Icon(item.icon, contentDescription = item.label) },
+                                    icon = {
+                                        if (summary != null) {
+                                            Box(
+                                                contentAlignment = Alignment.Center,
+                                                modifier = Modifier.size(28.dp)
+                                            ) {
+                                                androidx.compose.material3.CircularProgressIndicator(
+                                                    progress = { summary.progress.coerceIn(0.05f, 1f) },
+                                                    modifier = Modifier.size(28.dp),
+                                                    strokeWidth = 2.2.dp
+                                                )
+                                                Icon(
+                                                    imageVector = when (summary.direction) {
+                                                        com.cloudyte.app.ui.components.ActiveTransferDirection.UPLOAD -> Icons.Default.Upload
+                                                        com.cloudyte.app.ui.components.ActiveTransferDirection.DOWNLOAD -> Icons.Default.Download
+                                                        com.cloudyte.app.ui.components.ActiveTransferDirection.BOTH -> Icons.Default.SwapVert
+                                                    },
+                                                    contentDescription = item.label,
+                                                    modifier = Modifier.size(15.dp)
+                                                )
+                                            }
+                                        } else {
+                                            Icon(item.icon, contentDescription = item.label)
+                                        }
+                                    },
                                     label = if (prefsState.showNavText) {
-                                        { Text(item.label, style = MaterialTheme.typography.labelMedium) }
+                                        {
+                                            if (summary != null) {
+                                                val pct = (summary.progress * 100f).roundToInt().coerceIn(0, 100)
+                                                Text("$pct%", style = com.cloudyte.app.ui.theme.MetricLabelTextStyle)
+                                            } else {
+                                                Text(item.label, style = MaterialTheme.typography.labelMedium)
+                                            }
+                                        }
                                     } else null,
                                     modifier = Modifier.testTag("nav_item_${item.route}")
                                 )
@@ -166,26 +242,19 @@ fun MainScreen(rootNavController: NavController) {
                         modifier = Modifier.fillMaxSize()
                     )
 
-                    androidx.compose.foundation.layout.Column(
+                    FloatingNavigationBar(
+                        navController = bottomNavController,
+                        visible = !hideBottomBar,
+                        showNavText = prefsState.showNavText,
+                        activeTransferSummary = activeTransferSummary,
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
                             .padding(bottom = 2.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        if (!hideBottomBar) {
-                            ActiveTransferPill(navController = bottomNavController)
+                        onNavigate = { route ->
+                            bottomNavController.navigateSingleTopRestore(route)
                         }
-                        FloatingNavigationBar(
-                            navController = bottomNavController,
-                            visible = !hideBottomBar,
-                            showNavText = prefsState.showNavText,
-                            modifier = Modifier.fillMaxWidth(),
-                            onNavigate = { route ->
-                                bottomNavController.navigateSingleTopRestore(route)
-                            }
-                        )
-                    }
+                    )
                 }
             }
         }
@@ -251,79 +320,6 @@ private fun MainNavHost(
                 rootNavController = rootNavController,
                 onSubScreenChanged = onSettingsSubScreenChanged
             )
-        }
-    }
-}
-
-@Composable
-private fun ActiveTransferPill(navController: NavController) {
-    val context = LocalContext.current
-    val app = context.applicationContext as? com.cloudyte.app.CloudyteApplication ?: return
-    val coordinator = app.container.transferCoordinator
-    val activeTransfers by coordinator.observeActiveTransfers().collectAsStateWithLifecycle(initialValue = emptyList())
-    val currentEntry by navController.currentBackStackEntryAsState()
-    val currentRoute = currentEntry?.destination?.route
-
-    val firstActive = activeTransfers.firstOrNull {
-        it.status == com.cloudyte.app.db.TransferStatus.RUNNING.name ||
-        it.status == com.cloudyte.app.db.TransferStatus.PENDING.name
-    }
-
-    androidx.compose.animation.AnimatedVisibility(
-        visible = firstActive != null && currentRoute != "transfers",
-        enter = androidx.compose.animation.slideInVertically { it } + androidx.compose.animation.fadeIn(),
-        exit = androidx.compose.animation.slideOutVertically { it } + androidx.compose.animation.fadeOut(),
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
-    ) {
-        if (firstActive != null) {
-            val progress = if (firstActive.totalBytes > 0) {
-                (firstActive.bytesTransferred.toFloat() / firstActive.totalBytes.toFloat()).coerceIn(0f, 1f)
-            } else 0f
-            val percent = (progress * 100f).roundToInt()
-            val typeLabel = if (firstActive.direction == "UPLOAD") "Uploading" else "Downloading"
-
-            androidx.compose.material3.Surface(
-                shape = RoundedCornerShape(24.dp),
-                color = MaterialTheme.colorScheme.primaryContainer,
-                tonalElevation = 6.dp,
-                shadowElevation = 8.dp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .clip(RoundedCornerShape(24.dp))
-                    .clickable { navController.navigateSingleTopRestore("transfers") }
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Icon(
-                        imageVector = if (firstActive.direction == "UPLOAD") Icons.Default.Upload else Icons.Default.Download,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Text(
-                        text = "$typeLabel ${firstActive.fileName}",
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Text(
-                        text = "$percent%",
-                        style = com.cloudyte.app.ui.theme.MetricTextStyle,
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        fontWeight = FontWeight.ExtraBold
-                    )
-                }
-            }
         }
     }
 }

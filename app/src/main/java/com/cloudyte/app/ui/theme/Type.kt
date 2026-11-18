@@ -23,29 +23,29 @@ val JetBrainsMonoFontFamily = FontFamily(
     Font(R.font.jetbrains_mono, FontWeight.Bold)
 )
 
-/** Tabular numeral style for storage stats, transfer speeds, file sizes, and counts. */
+/** Tabular numeral monospace style for storage stats, transfer speeds, file sizes, timestamps, and counts. */
 val MetricTextStyle = TextStyle(
-    fontFamily = RobotoFlexFontFamily,
-    fontWeight = FontWeight.SemiBold,
-    fontSize = 14.sp,
-    lineHeight = 20.sp,
+    fontFamily = JetBrainsMonoFontFamily,
+    fontWeight = FontWeight.Medium,
+    fontSize = 13.sp,
+    lineHeight = 18.sp,
     fontFeatureSettings = "tnum"
 )
 
 val MetricLargeTextStyle = TextStyle(
-    fontFamily = RobotoFlexFontFamily,
-    fontWeight = FontWeight.ExtraBold,
-    fontSize = 24.sp,
+    fontFamily = JetBrainsMonoFontFamily,
+    fontWeight = FontWeight.Bold,
+    fontSize = 23.sp,
     lineHeight = 28.sp,
     letterSpacing = (-0.5).sp,
     fontFeatureSettings = "tnum"
 )
 
 val MetricLabelTextStyle = TextStyle(
-    fontFamily = RobotoFlexFontFamily,
+    fontFamily = JetBrainsMonoFontFamily,
     fontWeight = FontWeight.Medium,
-    fontSize = 12.sp,
-    lineHeight = 16.sp,
+    fontSize = 11.sp,
+    lineHeight = 15.sp,
     fontFeatureSettings = "tnum"
 )
 

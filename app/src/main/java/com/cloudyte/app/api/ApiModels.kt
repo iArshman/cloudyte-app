@@ -324,18 +324,18 @@ data class CloudFile(
         }
     
     val formattedSize: String get() {
-        if (!isEncrypted && size is String && size.contains(Regex("[a-zA-Z]"))) return size.toString()
         val s = sizeBytes
-        if (s == 0L) return "0 B"
-        return formatByteCount(s)
+        if (s > 0L) return formatByteCount(s)
+        if (!isEncrypted && size is String && size.contains(Regex("[a-zA-Z]"))) return size.toString()
+        return "0 B"
     }
 }
 
 fun formatByteCount(bytes: Long): String {
     if (bytes <= 0L) return "0 B"
     return when {
-        bytes >= 1024L * 1024 * 1024 * 1024 -> String.format(Locale.US, "%.1f TB", bytes.toDouble() / (1024L * 1024 * 1024 * 1024))
-        bytes >= 1024L * 1024 * 1024 -> String.format(Locale.US, "%.1f GB", bytes.toDouble() / (1024L * 1024 * 1024))
+        bytes >= 1024L * 1024 * 1024 * 1024 -> String.format(Locale.US, "%.2f TB", bytes.toDouble() / (1024L * 1024 * 1024 * 1024))
+        bytes >= 1024L * 1024 * 1024 -> String.format(Locale.US, "%.2f GB", bytes.toDouble() / (1024L * 1024 * 1024))
         bytes >= 1024L * 1024 -> String.format(Locale.US, "%.1f MB", bytes.toDouble() / (1024L * 1024))
         bytes >= 1024 -> String.format(Locale.US, "%.1f KB", bytes.toDouble() / 1024)
         else -> "$bytes B"

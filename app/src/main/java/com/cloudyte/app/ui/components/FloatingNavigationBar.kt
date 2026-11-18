@@ -27,6 +27,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
@@ -35,6 +37,7 @@ import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.SwapVert
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -48,6 +51,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -61,9 +65,23 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import androidx.navigation.compose.currentBackStackEntryAsState
 import com.cloudyte.app.R
+import com.cloudyte.app.ui.theme.MetricLabelTextStyle
 import com.cloudyte.app.ui.theme.cloudyteColors
+import kotlin.math.roundToInt
 
 val LocalBottomBarInset = staticCompositionLocalOf { 0.dp }
+
+enum class ActiveTransferDirection {
+    UPLOAD,
+    DOWNLOAD,
+    BOTH
+}
+
+data class ActiveTransferSummary(
+    val direction: ActiveTransferDirection,
+    val progress: Float,
+    val activeCount: Int
+)
 
 data class FloatingNavItem(
     val route: String,
@@ -77,6 +95,7 @@ fun FloatingNavigationBar(
     navController: NavController,
     visible: Boolean = true,
     showNavText: Boolean = true,
+    activeTransferSummary: ActiveTransferSummary? = null,
     modifier: Modifier = Modifier,
     onNavigate: ((String) -> Unit)? = null
 ) {
@@ -90,6 +109,7 @@ fun FloatingNavigationBar(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route ?: "home"
     val selectedIndex = items.indexOfFirst { it.route == currentRoute }
+    val ext = MaterialTheme.cloudyteColors
 
     AnimatedVisibility(
         visible = visible,
@@ -105,8 +125,8 @@ fun FloatingNavigationBar(
             shape = CircleShape,
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)),
-            tonalElevation = 6.dp,
-            shadowElevation = 16.dp
+            tonalElevation = 4.dp,
+            shadowElevation = 8.dp
         ) {
             Row(
                 modifier = Modifier
@@ -118,22 +138,75 @@ fun FloatingNavigationBar(
             ) {
                 items.forEachIndexed { index, item ->
                     val isSelected = index == selectedIndex
+                    val isTransfersTab = item.route == "transfers"
+                    val hasActiveTransfer = isTransfersTab && activeTransferSummary != null
+
+                    val targetWeight = when {
+                        isSelected && showNavText -> 2.25f
+                        hasActiveTransfer -> 1.45f
+                        else -> 1f
+                    }
                     val itemWeight by animateFloatAsState(
-                        targetValue = if (isSelected && showNavText) 2.25f else 1f,
+                        targetValue = targetWeight,
                         animationSpec = spring(
                             dampingRatio = Spring.DampingRatioNoBouncy,
                             stiffness = Spring.StiffnessMediumLow
                         ),
                         label = "navItemWeight_${item.route}"
                     )
+
+                    val transferTint = when (activeTransferSummary?.direction) {
+                        ActiveTransferDirection.DOWNLOAD -> ext.mintSuccess
+                        ActiveTransferDirection.UPLOAD,
+                        ActiveTransferDirection.BOTH,
+                        null -> MaterialTheme.colorScheme.primary
+                    }
+
                     val pillColor by animateColorAsState(
-                        targetValue = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                        targetValue = when {
+                            isSelected -> MaterialTheme.colorScheme.primary
+                            hasActiveTransfer -> transferTint.copy(alpha = 0.14f)
+                            else -> Color.Transparent
+                        },
                         label = "navPillColor_${item.route}"
                     )
-                    val contentColor = if (isSelected) {
-                        MaterialTheme.colorScheme.onPrimary
+
+                    val contentColor = when {
+                        isSelected -> MaterialTheme.colorScheme.onPrimary
+                        hasActiveTransfer -> if (activeTransferSummary?.direction == ActiveTransferDirection.DOWNLOAD) {
+                            ext.mintSuccess
+                        } else {
+                            ext.lightAccent
+                        }
+                        else -> ext.navInactive
+                    }
+
+                    val resolvedIcon = if (hasActiveTransfer) {
+                        when (activeTransferSummary?.direction) {
+                            ActiveTransferDirection.UPLOAD -> Icons.Filled.ArrowUpward
+                            ActiveTransferDirection.DOWNLOAD -> Icons.Filled.ArrowDownward
+                            ActiveTransferDirection.BOTH, null -> Icons.Filled.SwapVert
+                        }
+                    } else if (isSelected) {
+                        item.selectedIcon
                     } else {
-                        MaterialTheme.cloudyteColors.navInactive
+                        item.icon
+                    }
+
+                    val animatedProgress by animateFloatAsState(
+                        targetValue = (activeTransferSummary?.progress ?: 0f).coerceIn(0.04f, 1f),
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioNoBouncy,
+                            stiffness = Spring.StiffnessLow
+                        ),
+                        label = "transferNavRingProgress"
+                    )
+                    val percentValue = ((activeTransferSummary?.progress ?: 0f) * 100f).roundToInt().coerceIn(0, 100)
+                    val directionSymbol = when (activeTransferSummary?.direction) {
+                        ActiveTransferDirection.UPLOAD -> "↑"
+                        ActiveTransferDirection.DOWNLOAD -> "↓"
+                        ActiveTransferDirection.BOTH -> "⇅"
+                        null -> ""
                     }
 
                     Row(
@@ -151,20 +224,53 @@ fun FloatingNavigationBar(
                                     onNavigate?.invoke(item.route)
                                 }
                             }
-                            .padding(horizontal = if (isSelected) 12.dp else 4.dp)
-                            .semantics { contentDescription = item.label }
+                            .padding(horizontal = if (isSelected || hasActiveTransfer) 10.dp else 4.dp)
+                            .semantics {
+                                contentDescription = if (hasActiveTransfer) {
+                                    "${item.label} $directionSymbol $percentValue%"
+                                } else {
+                                    item.label
+                                }
+                            }
                             .testTag("nav_item_${item.route}"),
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = if (isSelected) item.selectedIcon else item.icon,
-                            contentDescription = null,
-                            tint = contentColor,
-                            modifier = Modifier.size(22.dp)
-                        )
+                        if (hasActiveTransfer) {
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier.size(30.dp)
+                            ) {
+                                CircularProgressIndicator(
+                                    progress = { animatedProgress },
+                                    modifier = Modifier.size(30.dp),
+                                    color = if (isSelected) MaterialTheme.colorScheme.onPrimary else contentColor,
+                                    trackColor = if (isSelected) {
+                                        MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.25f)
+                                    } else {
+                                        contentColor.copy(alpha = 0.22f)
+                                    },
+                                    strokeWidth = 2.4.dp,
+                                    strokeCap = StrokeCap.Round
+                                )
+                                Icon(
+                                    imageVector = resolvedIcon,
+                                    contentDescription = null,
+                                    tint = contentColor,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        } else {
+                            Icon(
+                                imageVector = resolvedIcon,
+                                contentDescription = null,
+                                tint = contentColor,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+
                         AnimatedVisibility(
-                            visible = isSelected && showNavText,
+                            visible = (isSelected && showNavText) || hasActiveTransfer,
                             enter = fadeIn() + expandHorizontally(
                                 animationSpec = spring(
                                     dampingRatio = Spring.DampingRatioNoBouncy,
@@ -180,16 +286,32 @@ fun FloatingNavigationBar(
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = item.label,
-                                    color = contentColor,
-                                    fontSize = 13.sp,
-                                    lineHeight = 16.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                                if (hasActiveTransfer) {
+                                    Text(
+                                        text = if (isSelected && showNavText) {
+                                            "$directionSymbol $percentValue%"
+                                        } else {
+                                            "$percentValue%"
+                                        },
+                                        color = contentColor,
+                                        style = MetricLabelTextStyle,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Clip
+                                    )
+                                } else {
+                                    Text(
+                                        text = item.label,
+                                        color = contentColor,
+                                        fontSize = 13.sp,
+                                        lineHeight = 16.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             }
                         }
                     }
@@ -198,3 +320,4 @@ fun FloatingNavigationBar(
         }
     }
 }
+
