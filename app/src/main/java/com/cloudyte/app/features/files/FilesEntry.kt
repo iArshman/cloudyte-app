@@ -7,7 +7,24 @@ import com.cloudyte.app.ui.screens.FilesScreen as LegacyFilesScreen
 typealias FilesViewModel = com.cloudyte.app.ui.screens.FilesViewModel
 
 @Composable
-fun FilesScreen(navController: NavController, rootNavController: NavController, viewModel: FilesViewModel? = null) {
-    if (viewModel == null) LegacyFilesScreen(navController, rootNavController)
-    else LegacyFilesScreen(navController, rootNavController, viewModel)
+fun FilesScreen(
+    navController: NavController,
+    rootNavController: NavController,
+    viewModel: FilesViewModel? = null,
+    onHeaderTintChange: (Boolean) -> Unit = {}
+) {
+    if (viewModel == null) {
+        LegacyFilesScreen(
+            navController = navController,
+            rootNavController = rootNavController,
+            onHeaderTintChange = onHeaderTintChange
+        )
+    } else {
+        LegacyFilesScreen(
+            navController = navController,
+            rootNavController = rootNavController,
+            viewModel = viewModel,
+            onHeaderTintChange = onHeaderTintChange
+        )
+    }
 }
