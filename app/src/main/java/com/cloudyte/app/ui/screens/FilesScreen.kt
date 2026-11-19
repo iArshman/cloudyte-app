@@ -130,6 +130,7 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
@@ -1124,7 +1125,8 @@ class FilesViewModel(
 fun FilesScreen(
     navController: NavController,
     rootNavController: NavController,
-    viewModel: FilesViewModel = viewModel()
+    viewModel: FilesViewModel = viewModel(),
+    onHeaderTintChange: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -1154,6 +1156,14 @@ fun FilesScreen(
 
     var selectedFileIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     val isSelectionMode = selectedFileIds.isNotEmpty()
+    val showStickyHeader = isSelectionMode || (currentFolderId == null && breadcrumbs.size <= 1)
+
+    LaunchedEffect(showStickyHeader) {
+        onHeaderTintChange(showStickyHeader)
+    }
+    DisposableEffect(Unit) {
+        onDispose { onHeaderTintChange(false) }
+    }
 
     fun toggleSelection(fileId: String) {
         selectedFileIds = if (selectedFileIds.contains(fileId)) {
@@ -1680,129 +1690,136 @@ fun FilesScreen(
             if (isSelectionMode) {
                 val hasDownloadableFiles = selectedFilesList.any { !it.isFolderItem }
                 val hasUnencryptedItems = selectedFilesList.any { !it.isEncrypted }
-                TopAppBar(
-                    title = {
-                        Text(
-                            text = "${selectedFileIds.size} selected",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = { selectedFileIds = emptySet() }) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Clear selection",
-                                tint = MaterialTheme.colorScheme.onSurface
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    shadowElevation = 3.dp
+                ) {
+                    TopAppBar(
+                        title = {
+                            Text(
+                                text = "${selectedFileIds.size} selected",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
                             )
-                        }
-                    },
-                    actions = {
-                        IconButton(onClick = {
-                            val allIds = filteredAndSortedFiles.map { it.effectiveId }.toSet()
-                            selectedFileIds = if (selectedFileIds.size == allIds.size) emptySet() else allIds
-                        }) {
-                            Icon(
-                                imageVector = Icons.Default.SelectAll,
-                                contentDescription = "Select all",
-                                tint = MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                        if (hasDownloadableFiles) {
-                            IconButton(onClick = {
-                                val targets = selectedFilesList
-                                selectedFileIds = emptySet()
-                                viewModel.downloadSelected(targets)
-                            }) {
+                        },
+                        navigationIcon = {
+                            IconButton(onClick = { selectedFileIds = emptySet() }) {
                                 Icon(
-                                    imageVector = Icons.Default.Download,
-                                    contentDescription = "Download selected",
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Clear selection",
                                     tint = MaterialTheme.colorScheme.onSurface
                                 )
                             }
-                        }
-                        if (hasUnencryptedItems) {
+                        },
+                        actions = {
                             IconButton(onClick = {
-                                val targets = selectedFilesList
-                                selectedFileIds = emptySet()
-                                viewModel.encryptSelected(targets)
+                                val allIds = filteredAndSortedFiles.map { it.effectiveId }.toSet()
+                                selectedFileIds = if (selectedFileIds.size == allIds.size) emptySet() else allIds
                             }) {
                                 Icon(
-                                    imageVector = Icons.Default.Lock,
-                                    contentDescription = "Encrypt selected",
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
-                        IconButton(onClick = {
-                            val toDelete = selectedFilesList.map { it.effectiveId }
-                            selectedFileIds = emptySet()
-                            viewModel.deleteSelected(toDelete)
-                        }) {
-                            Icon(
-                                imageVector = Icons.Default.Delete,
-                                contentDescription = "Delete selected",
-                                tint = MaterialTheme.colorScheme.error
-                            )
-                        }
-                        Box {
-                            IconButton(onClick = { showSelectionMoreMenu = true }) {
-                                Icon(
-                                    imageVector = Icons.Default.MoreVert,
-                                    contentDescription = "More batch actions",
+                                    imageVector = Icons.Default.SelectAll,
+                                    contentDescription = "Select all",
                                     tint = MaterialTheme.colorScheme.onSurface
                                 )
                             }
-                            DropdownMenu(
-                                expanded = showSelectionMoreMenu,
-                                onDismissRequest = { showSelectionMoreMenu = false },
-                                modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer)
-                            ) {
-                                if (hasDownloadableFiles) {
+                            if (hasDownloadableFiles) {
+                                IconButton(onClick = {
+                                    val targets = selectedFilesList
+                                    selectedFileIds = emptySet()
+                                    viewModel.downloadSelected(targets)
+                                }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Download,
+                                        contentDescription = "Download selected",
+                                        tint = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                            if (hasUnencryptedItems) {
+                                IconButton(onClick = {
+                                    val targets = selectedFilesList
+                                    selectedFileIds = emptySet()
+                                    viewModel.encryptSelected(targets)
+                                }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Lock,
+                                        contentDescription = "Encrypt selected",
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                            IconButton(onClick = {
+                                val toDelete = selectedFilesList.map { it.effectiveId }
+                                selectedFileIds = emptySet()
+                                viewModel.deleteSelected(toDelete)
+                            }) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "Delete selected",
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            }
+                            Box {
+                                IconButton(onClick = { showSelectionMoreMenu = true }) {
+                                    Icon(
+                                        imageVector = Icons.Default.MoreVert,
+                                        contentDescription = "More batch actions",
+                                        tint = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                                DropdownMenu(
+                                    expanded = showSelectionMoreMenu,
+                                    onDismissRequest = { showSelectionMoreMenu = false },
+                                    modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer)
+                                ) {
+                                    if (hasDownloadableFiles) {
+                                        DropdownMenuItem(
+                                            text = { Text("Make available offline", color = MaterialTheme.colorScheme.onSurface) },
+                                            leadingIcon = {
+                                                Icon(Icons.Default.OfflinePin, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                            },
+                                            onClick = {
+                                                showSelectionMoreMenu = false
+                                                val targets = selectedFilesList
+                                                selectedFileIds = emptySet()
+                                                viewModel.makeSelectedAvailableOffline(targets)
+                                            }
+                                        )
+                                    }
                                     DropdownMenuItem(
-                                        text = { Text("Make available offline", color = MaterialTheme.colorScheme.onSurface) },
+                                        text = { Text("Move to…", color = MaterialTheme.colorScheme.onSurface) },
                                         leadingIcon = {
-                                            Icon(Icons.Default.OfflinePin, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                            Icon(Icons.AutoMirrored.Filled.DriveFileMove, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                                         },
                                         onClick = {
                                             showSelectionMoreMenu = false
-                                            val targets = selectedFilesList
-                                            selectedFileIds = emptySet()
-                                            viewModel.makeSelectedAvailableOffline(targets)
+                                            batchMoveCopyIsMove = true
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Copy to…", color = MaterialTheme.colorScheme.onSurface) },
+                                        leadingIcon = {
+                                            Icon(Icons.Default.ContentCopy, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                        },
+                                        onClick = {
+                                            showSelectionMoreMenu = false
+                                            batchMoveCopyIsMove = false
                                         }
                                     )
                                 }
-                                DropdownMenuItem(
-                                    text = { Text("Move to…", color = MaterialTheme.colorScheme.onSurface) },
-                                    leadingIcon = {
-                                        Icon(Icons.AutoMirrored.Filled.DriveFileMove, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                                    },
-                                    onClick = {
-                                        showSelectionMoreMenu = false
-                                        batchMoveCopyIsMove = true
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Copy to…", color = MaterialTheme.colorScheme.onSurface) },
-                                    leadingIcon = {
-                                        Icon(Icons.Default.ContentCopy, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                                    },
-                                    onClick = {
-                                        showSelectionMoreMenu = false
-                                        batchMoveCopyIsMove = false
-                                    }
-                                )
                             }
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                        titleContentColor = MaterialTheme.colorScheme.onSurface,
-                        navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
-                        actionIconContentColor = MaterialTheme.colorScheme.onSurface
+                        },
+                        colors = TopAppBarDefaults.topAppBarColors(
+                            containerColor = Color.Transparent,
+                            titleContentColor = MaterialTheme.colorScheme.onSurface,
+                            navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+                            actionIconContentColor = MaterialTheme.colorScheme.onSurface
+                        )
                     )
-                )
+                }
             } else if (currentFolderId == null && breadcrumbs.size <= 1) {
                 OriginalFilesHeaderBar(
                     activeAccount = activeAccount,
@@ -2591,218 +2608,225 @@ private fun OriginalFilesHeaderBar(
     val driveLabel = activeAccount?.effectiveName ?: "Drive"
     val ext = MaterialTheme.cloudyteColors
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shadowElevation = 3.dp
     ) {
-        // 1. Left Drive Avatar Button (48.dp circle with 2.dp accent border)
-        Box {
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceContainer)
-                    .border(BorderStroke(2.dp, ext.accentBlue), CircleShape)
-                    .clickable { onToggleDriveDropdown(true) }
-                    .testTag("files_drive_switcher"),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = driveInitial,
-                    color = ext.lightAccent,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // 1. Left Drive Avatar Button (48.dp circle with 2.dp accent border)
+            Box {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceContainer)
+                        .border(BorderStroke(2.dp, ext.accentBlue), CircleShape)
+                        .clickable { onToggleDriveDropdown(true) }
+                        .testTag("files_drive_switcher"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = driveInitial,
+                        color = ext.lightAccent,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
 
-            DropdownMenu(
-                expanded = showDriveDropdown,
-                onDismissRequest = { onToggleDriveDropdown(false) },
-                modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            ) {
-                Text(
-                    text = "Switch Drive",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                accounts.forEach { acc ->
-                    val isSelected = acc.effectiveId == activeAccount?.effectiveId
-                    val providerColor = when {
-                        acc.effectiveType.contains("google", true) -> ext.providerGoogle
-                        acc.effectiveType.contains("one", true) -> ext.providerOneDrive
-                        else -> ext.providerTelegram
+                DropdownMenu(
+                    expanded = showDriveDropdown,
+                    onDismissRequest = { onToggleDriveDropdown(false) },
+                    modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                ) {
+                    Text(
+                        text = "Switch Drive",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    accounts.forEach { acc ->
+                        val isSelected = acc.effectiveId == activeAccount?.effectiveId
+                        val providerColor = when {
+                            acc.effectiveType.contains("google", true) -> ext.providerGoogle
+                            acc.effectiveType.contains("one", true) -> ext.providerOneDrive
+                            else -> ext.providerTelegram
+                        }
+                        val providerBg = when {
+                            acc.effectiveType.contains("google", true) -> ext.providerGoogleBg
+                            acc.effectiveType.contains("one", true) -> ext.providerOneDriveBg
+                            else -> ext.providerTelegramBg
+                        }
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = acc.effectiveName,
+                                    color = if (isSelected) ext.lightAccent else MaterialTheme.colorScheme.onSurface,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                )
+                            },
+                            leadingIcon = {
+                                Box(
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .clip(CircleShape)
+                                        .background(providerBg),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = (acc.effectiveName.firstOrNull() ?: 'D').uppercaseChar().toString(),
+                                        color = providerColor,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            },
+                            trailingIcon = {
+                                if (isSelected) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = null,
+                                        tint = ext.lightAccent,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            },
+                            onClick = { onSelectAccount(acc.effectiveId) }
+                        )
                     }
-                    val providerBg = when {
-                        acc.effectiveType.contains("google", true) -> ext.providerGoogleBg
-                        acc.effectiveType.contains("one", true) -> ext.providerOneDriveBg
-                        else -> ext.providerTelegramBg
-                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     DropdownMenuItem(
                         text = {
                             Text(
-                                text = acc.effectiveName,
-                                color = if (isSelected) ext.lightAccent else MaterialTheme.colorScheme.onSurface,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                text = "Trash",
+                                color = MaterialTheme.colorScheme.onSurface
                             )
                         },
                         leadingIcon = {
-                            Box(
-                                modifier = Modifier
-                                    .size(28.dp)
-                                    .clip(CircleShape)
-                                    .background(providerBg),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = (acc.effectiveName.firstOrNull() ?: 'D').uppercaseChar().toString(),
-                                    color = providerColor,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
+                            Icon(
+                                imageVector = Icons.Outlined.DeleteOutline,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         },
-                        trailingIcon = {
-                            if (isSelected) {
-                                Icon(
-                                    imageVector = Icons.Default.Check,
-                                    contentDescription = null,
-                                    tint = ext.lightAccent,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
+                        onClick = {
+                            onToggleDriveDropdown(false)
+                            onOpenTrash()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = "Add Drive",
+                                color = ext.lightAccent,
+                                fontWeight = FontWeight.Bold
+                            )
                         },
-                        onClick = { onSelectAccount(acc.effectiveId) }
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = null,
+                                tint = ext.lightAccent
+                            )
+                        },
+                        onClick = onAddDrive
                     )
                 }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            text = "Trash",
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Outlined.DeleteOutline,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    },
-                    onClick = {
-                        onToggleDriveDropdown(false)
-                        onOpenTrash()
-                    }
-                )
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            text = "Add Drive",
-                            color = ext.lightAccent,
-                            fontWeight = FontWeight.Bold
-                        )
-                    },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = null,
-                            tint = ext.lightAccent
-                        )
-                    },
-                    onClick = onAddDrive
-                )
             }
-        }
 
-        // 2. Center Wide Search Pill Bar (48.dp pill)
-        Surface(
-            shape = RoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f)),
-            modifier = Modifier
-                .weight(1f)
-                .height(48.dp)
-        ) {
-            Row(
+            // 2. Center Wide Search Pill Bar (48.dp pill)
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.50f)),
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(start = 14.dp, end = if (searchQuery.isNotEmpty()) 2.dp else 14.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .weight(1f)
+                    .height(48.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Default.Search,
-                    contentDescription = "Search",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(19.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Box(
-                    modifier = Modifier.weight(1f),
-                    contentAlignment = Alignment.CenterStart
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(start = 14.dp, end = if (searchQuery.isNotEmpty()) 2.dp else 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (searchQuery.isEmpty()) {
-                        Text(
-                            text = "Search in $driveLabel…",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 14.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = "Search",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(19.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier.weight(1f),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        if (searchQuery.isEmpty()) {
+                            Text(
+                                text = "Search in $driveLabel…",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 14.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        BasicTextField(
+                            value = searchQuery,
+                            onValueChange = onSearchQueryChange,
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontSize = 14.sp
+                            ),
+                            cursorBrush = SolidColor(ext.accentBlue),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(searchFocusRequester)
                         )
                     }
-                    BasicTextField(
-                        value = searchQuery,
-                        onValueChange = onSearchQueryChange,
-                        singleLine = true,
-                        textStyle = MaterialTheme.typography.bodyMedium.copy(
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontSize = 14.sp
-                        ),
-                        cursorBrush = SolidColor(ext.accentBlue),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .focusRequester(searchFocusRequester)
-                    )
-                }
-                if (searchQuery.isNotEmpty()) {
-                    IconButton(
-                        onClick = { onSearchQueryChange("") },
-                        modifier = Modifier.size(48.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Clear search",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
-                        )
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(
+                            onClick = { onSearchQueryChange("") },
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Clear search",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
                 }
             }
-        }
 
-        // 3. Trash Button (48.dp circle — Root Drive Trash)
-        Surface(
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f)),
-            modifier = Modifier
-                .size(48.dp)
-                .clip(CircleShape)
-                .clickable { onOpenTrash() }
-                .testTag("files_trash_button")
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    imageVector = Icons.Outlined.DeleteOutline,
-                    contentDescription = "Trash",
-                    tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(21.dp)
-                )
+            // 3. Trash Button (48.dp circle — Root Drive Trash)
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.50f)),
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .clickable { onOpenTrash() }
+                    .testTag("files_trash_button")
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Outlined.DeleteOutline,
+                        contentDescription = "Trash",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(21.dp)
+                    )
+                }
             }
         }
     }
@@ -2836,20 +2860,20 @@ private fun SubfolderScrollableHeader(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 6.dp, bottom = 4.dp)
+            .padding(top = 6.dp, bottom = 6.dp)
     ) {
-        if (isSearchExpanded || searchQuery.isNotEmpty()) {
-            Surface(
-                shape = RoundedCornerShape(24.dp),
-                color = MaterialTheme.colorScheme.surfaceContainer,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f)),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-            ) {
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
+            tonalElevation = 2.dp,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            if (isSearchExpanded || searchQuery.isNotEmpty()) {
                 Row(
                     modifier = Modifier
-                        .fillMaxSize()
+                        .fillMaxWidth()
+                        .height(54.dp)
                         .padding(horizontal = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -2905,216 +2929,218 @@ private fun SubfolderScrollableHeader(
                         }
                     }
                 }
-            }
-        } else {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(
-                    onClick = onBack,
+            } else {
+                Row(
                     modifier = Modifier
-                        .size(48.dp)
-                        .testTag("subfolder_back_button")
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
-                        tint = MaterialTheme.colorScheme.onBackground
-                    )
-                }
-
-                Box(modifier = Modifier.weight(1f)) {
-                    Column(
+                    IconButton(
+                        onClick = onBack,
                         modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable(enabled = breadcrumbs.size > 1) { showPathDropdown = true }
-                            .padding(horizontal = 6.dp, vertical = 4.dp)
+                            .size(48.dp)
+                            .testTag("subfolder_back_button")
                     ) {
-                        Text(
-                            text = folderName,
-                            style = MaterialTheme.typography.titleLarge,
-                            fontSize = 19.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onBackground,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = MaterialTheme.colorScheme.onSurface
                         )
-                        if (breadcrumbs.size > 1) {
-                            val parentLabel = if (breadcrumbs.size == 2) driveName else "$driveName › … › ${breadcrumbs[breadcrumbs.lastIndex - 1].name}"
+                    }
+
+                    Box(modifier = Modifier.weight(1f)) {
+                        Column(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable(enabled = breadcrumbs.size > 1) { showPathDropdown = true }
+                                .padding(horizontal = 6.dp, vertical = 4.dp)
+                        ) {
                             Text(
-                                text = "$parentLabel ▾",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                text = folderName,
+                                style = MaterialTheme.typography.titleLarge,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
+                            )
+                            if (breadcrumbs.size > 1) {
+                                val parentLabel = if (breadcrumbs.size == 2) driveName else "$driveName › … › ${breadcrumbs[breadcrumbs.lastIndex - 1].name}"
+                                Text(
+                                    text = "$parentLabel ▾",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+
+                        DropdownMenu(
+                            expanded = showPathDropdown,
+                            onDismissRequest = { showPathDropdown = false },
+                            modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        ) {
+                            breadcrumbs.forEachIndexed { idx, crumb ->
+                                val isCurrent = idx == breadcrumbs.lastIndex
+                                val label = if (idx == 0) driveName else crumb.name
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = label,
+                                            fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (isCurrent) ext.lightAccent else MaterialTheme.colorScheme.onSurface
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = if (idx == 0) Icons.Default.Cloud else Icons.Default.Folder,
+                                            contentDescription = null,
+                                            tint = if (isCurrent) ext.lightAccent else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    },
+                                    onClick = {
+                                        showPathDropdown = false
+                                        if (!isCurrent) onBreadcrumbClick(idx)
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    // Right actions: Search icon, Filter icon, 3-dot icon
+                    IconButton(
+                        onClick = { isSearchExpanded = true },
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = "Search in folder",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+
+                    Box {
+                        IconButton(
+                            onClick = onOpenFilterSheet,
+                            modifier = Modifier
+                                .size(48.dp)
+                                .testTag("files_filter_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.FilterList,
+                                contentDescription = "Filter & Sort",
+                                tint = if (hasActiveFilter) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        if (hasActiveFilter) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(10.dp)
+                                    .size(7.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primary)
                             )
                         }
                     }
 
-                    DropdownMenu(
-                        expanded = showPathDropdown,
-                        onDismissRequest = { showPathDropdown = false },
-                        modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                    ) {
-                        breadcrumbs.forEachIndexed { idx, crumb ->
-                            val isCurrent = idx == breadcrumbs.lastIndex
-                            val label = if (idx == 0) driveName else crumb.name
+                    Box {
+                        IconButton(
+                            onClick = { showOverflowMenu = true },
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.MoreVert,
+                                contentDescription = "Folder menu",
+                                tint = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+
+                        DropdownMenu(
+                            expanded = showOverflowMenu,
+                            onDismissRequest = { showOverflowMenu = false },
+                            modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        ) {
                             DropdownMenuItem(
                                 text = {
                                     Text(
-                                        text = label,
-                                        fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (isCurrent) ext.lightAccent else MaterialTheme.colorScheme.onSurface
+                                        text = if (isGridView) "List view" else "Grid view",
+                                        color = MaterialTheme.colorScheme.onSurface
                                     )
                                 },
                                 leadingIcon = {
                                     Icon(
-                                        imageVector = if (idx == 0) Icons.Default.Cloud else Icons.Default.Folder,
+                                        imageVector = if (isGridView) Icons.AutoMirrored.Filled.ViewList else Icons.Default.GridView,
                                         contentDescription = null,
-                                        tint = if (isCurrent) ext.lightAccent else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(18.dp)
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 },
                                 onClick = {
-                                    showPathDropdown = false
-                                    if (!isCurrent) onBreadcrumbClick(idx)
+                                    showOverflowMenu = false
+                                    onToggleViewMode()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Select all", color = MaterialTheme.colorScheme.onSurface) },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.SelectAll,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    onSelectAll()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("New folder", color = MaterialTheme.colorScheme.onSurface) },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.CreateNewFolder,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    onNewFolder()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Upload files", color = MaterialTheme.colorScheme.onSurface) },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Upload,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    onUploadFiles()
+                                }
+                            )
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                            DropdownMenuItem(
+                                text = { Text("Refresh", color = MaterialTheme.colorScheme.onSurface) },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Refresh,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    onRefresh()
                                 }
                             )
                         }
-                    }
-                }
-
-                // Right actions: Search icon, Filter icon, 3-dot icon
-                IconButton(
-                    onClick = { isSearchExpanded = true },
-                    modifier = Modifier.size(48.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Search,
-                        contentDescription = "Search in folder",
-                        tint = MaterialTheme.colorScheme.onBackground
-                    )
-                }
-
-                Box {
-                    IconButton(
-                        onClick = onOpenFilterSheet,
-                        modifier = Modifier
-                            .size(48.dp)
-                            .testTag("files_filter_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.FilterList,
-                            contentDescription = "Filter & Sort",
-                            tint = if (hasActiveFilter) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
-                        )
-                    }
-                    if (hasActiveFilter) {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(10.dp)
-                                .size(7.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primary)
-                        )
-                    }
-                }
-
-                Box {
-                    IconButton(
-                        onClick = { showOverflowMenu = true },
-                        modifier = Modifier.size(48.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.MoreVert,
-                            contentDescription = "Folder menu",
-                            tint = MaterialTheme.colorScheme.onBackground
-                        )
-                    }
-
-                    DropdownMenu(
-                        expanded = showOverflowMenu,
-                        onDismissRequest = { showOverflowMenu = false },
-                        modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                    ) {
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    text = if (isGridView) "List view" else "Grid view",
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            },
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = if (isGridView) Icons.AutoMirrored.Filled.ViewList else Icons.Default.GridView,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            },
-                            onClick = {
-                                showOverflowMenu = false
-                                onToggleViewMode()
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Select all", color = MaterialTheme.colorScheme.onSurface) },
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = Icons.Default.SelectAll,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            },
-                            onClick = {
-                                showOverflowMenu = false
-                                onSelectAll()
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("New folder", color = MaterialTheme.colorScheme.onSurface) },
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = Icons.Default.CreateNewFolder,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            },
-                            onClick = {
-                                showOverflowMenu = false
-                                onNewFolder()
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Upload files", color = MaterialTheme.colorScheme.onSurface) },
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = Icons.Default.Upload,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            },
-                            onClick = {
-                                showOverflowMenu = false
-                                onUploadFiles()
-                            }
-                        )
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        DropdownMenuItem(
-                            text = { Text("Refresh", color = MaterialTheme.colorScheme.onSurface) },
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = Icons.Default.Refresh,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            },
-                            onClick = {
-                                showOverflowMenu = false
-                                onRefresh()
-                            }
-                        )
                     }
                 }
             }
@@ -3373,7 +3399,7 @@ fun FolderGridItem(
         border = BorderStroke(
             1.dp,
             if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
-            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f)
+            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.42f)
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         modifier = modifier
@@ -3566,7 +3592,7 @@ fun FileGridItem(
         border = BorderStroke(
             1.dp,
             if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
-            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f)
+            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.42f)
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         modifier = modifier
@@ -3831,7 +3857,7 @@ fun FileRow(
         border = BorderStroke(
             1.dp,
             if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
-            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f)
+            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.42f)
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         modifier = modifier
