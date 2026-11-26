@@ -270,7 +270,6 @@
 
     <!-- About Section -->
     <string name="settings_app_version">App Version</string>
-    <string name="settings_app_version_sub">v1.0.0 (Build 100)</string>
     <string name="settings_terms_of_service">Terms of Service</string>
     <string name="settings_privacy_policy">Privacy Policy</string>
     <string name="settings_open_source_licenses">Open Source Licenses</string>

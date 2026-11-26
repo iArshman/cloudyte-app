@@ -27,6 +27,7 @@ data class LogoutResult(
 )
 
 object AccountSessionHelper {
+    @OptIn(coil.annotation.ExperimentalCoilApi::class)
     suspend fun performLogout(
         context: Context,
         remoteLogoutCall: suspend () -> Boolean = {

@@ -625,5 +625,16 @@ class EncryptedTransferIntegrationTest {
         override suspend fun getSessions(): List<com.cloudyte.app.api.ActiveSessionDto> = emptyList()
         override suspend fun revokeSession(sessionId: String): Response<Unit> = Response.success(Unit)
         override suspend fun revokeOtherSessions(): Response<Unit> = Response.success(Unit)
+        override suspend fun renameAccount(id: String, request: com.cloudyte.app.api.AccountRenameRequest): Response<Unit> = Response.success(Unit)
+        override suspend fun importTgDrive(accountId: String, body: RequestBody): Response<com.cloudyte.app.api.TgDriveImportResponse> =
+            Response.success(com.cloudyte.app.api.TgDriveImportResponse(success = true))
+        override suspend fun exportTgDrive(accountId: String): Response<ResponseBody> =
+            Response.success("{}".toResponseBody("application/json".toMediaType()))
+        override suspend fun getAccountManifest(accountId: String, folderId: String?, maxFiles: Int?): Response<com.cloudyte.app.api.DriveManifestResponse> =
+            Response.success(com.cloudyte.app.api.DriveManifestResponse(accountId = accountId))
+        override suspend fun startDriveTransfer(request: com.cloudyte.app.api.DriveTransferRequest): Response<com.cloudyte.app.api.TransferActionResponse> =
+            Response.success(com.cloudyte.app.api.TransferActionResponse(success = true))
+        override suspend fun getShares(): List<com.cloudyte.app.api.ActiveShareDto> = emptyList()
+        override suspend fun revokeShare(shareId: String): Response<Unit> = Response.success(Unit)
     }
 }

@@ -98,6 +98,7 @@ object StorageManager {
         return dir
     }
 
+    @OptIn(coil.annotation.ExperimentalCoilApi::class)
     suspend fun measure(context: Context): StorageBreakdown = withContext(Dispatchers.IO) {
         val appContext = context.applicationContext
         val previewBytes = dirStats(File(appContext.cacheDir, "cloudyte_previews")).first +

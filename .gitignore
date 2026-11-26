@@ -1,4 +1,14 @@
 /app/build/
 /.gradle/
 /build/
+/.kotlin/
+/.build-outputs/
 .env
+local.properties
+*.jks
+*.keystore
+debug.keystore
+debug.keystore.base64
+public/
+metadata.json
+API_DOCUMENTATION*.md
