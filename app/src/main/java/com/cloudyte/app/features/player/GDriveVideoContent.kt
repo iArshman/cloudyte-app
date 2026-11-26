@@ -451,13 +451,14 @@ fun GDriveVideoContent(
                 detectVerticalDragGestures(
                     onDragStart = { startOffset ->
                         val width = size.width.toFloat().coerceAtLeast(1f)
-                        gestureSide = if (startOffset.x < width * 0.5f) {
+                        val side = if (startOffset.x < width * 0.5f) {
                             VerticalGestureType.BRIGHTNESS
                         } else {
                             VerticalGestureType.VOLUME
                         }
+                        gestureSide = side
                         accumulatedDragY = 0f
-                        startLevel = when (gestureSide) {
+                        startLevel = when (side) {
                             VerticalGestureType.BRIGHTNESS -> {
                                 val winBright = context.findHostActivity()?.window?.attributes?.screenBrightness ?: -1f
                                 if (winBright in 0f..1f) {
@@ -475,7 +476,7 @@ fun GDriveVideoContent(
                                 (curVol.toFloat() / maxVol.toFloat()).coerceIn(0f, 1f)
                             }
                         }
-                        activeVerticalGesture = gestureSide
+                        activeVerticalGesture = side
                         gestureLevelFraction = startLevel
                         gestureHudNonce++
                     },
