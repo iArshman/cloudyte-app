@@ -1,10 +1,6 @@
 name: Build & Release Android APK
 
 on:
-  push:
-    branches: [ "main", "master" ]
-  pull_request:
-    branches: [ "main", "master" ]
   workflow_dispatch:
 
 jobs:
@@ -77,7 +73,7 @@ jobs:
 
       - name: Publish APK to GitHub Releases
         uses: ncipollo/release-action@v1
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        if: github.event_name == 'workflow_dispatch'
         with:
           artifacts: "app/build/outputs/apk/release/*.apk"
           tag: "latest"
